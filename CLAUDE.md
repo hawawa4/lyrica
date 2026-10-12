@@ -25,11 +25,9 @@ The app needs a GM soundfont for audio playback, fetched on demand (not committe
 just fetch-soundfont
 ```
 
-This pulls `FluidR3_GM.sf2` into `assets/`. **Do not switch this to MuseScore's own soundfont** (`MuseScore_General.sf2`/`.sf3`) — it sounds badly wrong (quiet, bass-only) through `rustysynth`, the Rust synth crate this project uses. Root cause: `rustysynth` has zero SF2 modulator support (confirmed in its source — `pmod`/`imod` chunks are parsed and discarded), and MuseScore's soundfont relies heavily on key-driven modulators to compensate for deliberately-attenuated baseline generator values. Without those modulators applied, you get only the "closed/attenuated" half of the intended signal. FluidR3 doesn't lean on modulators, so it plays correctly. This is a real, confirmed limitation of `rustysynth` — not something fixable by adjusting gain or player code. Full details in project memory (`rustysynth_modulator_gap`) if you're working in a session with access to it; otherwise this paragraph is the authoritative summary.
+This pulls `FluidR3_GM.sf2` into `assets/`. **Do not switch this to MuseScore's own soundfont** (`MuseScore_General.sf2`/`.sf3`) — it sounds badly wrong (quiet, bass-only) through `rustysynth`, the Rust synth crate this project uses, because `rustysynth` has zero SF2 modulator support (confirmed in its source — `pmod`/`imod` chunks are parsed and discarded) and MuseScore's soundfont depends on modulators to sound right. Not fixable by adjusting gain or player code. See `plans/oxisynth-migration.md` for the full diagnosis and a deferred plan to fix this properly.
 
 Separately: `rustysynth` cannot load `.sf3` (Ogg-compressed-sample soundfonts) at all — only uncompressed `.sf2`.
-
-**Deferred future work**: once the main app/interaction work is done, revisit swapping the synth backend from `rustysynth` to `oxisynth` (`PolyMeilex/oxisynth`) — pure Rust, no C dependency, genuinely implements SF2 modulators, would let us go back to MuseScore's own higher-quality soundfont. Not a drop-in replacement (different API, no built-in MIDI sequencer, ~1-3 days of rework estimated for `crates/core/src/audio/`). Explicitly deferred — do not start this unprompted.
 
 ## Known gotchas
 
