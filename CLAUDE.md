@@ -29,6 +29,8 @@ This pulls `FluidR3_GM.sf2` into `assets/`. **Do not switch this to MuseScore's 
 
 Separately: `rustysynth` cannot load `.sf3` (Ogg-compressed-sample soundfonts) at all — only uncompressed `.sf2`.
 
+**Deferred future work**: once the main app/interaction work is done, revisit swapping the synth backend from `rustysynth` to `oxisynth` (`PolyMeilex/oxisynth`) — pure Rust, no C dependency, genuinely implements SF2 modulators, would let us go back to MuseScore's own higher-quality soundfont. Not a drop-in replacement (different API, no built-in MIDI sequencer, ~1-3 days of rework estimated for `crates/core/src/audio/`). Explicitly deferred — do not start this unprompted.
+
 ## Known gotchas
 
 - **webmscore in Node vs. browser**: webmscore 1.2.1's Node-targeted glue code breaks under Node 22 (read-only `navigator`, global `fetch` misdetection) — see `_spike/shim-preload.cjs` and `_spike/FINDINGS.md` if you ever need to run it outside a browser/webview again. This should never be needed in `web/` itself, which always runs in a real browser or Tauri webview.
