@@ -25,3 +25,10 @@ export interface Timeline {
 export interface ImportTimelineResponse {
   timeline: Timeline
 }
+
+export interface Marker {
+  id: string
+  measure_index: number
+  text: string
+  created_at: number
+}

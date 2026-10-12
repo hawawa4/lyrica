@@ -1,5 +1,5 @@
 import type { Positions } from './score-engine'
-import type { ImportTimelineResponse } from './types'
+import type { ImportTimelineResponse, Marker } from './types'
 
 /** True when running inside the Tauri desktop webview, false in a plain browser tab. */
 export function isTauri(): boolean {
@@ -69,6 +69,58 @@ export async function setMetronomeEnabled(enabled: boolean): Promise<void> {
   if (!isTauri()) throw new Error('setMetronomeEnabled: desktop-only for now')
   const { invoke } = await import('@tauri-apps/api/core')
   await invoke('set_metronome_enabled', { enabled })
+}
+
+interface OpenFileResponse {
+  file_hash: string
+  mscz_version: string
+  needs_upgrade: boolean
+}
+
+/**
+ * Computes a stable per-file identity key (blake3 hash of the original
+ * bytes) via Rust's `open_file` command — used to key markers independent
+ * of filename/path (so a marker survives the file being renamed/moved) and
+ * of any MS4-upgrade round-trip (`main.ts` always passes the *original*,
+ * pre-upgrade bytes here, never the upgraded re-save).
+ *
+ * Deliberately not computed via Web Crypto (`crypto.subtle.digest`)
+ * client-side: that API is only available in a "secure context," which
+ * isn't guaranteed for every webview scheme Tauri might load from, and a
+ * failure there silently aborted the entire post-open setup (including
+ * enabling playback) since nothing caught it. Rust's blake3 hashing has no
+ * such environment dependency.
+ */
+export async function contentHash(bytes: Uint8Array, originalFilename: string): Promise<string> {
+  if (!isTauri()) throw new Error('contentHash: desktop-only for now')
+  const { invoke } = await import('@tauri-apps/api/core')
+  const response = await invoke<OpenFileResponse>('open_file', {
+    bytes: Array.from(bytes),
+    originalFilename,
+  })
+  return response.file_hash
+}
+
+/**
+ * Markers CRUD, keyed by `contentHash`'s digest of the original file bytes.
+ * Desktop-only for now, same transport gap as the rest of this file.
+ */
+export async function listMarkers(fileHash: string): Promise<Marker[]> {
+  if (!isTauri()) throw new Error('listMarkers: desktop-only for now')
+  const { invoke } = await import('@tauri-apps/api/core')
+  return invoke<Marker[]>('list_markers', { fileHash })
+}
+
+export async function addMarker(fileHash: string, measureIndex: number, text: string): Promise<Marker[]> {
+  if (!isTauri()) throw new Error('addMarker: desktop-only for now')
+  const { invoke } = await import('@tauri-apps/api/core')
+  return invoke<Marker[]>('add_marker', { fileHash, measureIndex, text })
+}
+
+export async function deleteMarker(fileHash: string, markerId: string): Promise<Marker[]> {
+  if (!isTauri()) throw new Error('deleteMarker: desktop-only for now')
+  const { invoke } = await import('@tauri-apps/api/core')
+  return invoke<Marker[]>('delete_marker', { fileHash, markerId })
 }
 
 /** Current playback position in seconds, within the MIDI file's own 1.0x timeline. */

@@ -11,7 +11,9 @@ import {
   setPlaybackSpeed,
   setLoopRegion,
   setMetronomeEnabled,
+  contentHash,
 } from './api-client'
+import { MarkerPanel } from './views/MarkerPanel'
 import type { Timeline } from './types'
 
 const app = document.querySelector<HTMLDivElement>('#app')!
@@ -40,6 +42,7 @@ app.innerHTML = `
     <div id="loop-status" style="margin-top: 4px; color: #0a0; font-size: 13px;"></div>
     <div id="page" style="margin-top: 16px; max-width: 700px; position: relative;"></div>
     <div id="selection-status" style="margin-top: 4px; color: #888; font-size: 13px;"></div>
+    <div id="marker-panel" style="max-width: 700px;"></div>
   </div>
   <div id="drop-overlay" style="display:none; position:fixed; inset:0; background:rgba(0,120,255,0.15); border: 4px dashed rgba(0,120,255,0.6); pointer-events:none; align-items:center; justify-content:center; font-family: sans-serif; font-size: 20px; color: #0078ff;">
     Drop to open
@@ -99,6 +102,30 @@ selectionOverlay.onSelect((range) => {
   selectionStatusEl.textContent = range
     ? `Selected measures (elid ${range.startElid}-${range.endElid}) — press L to loop`
     : ''
+})
+
+const markerPanelEl = document.querySelector<HTMLDivElement>('#marker-panel')!
+const markerPanel = new MarkerPanel(markerPanelEl)
+
+/**
+ * A new marker attaches to the current selection's first measure (the
+ * timeline's `measure_index`, looked up via the selection's start elid) —
+ * matching the "click-drag-select" direct-manipulation style the loop
+ * feature already uses, rather than a separate "pick a measure" step.
+ */
+markerPanel.onRequestMeasureIndex(() => {
+  if (!currentTimeline || !currentSelection) return null
+  const event = currentTimeline.events.find((e) => e.source_elid === currentSelection!.startElid)
+  return event?.measure_index ?? null
+})
+
+markerPanel.onJumpToMeasure((measureIndex) => {
+  if (!currentTimeline) return
+  const event = currentTimeline.events.find((e) => e.measure_index === measureIndex)
+  if (!event) return
+  if (event.page !== pageView.page) {
+    void pageView.showPage(event.page)
+  }
 })
 
 /**
@@ -207,6 +234,14 @@ async function openBytes(bytes: Uint8Array, filename: string) {
   statusEl.textContent = `Loading ${filename}...`
   navEl.style.display = 'none'
 
+  // webmscore's worker-based load() transfers `data.buffer` into the worker
+  // (an explicit `Transferable`, see node_modules/webmscore/src/worker-helper.js),
+  // which detaches the original ArrayBuffer as a side effect — `bytes` itself
+  // becomes unusable (reads throw "detached ArrayBuffer") immediately after
+  // `openScore` returns. Keep a copy for anything needed later (e.g. hashing
+  // the original file for markers).
+  const originalBytes = bytes.slice()
+
   let result: OpenScoreResult
   try {
     result = await openScore(bytes)
@@ -247,8 +282,23 @@ async function openBytes(bytes: Uint8Array, filename: string) {
   metronomeCheckbox.disabled = true
   loopStatusEl.textContent = ''
   cursorBoxEl.style.display = 'none'
+  await markerPanel.setFileHash(null)
 
   if (isTauri()) {
+    // Hashed from `originalBytes` (captured before openScore() detaches the
+    // original buffer), not any upgraded re-save of it — markers should stay
+    // anchored to "this piece" across an MS4 upgrade round-trip, not fork
+    // onto a new key. Failure here must not abort the rest of this block —
+    // markers are optional, playback setup isn't.
+    try {
+      await markerPanel.setFileHash(await contentHash(originalBytes, filename))
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e)
+      console.error('Failed to compute file hash for markers:', e)
+      statusEl.textContent += ` (markers unavailable: ${message})`
+      await markerPanel.setFileHash(null)
+    }
+
     const positions = await getMeasurePositions(score)
     const midiBytes = await getMidi(score)
     const { timeline } = await importTimeline(positions, midiBytes)
