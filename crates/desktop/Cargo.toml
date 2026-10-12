@@ -7,7 +7,8 @@ edition = "2021"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-mp-core = { path = "../core" }
+mp-core = { path = "../core", features = ["desktop-audio"] }
+cpal = "0.15"
 tauri = { version = "2.12.3", features = [] }
 tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"

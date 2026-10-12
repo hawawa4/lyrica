@@ -1,7 +1,9 @@
-import { openScore, upgradeScore, type OpenScoreResult } from './score-engine'
+import { openScore, upgradeScore, getMeasurePositions, getMidi, type OpenScoreResult } from './score-engine'
 import { PageView } from './render/PageView'
 import { SelectionOverlay } from './render/SelectionOverlay'
-import { isTauri } from './api-client'
+import { Cursor } from './render/Cursor'
+import { isTauri, importTimeline, loadMidi, playMidi, stopMidi } from './api-client'
+import type { Timeline } from './types'
 
 const app = document.querySelector<HTMLDivElement>('#app')!
 
@@ -14,6 +16,9 @@ app.innerHTML = `
       <button id="prev-page">&larr; Prev</button>
       <span id="page-indicator" style="margin: 0 8px;"></span>
       <button id="next-page">Next &rarr;</button>
+      <button id="play-btn" style="margin-left: 16px;" disabled>&#9654; Play</button>
+      <button id="stop-btn" disabled>&#9632; Stop</button>
+      <label style="margin-left: 8px;"><input id="loop-checkbox" type="checkbox" /> Loop</label>
     </div>
     <div id="page" style="margin-top: 16px; max-width: 700px; position: relative;"></div>
     <div id="selection-status" style="margin-top: 4px; color: #888; font-size: 13px;"></div>
@@ -36,6 +41,9 @@ const navEl = document.querySelector<HTMLDivElement>('#nav')!
 const pageIndicatorEl = document.querySelector<HTMLSpanElement>('#page-indicator')!
 const prevBtn = document.querySelector<HTMLButtonElement>('#prev-page')!
 const nextBtn = document.querySelector<HTMLButtonElement>('#next-page')!
+const playBtn = document.querySelector<HTMLButtonElement>('#play-btn')!
+const stopBtn = document.querySelector<HTMLButtonElement>('#stop-btn')!
+const loopCheckbox = document.querySelector<HTMLInputElement>('#loop-checkbox')!
 const pageContainerEl = document.querySelector<HTMLDivElement>('#page')!
 const selectionStatusEl = document.querySelector<HTMLDivElement>('#selection-status')!
 const dropOverlay = document.querySelector<HTMLDivElement>('#drop-overlay')!
@@ -57,12 +65,42 @@ const pageView = new PageView(pageContainerEl, (page, pages, positions) => {
 })
 
 const selectionOverlay = new SelectionOverlay(pageContainerEl)
+let currentTimeline: Timeline | null = null
 
 selectionOverlay.onSelect((range) => {
   selectionStatusEl.textContent = range
     ? `Selected measures (elid ${range.startElid}-${range.endElid})`
     : ''
 })
+
+const cursorBoxEl = document.createElement('div')
+cursorBoxEl.style.position = 'absolute'
+cursorBoxEl.style.border = '2px solid rgba(0, 180, 0, 0.9)'
+cursorBoxEl.style.background = 'rgba(0, 180, 0, 0.12)'
+cursorBoxEl.style.pointerEvents = 'none'
+cursorBoxEl.style.display = 'none'
+pageContainerEl.appendChild(cursorBoxEl)
+
+const cursor = new Cursor((event) => {
+  if (event.page !== pageView.page) {
+    pageView.showPage(event.page)
+  }
+  cursorBoxEl.style.display = 'block'
+  cursorBoxEl.style.left = `${(event.bbox.x / currentPageWidth()) * 100}%`
+  cursorBoxEl.style.top = `${(event.bbox.y / currentPageHeight()) * 100}%`
+  cursorBoxEl.style.width = `${(event.bbox.sx / currentPageWidth()) * 100}%`
+  cursorBoxEl.style.height = `${(event.bbox.sy / currentPageHeight()) * 100}%`
+})
+
+function currentPageWidth(): number {
+  const svg = pageContainerEl.querySelector('svg')
+  return svg ? parseFloat(svg.getAttribute('viewBox')?.split(' ')[2] ?? '0') : 1
+}
+
+function currentPageHeight(): number {
+  const svg = pageContainerEl.querySelector('svg')
+  return svg ? parseFloat(svg.getAttribute('viewBox')?.split(' ')[3] ?? '0') : 1
+}
 
 function askUpgradeConfirmation(): Promise<boolean> {
   return new Promise((resolve) => {
@@ -118,7 +156,37 @@ async function openBytes(bytes: Uint8Array, filename: string) {
   await pageView.setScore(score, metadata.pages)
   navEl.style.display = metadata.pages > 1 ? 'block' : 'none'
   await pageView.showPage(0)
+
+  currentTimeline = null
+  cursor.setTimeline(null)
+  playBtn.disabled = true
+  stopBtn.disabled = true
+  cursorBoxEl.style.display = 'none'
+
+  if (isTauri()) {
+    const positions = await getMeasurePositions(score)
+    const midiBytes = await getMidi(score)
+    const { timeline } = await importTimeline(positions, midiBytes)
+    currentTimeline = timeline
+    cursor.setTimeline(timeline)
+    await loadMidi(midiBytes)
+    playBtn.disabled = false
+  }
 }
+
+playBtn.addEventListener('click', async () => {
+  await playMidi(loopCheckbox.checked)
+  cursor.start()
+  playBtn.disabled = true
+  stopBtn.disabled = false
+})
+
+stopBtn.addEventListener('click', async () => {
+  await stopMidi()
+  cursor.stop()
+  playBtn.disabled = false
+  stopBtn.disabled = true
+})
 
 fileInput.addEventListener('change', async () => {
   const file = fileInput.files?.[0]
@@ -180,3 +248,5 @@ if (isTauri()) {
 // Manual test hooks retained for Playwright/manual verification during development.
 ;(window as unknown as { __musepracticeOpenBytes: typeof openBytes }).__musepracticeOpenBytes = openBytes
 ;(window as unknown as { __musepracticePageView: typeof pageView }).__musepracticePageView = pageView
+;(window as unknown as { __musepracticeGetTimeline: () => Timeline | null }).__musepracticeGetTimeline = () =>
+  currentTimeline

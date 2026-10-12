@@ -5,8 +5,10 @@
 use std::io::Cursor;
 
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 
 use crate::mscz::{self, MsczError};
+use crate::timeline::{self, Positions, Timeline, TimelineError};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OpenFileRequest {
@@ -46,6 +48,35 @@ pub fn open_file(req: OpenFileRequest) -> Result<OpenFileResponse, MsczError> {
         mscz_version,
         needs_upgrade,
     })
+}
+
+/// Rust never parses `.mscz`/MIDI directly — this receives already-exported
+/// data from the JS layer (webmscore's `measurePositions()` JSON and
+/// `saveMidi()` bytes) and builds the derived `Timeline`, so it can be
+/// persisted without re-deriving it from source on every launch (see
+/// IMPLEMENTATION_PLAN.md's "API boundary" section).
+#[derive(Debug, Clone, Deserialize)]
+pub struct ImportTimelineRequest {
+    pub positions: Positions,
+    pub midi_bytes: Vec<u8>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ImportTimelineResponse {
+    pub timeline: Timeline,
+}
+
+#[derive(Debug, Error)]
+pub enum ImportTimelineError {
+    #[error(transparent)]
+    Timeline(#[from] TimelineError),
+}
+
+pub fn import_timeline(
+    req: ImportTimelineRequest,
+) -> Result<ImportTimelineResponse, ImportTimelineError> {
+    let timeline = timeline::build_timeline(&req.positions, &req.midi_bytes)?;
+    Ok(ImportTimelineResponse { timeline })
 }
 
 #[cfg(test)]

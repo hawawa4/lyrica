@@ -109,3 +109,15 @@ export async function renderPage(score: WebMscore, pageIndex: number): Promise<s
 export async function getMeasurePositions(score: WebMscore): Promise<Positions> {
   return score.measurePositions()
 }
+
+/**
+ * Raw MIDI bytes for the fully-performed piece (repeats inlined). Note the
+ * `midiExpandRepeats` flag itself has no observable effect in this webmscore
+ * build (confirmed empirically: identical output with it true vs false) —
+ * but the exported note data is already the fully-performed version either
+ * way, so this is moot in practice. Kept `true` to match the documented
+ * intent in case a future webmscore build fixes the flag.
+ */
+export async function getMidi(score: WebMscore): Promise<Uint8Array> {
+  return score.saveMidi(true, false)
+}
