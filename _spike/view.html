@@ -1,0 +1,166 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>webmscore spike: measure overlay + drag-select</title>
+<style>
+  body { font-family: sans-serif; margin: 0; padding: 16px; background: #222; color: #eee; }
+  #controls { margin-bottom: 12px; }
+  select, button { font-size: 14px; padding: 4px 8px; }
+  #stage {
+    position: relative;
+    display: inline-block;
+    background: white;
+    line-height: 0;
+    user-select: none;
+  }
+  #stage svg { display: block; width: 700px; height: auto; }
+  .measure-box {
+    position: absolute;
+    background: rgba(0, 120, 255, 0.15);
+    border: 1px solid rgba(0, 120, 255, 0.5);
+    box-sizing: border-box;
+    pointer-events: none;
+  }
+  .measure-box.selected {
+    background: rgba(255, 60, 0, 0.35);
+    border: 1px solid rgba(255, 60, 0, 0.9);
+  }
+  #dragRect {
+    position: absolute;
+    border: 1px dashed #0f0;
+    background: rgba(0, 255, 0, 0.1);
+    pointer-events: none;
+    display: none;
+  }
+  #info { margin-top: 10px; white-space: pre-wrap; font-family: monospace; font-size: 12px; color: #ccc; }
+</style>
+</head>
+<body>
+<div id="controls">
+  <label>Fixture:
+    <select id="fixtureSelect">
+      <option value="darkside">darkside (native MS4)</option>
+      <option value="youkai">youkai (upgraded from MS2)</option>
+    </select>
+  </label>
+  <label>Page:
+    <select id="pageSelect">
+      <option value="0">0</option>
+      <option value="1">1</option>
+    </select>
+  </label>
+  <button id="loadBtn">Load</button>
+</div>
+<div id="stage">
+  <div id="dragRect"></div>
+</div>
+<div id="info">Drag a rectangle over the score to select overlapping measures.</div>
+
+<script>
+const stage = document.getElementById('stage')
+const dragRectEl = document.getElementById('dragRect')
+const info = document.getElementById('info')
+
+let pageSize = null
+let displayScale = 1
+let currentElements = []
+
+async function loadFixture(label, page) {
+  const svgText = await fetch(`fixtures/out/${label}_page${page}.svg`).then(r => r.text())
+  const measures = await fetch(`fixtures/out/${label}_measures.json`).then(r => r.json())
+  pageSize = measures.pageSize
+
+  // clear previous boxes but keep dragRect
+  ;[...stage.querySelectorAll('svg, .measure-box')].forEach(el => el.remove())
+
+  const wrapper = document.createElement('div')
+  wrapper.innerHTML = svgText
+  const svgEl = wrapper.querySelector('svg')
+  stage.insertBefore(svgEl, dragRectEl)
+
+  // compute displayed scale: svg is displayed at 700px wide (see CSS), native width = pageSize.width
+  const nativeWidth = pageSize.width
+  const displayedWidth = 700
+  displayScale = displayedWidth / nativeWidth
+
+  currentElements = measures.elements.filter(e => e.page === Number(page))
+  for (const el of currentElements) {
+    const box = document.createElement('div')
+    box.className = 'measure-box'
+    box.dataset.id = el.id
+    box.style.left = (el.x * displayScale) + 'px'
+    box.style.top = (el.y * displayScale) + 'px'
+    box.style.width = (el.sx * displayScale) + 'px'
+    box.style.height = (el.sy * displayScale) + 'px'
+    stage.appendChild(box)
+  }
+
+  info.textContent = `Loaded ${label} page ${page}: ${currentElements.length} measure boxes (of ${measures.elements.length} total across all pages). Native page size ${pageSize.width}x${pageSize.height}, display scale ${displayScale.toFixed(4)}.`
+}
+
+document.getElementById('loadBtn').addEventListener('click', () => {
+  const label = document.getElementById('fixtureSelect').value
+  const page = document.getElementById('pageSelect').value
+  loadFixture(label, page)
+})
+
+// initial load
+loadFixture('darkside', '0')
+
+// drag-to-select
+let dragStart = null
+
+stage.addEventListener('mousedown', (e) => {
+  if (e.target.closest('select, button')) return
+  const rect = stage.getBoundingClientRect()
+  dragStart = { x: e.clientX - rect.left, y: e.clientY - rect.top }
+  dragRectEl.style.display = 'block'
+  dragRectEl.style.left = dragStart.x + 'px'
+  dragRectEl.style.top = dragStart.y + 'px'
+  dragRectEl.style.width = '0px'
+  dragRectEl.style.height = '0px'
+})
+
+stage.addEventListener('mousemove', (e) => {
+  if (!dragStart) return
+  const rect = stage.getBoundingClientRect()
+  const cur = { x: e.clientX - rect.left, y: e.clientY - rect.top }
+  const left = Math.min(dragStart.x, cur.x)
+  const top = Math.min(dragStart.y, cur.y)
+  const width = Math.abs(cur.x - dragStart.x)
+  const height = Math.abs(cur.y - dragStart.y)
+  dragRectEl.style.left = left + 'px'
+  dragRectEl.style.top = top + 'px'
+  dragRectEl.style.width = width + 'px'
+  dragRectEl.style.height = height + 'px'
+})
+
+window.addEventListener('mouseup', (e) => {
+  if (!dragStart) return
+  const rect = stage.getBoundingClientRect()
+  const cur = { x: e.clientX - rect.left, y: e.clientY - rect.top }
+  const dragBox = {
+    left: Math.min(dragStart.x, cur.x),
+    top: Math.min(dragStart.y, cur.y),
+    right: Math.max(dragStart.x, cur.x),
+    bottom: Math.max(dragStart.y, cur.y),
+  }
+  dragStart = null
+  dragRectEl.style.display = 'none'
+
+  const selected = []
+  for (const box of stage.querySelectorAll('.measure-box')) {
+    const bl = parseFloat(box.style.left)
+    const bt = parseFloat(box.style.top)
+    const br = bl + parseFloat(box.style.width)
+    const bb = bt + parseFloat(box.style.height)
+    const overlaps = bl < dragBox.right && br > dragBox.left && bt < dragBox.bottom && bb > dragBox.top
+    box.classList.toggle('selected', overlaps)
+    if (overlaps) selected.push(Number(box.dataset.id))
+  }
+  info.textContent = `Selected measure elids: [${selected.join(', ')}]`
+})
+</script>
+</body>
+</html>
