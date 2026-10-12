@@ -1,3 +1,5 @@
+pub mod metronome;
+pub mod midi_events;
 pub mod synth;
 
 #[cfg(feature = "desktop-audio")]

@@ -57,6 +57,8 @@ fn main() {
             commands::play,
             commands::stop,
             commands::set_speed,
+            commands::set_loop_region,
+            commands::set_metronome_enabled,
             commands::playback_position,
         ])
         .run(tauri::generate_context!())

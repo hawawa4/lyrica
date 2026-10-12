@@ -2,8 +2,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 
 use mp_core::audio::output_cpal;
-use mp_core::audio::synth::Player;
-use mp_core::rustysynth::MidiFile;
+use mp_core::audio::synth::{LoadedMidi, Player};
 
 /// Holds the shared synth `Player` (behind a `Mutex`, safe to share across
 /// Tauri's command-handling threads) and the currently-loaded MIDI file (so
@@ -20,7 +19,7 @@ use mp_core::rustysynth::MidiFile;
 /// from, not through the stream handle itself.
 pub struct AudioState {
     pub player: Arc<Mutex<Player>>,
-    pub current_midi: Mutex<Option<Arc<MidiFile>>>,
+    pub current_midi: Mutex<Option<Arc<LoadedMidi>>>,
 }
 
 impl AudioState {
@@ -103,6 +102,14 @@ impl AudioState {
 
     pub fn set_speed(&self, speed: f64) {
         self.player.lock().unwrap().set_speed(speed);
+    }
+
+    pub fn set_loop_region(&self, region: Option<(f64, f64)>) {
+        self.player.lock().unwrap().set_loop_region(region);
+    }
+
+    pub fn set_metronome_enabled(&self, enabled: bool) {
+        self.player.lock().unwrap().set_metronome_enabled(enabled);
     }
 
     pub fn position_secs(&self) -> f64 {

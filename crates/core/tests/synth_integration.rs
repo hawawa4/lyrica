@@ -111,3 +111,74 @@ fn speed_scales_position_advance_rate_not_wallclock_rate() {
         "expected position_half ({position_half}) to be ~half of position_1x ({position_1x})"
     );
 }
+
+/// Phase 5's "essential" interaction: an arbitrary A/B loop region (not tied
+/// to the whole file or to embedded MIDI loop markers) must actually wrap
+/// playback position back to `loop_start_ms`, repeatedly, rather than running
+/// past `loop_end_ms` or stopping.
+#[test]
+fn loop_region_wraps_position_back_to_start() {
+    let soundfont_path = soundfont_path();
+    if !soundfont_path.exists() {
+        eprintln!("skipping: soundfont not present in this environment");
+        return;
+    }
+    let soundfont_bytes = fs::read(&soundfont_path).unwrap();
+    let midi_bytes = fs::read("tests/fixtures/darkside.mid").unwrap();
+
+    let mut player = Player::new(&soundfont_bytes, 44100).unwrap();
+    let midi = player.load_midi(&midi_bytes).unwrap();
+    player.play(&midi, false);
+    player.set_loop_region(Some((0.0, 500.0)));
+
+    let mut left = vec![0.0f32; 4410]; // 100ms per render call
+    let mut right = vec![0.0f32; 4410];
+
+    // Render 2 seconds in 100ms chunks: with a 500ms loop region, position
+    // should never be observed anywhere near 2000ms — it keeps wrapping back
+    // under 500ms (plus a little slack for the chunk that crosses the
+    // boundary before wrapping).
+    let mut max_observed_position_ms = 0.0_f64;
+    for _ in 0..20 {
+        player.render(&mut left, &mut right);
+        max_observed_position_ms = max_observed_position_ms.max(player.position_secs() * 1000.0);
+    }
+
+    assert!(
+        max_observed_position_ms < 600.0,
+        "expected position to stay within the 500ms loop region (plus one chunk's slack), \
+         but observed {max_observed_position_ms}ms after 2s of rendering"
+    );
+    assert!(left.iter().all(|s| s.is_finite()));
+}
+
+/// The metronome should produce audible clicks mixed into the output even on
+/// a MIDI file region with no notes playing (silence from the soundfont
+/// alone), confirming clicks are generated independently of note content —
+/// per the handoff spec, "not a soundfont instrument patch."
+#[test]
+fn metronome_clicks_are_audible_without_relying_on_notes() {
+    let soundfont_path = soundfont_path();
+    if !soundfont_path.exists() {
+        eprintln!("skipping: soundfont not present in this environment");
+        return;
+    }
+    let soundfont_bytes = fs::read(&soundfont_path).unwrap();
+    let midi_bytes = fs::read("tests/fixtures/darkside.mid").unwrap();
+
+    let mut player = Player::new(&soundfont_bytes, 44100).unwrap();
+    let midi = player.load_midi(&midi_bytes).unwrap();
+    player.play(&midi, false);
+    player.stop(); // clear any notes/midi so only clicks (no notes) can produce sound
+    player.set_metronome_enabled(true);
+    player.play(&midi, false);
+
+    let frame_count = 44100 * 2;
+    let mut left = vec![0.0f32; frame_count];
+    let mut right = vec![0.0f32; frame_count];
+    player.render(&mut left, &mut right);
+
+    assert!(left.iter().all(|s| s.is_finite()));
+    let max_abs = left.iter().chain(right.iter()).fold(0.0f32, |acc, s| acc.max(s.abs()));
+    assert!(max_abs > 0.001, "expected audible metronome clicks, got max abs sample = {max_abs}");
+}

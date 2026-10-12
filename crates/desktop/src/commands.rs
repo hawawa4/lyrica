@@ -45,6 +45,18 @@ pub fn set_speed(audio: State<AudioState>, speed: f64) {
     audio.set_speed(speed)
 }
 
+/// `region` is `(loop_start_ms, loop_end_ms)`; `None` clears the loop (so
+/// playback runs to the end rather than wrapping).
+#[tauri::command]
+pub fn set_loop_region(audio: State<AudioState>, region: Option<(f64, f64)>) {
+    audio.set_loop_region(region)
+}
+
+#[tauri::command]
+pub fn set_metronome_enabled(audio: State<AudioState>, enabled: bool) {
+    audio.set_metronome_enabled(enabled)
+}
+
 #[tauri::command]
 pub fn playback_position(audio: State<AudioState>) -> f64 {
     audio.position_secs()
