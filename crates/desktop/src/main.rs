@@ -60,6 +60,9 @@ fn main() {
             commands::set_loop_region,
             commands::set_metronome_enabled,
             commands::playback_position,
+            commands::list_markers,
+            commands::add_marker,
+            commands::delete_marker,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

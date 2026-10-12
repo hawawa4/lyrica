@@ -3,11 +3,14 @@
 //! wraps them in REST routes — neither shell duplicates business logic.
 
 use std::io::Cursor;
+use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use crate::markers::{self, Marker};
 use crate::mscz::{self, MsczError};
+use crate::sidecar::SidecarError;
 use crate::timeline::{self, Positions, Timeline, TimelineError};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -77,6 +80,31 @@ pub fn import_timeline(
 ) -> Result<ImportTimelineResponse, ImportTimelineError> {
     let timeline = timeline::build_timeline(&req.positions, &req.midi_bytes)?;
     Ok(ImportTimelineResponse { timeline })
+}
+
+/// Markers CRUD, all keyed by `file_hash` (from `open_file`'s response) and
+/// persisted under `base_dir` (the shell's app-data directory — desktop
+/// resolves this via Tauri's `app_data_dir()`; `mp-core` itself has no
+/// knowledge of Tauri, see `sidecar`'s module docs).
+pub fn list_markers(base_dir: &Path, file_hash: &str) -> Result<Vec<Marker>, SidecarError> {
+    markers::list_markers(base_dir, file_hash)
+}
+
+pub fn add_marker(
+    base_dir: &Path,
+    file_hash: &str,
+    measure_index: u32,
+    text: String,
+) -> Result<Vec<Marker>, SidecarError> {
+    markers::add_marker(base_dir, file_hash, measure_index, text)
+}
+
+pub fn delete_marker(
+    base_dir: &Path,
+    file_hash: &str,
+    marker_id: &str,
+) -> Result<Vec<Marker>, SidecarError> {
+    markers::delete_marker(base_dir, file_hash, marker_id)
 }
 
 #[cfg(test)]
