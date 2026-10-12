@@ -14,6 +14,7 @@ import {
   contentHash,
 } from './api-client'
 import { MarkerPanel } from './views/MarkerPanel'
+import { PiecesIndex } from './views/PiecesIndex'
 import type { Timeline } from './types'
 
 const app = document.querySelector<HTMLDivElement>('#app')!
@@ -42,6 +43,7 @@ app.innerHTML = `
     <div id="loop-status" style="margin-top: 4px; color: #0a0; font-size: 13px;"></div>
     <div id="page" style="margin-top: 16px; max-width: 700px; position: relative;"></div>
     <div id="selection-status" style="margin-top: 4px; color: #888; font-size: 13px;"></div>
+    <div id="pieces-index" style="max-width: 700px;"></div>
     <div id="marker-panel" style="max-width: 700px;"></div>
   </div>
   <div id="drop-overlay" style="display:none; position:fixed; inset:0; background:rgba(0,120,255,0.15); border: 4px dashed rgba(0,120,255,0.6); pointer-events:none; align-items:center; justify-content:center; font-family: sans-serif; font-size: 20px; color: #0078ff;">
@@ -119,14 +121,47 @@ markerPanel.onRequestMeasureIndex(() => {
   return event?.measure_index ?? null
 })
 
-markerPanel.onJumpToMeasure((measureIndex) => {
+/**
+ * Jumps to the page containing the TimelineEvent at the given `measure_index`
+ * — the *flattened/repeats-unrolled* index space (`TimelineEvent`s are built
+ * one per entry in webmscore's already-unrolled `events[]`, see
+ * crates/core/src/timeline.rs). This is the space markers are stored in
+ * (`onRequestMeasureIndex` above also reads/writes `measure_index`, not
+ * `source_elid`), so marker jump-to and timeline/cursor lookups share it.
+ */
+function jumpToMeasure(measureIndex: number): void {
   if (!currentTimeline) return
   const event = currentTimeline.events.find((e) => e.measure_index === measureIndex)
   if (!event) return
   if (event.page !== pageView.page) {
     void pageView.showPage(event.page)
   }
-})
+}
+
+markerPanel.onJumpToMeasure(jumpToMeasure)
+
+/**
+ * Pieces (unlike markers) are detected from the raw .mscx XML in document
+ * order (crates/core/src/pieces.rs), the same index space as webmscore's
+ * *printed, non-unrolled* `measurePositions().elements[]` — i.e. `elid`
+ * space, not `TimelineEvent.measure_index`'s unrolled-events space. These
+ * two numbers only coincide before any repeat has played; past the first
+ * repeat they diverge, so a piece boundary must be looked up by
+ * `source_elid`, not `measure_index`, or jumps land on the wrong page for
+ * every piece after the first repeat anywhere earlier in the file.
+ */
+function jumpToElid(elid: number): void {
+  if (!currentTimeline) return
+  const event = currentTimeline.events.find((e) => e.source_elid === elid)
+  if (!event) return
+  if (event.page !== pageView.page) {
+    void pageView.showPage(event.page)
+  }
+}
+
+const piecesIndexEl = document.querySelector<HTMLDivElement>('#pieces-index')!
+const piecesIndex = new PiecesIndex(piecesIndexEl)
+piecesIndex.onJumpToElid(jumpToElid)
 
 /**
  * Converts a drag-selected elid range to a `[loop_start_ms, loop_end_ms]`
@@ -283,6 +318,7 @@ async function openBytes(bytes: Uint8Array, filename: string) {
   loopStatusEl.textContent = ''
   cursorBoxEl.style.display = 'none'
   await markerPanel.setFileHash(null)
+  await piecesIndex.setScoreBytes(null)
 
   if (isTauri()) {
     // Hashed from `originalBytes` (captured before openScore() detaches the
@@ -298,6 +334,7 @@ async function openBytes(bytes: Uint8Array, filename: string) {
       statusEl.textContent += ` (markers unavailable: ${message})`
       await markerPanel.setFileHash(null)
     }
+    await piecesIndex.setScoreBytes(originalBytes)
 
     const positions = await getMeasurePositions(score)
     const midiBytes = await getMidi(score)

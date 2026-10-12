@@ -1,5 +1,5 @@
 import type { Positions } from './score-engine'
-import type { ImportTimelineResponse, Marker } from './types'
+import type { ImportTimelineResponse, Marker, Piece } from './types'
 
 /** True when running inside the Tauri desktop webview, false in a plain browser tab. */
 export function isTauri(): boolean {
@@ -121,6 +121,19 @@ export async function deleteMarker(fileHash: string, markerId: string): Promise<
   if (!isTauri()) throw new Error('deleteMarker: desktop-only for now')
   const { invoke } = await import('@tauri-apps/api/core')
   return invoke<Marker[]>('delete_marker', { fileHash, markerId })
+}
+
+/**
+ * Detects piece boundaries within a single .mscz file (see
+ * crates/core/src/pieces.rs's module docs for why this needs the raw file
+ * bytes rather than anything webmscore's JS API exposes). A result with 0 or
+ * 1 entries means "not actually multi-piece" — callers should treat that as
+ * no boundaries worth showing.
+ */
+export async function detectPieces(bytes: Uint8Array): Promise<Piece[]> {
+  if (!isTauri()) throw new Error('detectPieces: desktop-only for now')
+  const { invoke } = await import('@tauri-apps/api/core')
+  return invoke<Piece[]>('detect_pieces', { bytes: Array.from(bytes) })
 }
 
 /** Current playback position in seconds, within the MIDI file's own 1.0x timeline. */

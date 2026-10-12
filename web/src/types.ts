@@ -32,3 +32,8 @@ export interface Marker {
   text: string
   created_at: number
 }
+
+export interface Piece {
+  start_measure_index: number
+  title: string
+}
