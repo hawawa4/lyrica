@@ -1,5 +1,6 @@
 import { openScore, upgradeScore, type OpenScoreResult } from './score-engine'
 import { PageView } from './render/PageView'
+import { SelectionOverlay } from './render/SelectionOverlay'
 import { isTauri } from './api-client'
 
 const app = document.querySelector<HTMLDivElement>('#app')!
@@ -14,7 +15,8 @@ app.innerHTML = `
       <span id="page-indicator" style="margin: 0 8px;"></span>
       <button id="next-page">Next &rarr;</button>
     </div>
-    <div id="page" style="margin-top: 16px; max-width: 700px;"></div>
+    <div id="page" style="margin-top: 16px; max-width: 700px; position: relative;"></div>
+    <div id="selection-status" style="margin-top: 4px; color: #888; font-size: 13px;"></div>
   </div>
   <div id="drop-overlay" style="display:none; position:fixed; inset:0; background:rgba(0,120,255,0.15); border: 4px dashed rgba(0,120,255,0.6); pointer-events:none; align-items:center; justify-content:center; font-family: sans-serif; font-size: 20px; color: #0078ff;">
     Drop to open
@@ -35,15 +37,31 @@ const pageIndicatorEl = document.querySelector<HTMLSpanElement>('#page-indicator
 const prevBtn = document.querySelector<HTMLButtonElement>('#prev-page')!
 const nextBtn = document.querySelector<HTMLButtonElement>('#next-page')!
 const pageContainerEl = document.querySelector<HTMLDivElement>('#page')!
+const selectionStatusEl = document.querySelector<HTMLDivElement>('#selection-status')!
 const dropOverlay = document.querySelector<HTMLDivElement>('#drop-overlay')!
 const upgradeModal = document.querySelector<HTMLDivElement>('#upgrade-modal')!
 const upgradeConfirmBtn = document.querySelector<HTMLButtonElement>('#upgrade-confirm')!
 const upgradeCancelBtn = document.querySelector<HTMLButtonElement>('#upgrade-cancel')!
 
-const pageView = new PageView(pageContainerEl, (page, pages) => {
+// Construction order matters: PageView must be created first so its SVG
+// layer is the first child of #page, with SelectionOverlay's boxes/drag-rect
+// layers appended after (and thus stacked visually on top).
+const pageView = new PageView(pageContainerEl, (page, pages, positions) => {
   pageIndicatorEl.textContent = `Page ${page + 1} / ${pages}`
   prevBtn.disabled = page <= 0
   nextBtn.disabled = page >= pages - 1
+  selectionStatusEl.textContent = ''
+  if (positions) {
+    selectionOverlay.setPage(positions.elements, page)
+  }
+})
+
+const selectionOverlay = new SelectionOverlay(pageContainerEl)
+
+selectionOverlay.onSelect((range) => {
+  selectionStatusEl.textContent = range
+    ? `Selected measures (elid ${range.startElid}-${range.endElid})`
+    : ''
 })
 
 function askUpgradeConfirmation(): Promise<boolean> {
@@ -97,7 +115,7 @@ async function openBytes(bytes: Uint8Array, filename: string) {
 
   statusEl.textContent = `${metadata.title || filename} — ${metadata.pages} page(s), format version ${metadata.fileVersion}`
 
-  pageView.setScore(score, metadata.pages)
+  await pageView.setScore(score, metadata.pages)
   navEl.style.display = metadata.pages > 1 ? 'block' : 'none'
   await pageView.showPage(0)
 }

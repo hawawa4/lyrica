@@ -1,4 +1,4 @@
-import { renderPage, type WebMscore } from '../score-engine'
+import { renderPage, getMeasurePositions, type WebMscore, type Positions } from '../score-engine'
 
 /**
  * Paged, vertical page-by-page display of a score. Caches each rendered SVG
@@ -11,18 +11,36 @@ export class PageView {
   private pageCount = 0
   private currentPage = 0
   private readonly cache = new Map<number, string>()
+  private positions: Positions | null = null
+  private readonly svgLayer: HTMLDivElement
 
+  /**
+   * `container` is shared with SelectionOverlay (both render into the same
+   * stage element: the SVG goes underneath, the selection boxes/drag-rect sit
+   * on top). PageView owns its own dedicated child for the SVG rather than
+   * writing `container.innerHTML` directly, so swapping pages never wipes out
+   * SelectionOverlay's sibling layers.
+   */
   constructor(
     private readonly container: HTMLElement,
-    private readonly onPageChange?: (page: number, pageCount: number) => void,
-  ) {}
+    private readonly onPageChange?: (page: number, pageCount: number, positions: Positions | null) => void,
+  ) {
+    this.svgLayer = document.createElement('div')
+    this.container.appendChild(this.svgLayer)
+  }
 
-  /** Attach a newly-opened score. Clears any previously cached pages. */
-  setScore(score: WebMscore, pageCount: number): void {
+  /**
+   * Attach a newly-opened score. Clears any previously cached pages and
+   * fetches `measurePositions()` once (cached here for the lifetime of this
+   * score, per IMPLEMENTATION_PLAN.md Phase 3 — pure derived data, cheap to
+   * keep in memory, safe to re-fetch if ever needed since it's read-only).
+   */
+  async setScore(score: WebMscore, pageCount: number): Promise<void> {
     this.score = score
     this.pageCount = pageCount
     this.currentPage = 0
     this.cache.clear()
+    this.positions = await getMeasurePositions(score)
   }
 
   async showPage(index: number): Promise<void> {
@@ -30,11 +48,11 @@ export class PageView {
     if (index < 0 || index >= this.pageCount) return
 
     this.currentPage = index
-    this.onPageChange?.(this.currentPage, this.pageCount)
 
     const cached = this.cache.get(index)
     if (cached !== undefined) {
       this.setContent(cached)
+      this.onPageChange?.(this.currentPage, this.pageCount, this.positions)
       return
     }
 
@@ -44,6 +62,7 @@ export class PageView {
     // navigated elsewhere (or opened a new file) while this render was in flight.
     if (this.currentPage === index) {
       this.setContent(svg)
+      this.onPageChange?.(this.currentPage, this.pageCount, this.positions)
     }
   }
 
@@ -55,8 +74,8 @@ export class PageView {
    * sharpness at any zoom level and keeps the cached SVG string unmodified.
    */
   private setContent(svg: string): void {
-    this.container.innerHTML = svg
-    const svgEl = this.container.querySelector('svg')
+    this.svgLayer.innerHTML = svg
+    const svgEl = this.svgLayer.querySelector('svg')
     if (svgEl) {
       svgEl.style.width = '100%'
       svgEl.style.height = 'auto'
