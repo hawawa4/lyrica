@@ -16,3 +16,6 @@ dist/
 # Soundfonts — fetched on demand via `just fetch-soundfont`, not committed (~148MB)
 assets/*.sf2
 assets/*.sf3
+
+# CJK font — fetched on demand via `just fetch-cjk-font`, not committed (~4.5MB)
+web/public/vendor/fonts/

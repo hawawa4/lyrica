@@ -55,6 +55,31 @@ async function ensureReady(): Promise<typeof WebMscoreCtor> {
   return WebMscore
 }
 
+let cjkFontPromise: Promise<Uint8Array[]> | null = null
+
+/**
+ * webmscore's WASM build only bundles Edwin/FreeSerif/FreeSans/MuseJazz/mscore
+ * — none have CJK glyphs, so any title/lyric text containing Japanese/Chinese/
+ * Korean renders as completely blank (confirmed empirically: the glyph's Text
+ * path is omitted from saveSvg's output entirely, not just empty/invisible).
+ * Unlike desktop MuseScore, which falls back to the host OS's font-fallback
+ * (Qt/fontconfig), webmscore's sandboxed build can't substitute a system font
+ * on its own — `WebMscore.load()`'s `fonts` param exists for exactly this.
+ *
+ * Fetched on demand (`just fetch-cjk-font`, not committed to git — see
+ * Justfile), same pattern as the soundfont. Missing file is non-fatal: scores
+ * without CJK text still render fine without it.
+ */
+function loadCjkFont(): Promise<Uint8Array[]> {
+  if (!cjkFontPromise) {
+    cjkFontPromise = fetch('/vendor/fonts/NotoSansJP-Regular.otf')
+      .then((res) => (res.ok ? res.arrayBuffer() : null))
+      .then((buf) => (buf ? [new Uint8Array(buf)] : []))
+      .catch(() => [])
+  }
+  return cjkFontPromise
+}
+
 export interface OpenScoreResult {
   score: WebMscore
   needsUpgrade: boolean
@@ -87,7 +112,8 @@ const ENGINE_FILE_VERSION = 450
  */
 export async function openScore(bytes: Uint8Array): Promise<OpenScoreResult> {
   const WebMscore = await ensureReady()
-  const score = await WebMscore.load('mscz', bytes, [], true)
+  const fonts = await loadCjkFont()
+  const score = await WebMscore.load('mscz', bytes, fonts, true)
   const metadata = await score.metadata()
   const needsUpgrade = metadata.fileVersion < ENGINE_FILE_VERSION
   return { score, needsUpgrade, metadata }

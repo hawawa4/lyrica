@@ -7,6 +7,17 @@
 # rustysynth; .sf3 isn't supported by rustysynth at all).
 soundfont_url := "https://github.com/pianobooster/fluid-soundfont/releases/download/v3.1/FluidR3_GM.sf2"
 
+# Noto Sans JP, extracted from Google/Adobe's Noto CJK release zip. webmscore's
+# bundled fonts (Edwin/FreeSerif/FreeSans/MuseJazz/mscore) have zero CJK glyph
+# coverage — titles/lyrics containing Japanese/Chinese/Korean text render as
+# completely blank — and unlike desktop MuseScore (which falls back to the host
+# OS's font-fallback via Qt/fontconfig), webmscore's sandboxed WASM build can't
+# substitute a system font on its own. webmscore's `WebMscore.load()` has a
+# `fonts` param made exactly for this: extra font files loaded into its virtual
+# filesystem. Confirmed empirically this font fixes rendering (see
+# _spike/test-cjk-font.mjs during development).
+cjk_font_url := "https://github.com/notofonts/noto-cjk/releases/download/Sans2.004/16_NotoSansJP.zip"
+
 # Running `just` with no recipe name lists everything (default Justfile convention).
 default:
     @just --list
@@ -23,6 +34,24 @@ fetch-soundfont:
     fi
     echo "fetching FluidR3_GM.sf2 from {{soundfont_url}}..."
     curl -fL -o "$dest" "{{soundfont_url}}"
+    echo "saved to $dest"
+
+# Fetch the CJK font used so webmscore can render Japanese/Chinese/Korean
+# title/lyric text (not committed to git — ~4.5MB).
+fetch-cjk-font:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    mkdir -p web/public/vendor/fonts
+    dest="web/public/vendor/fonts/NotoSansJP-Regular.otf"
+    if [ -f "$dest" ]; then
+        echo "already present: $dest"
+        exit 0
+    fi
+    tmpdir=$(mktemp -d)
+    trap 'rm -rf "$tmpdir"' EXIT
+    echo "fetching NotoSansJP from {{cjk_font_url}}..."
+    curl -fL -o "$tmpdir/font.zip" "{{cjk_font_url}}"
+    unzip -j -o "$tmpdir/font.zip" "NotoSansJP-Regular.otf" -d "web/public/vendor/fonts"
     echo "saved to $dest"
 
 # Run the full Rust test suite (audio tests skip gracefully without a soundfont).
