@@ -2,6 +2,9 @@
 /target
 **/target
 
+# Tauri auto-generated schemas
+crates/desktop/gen/
+
 # Node
 node_modules/
 dist/
