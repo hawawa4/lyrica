@@ -63,6 +63,7 @@ fn main() {
             commands::list_markers,
             commands::add_marker,
             commands::delete_marker,
+            commands::detect_pieces,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

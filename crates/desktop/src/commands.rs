@@ -1,5 +1,6 @@
 use mp_core::api::{self, ImportTimelineResponse, OpenFileRequest, OpenFileResponse};
 use mp_core::markers::Marker;
+use mp_core::pieces::Piece;
 use mp_core::timeline::Positions;
 use tauri::{AppHandle, Manager, State};
 
@@ -91,4 +92,9 @@ pub fn add_marker(
 pub fn delete_marker(app: AppHandle, file_hash: String, marker_id: String) -> Result<Vec<Marker>, String> {
     let base_dir = markers_base_dir(&app)?;
     api::delete_marker(&base_dir, &file_hash, &marker_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn detect_pieces(bytes: Vec<u8>) -> Result<Vec<Piece>, String> {
+    api::detect_pieces(&bytes).map_err(|e| e.to_string())
 }

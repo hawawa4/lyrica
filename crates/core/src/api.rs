@@ -10,6 +10,7 @@ use thiserror::Error;
 
 use crate::markers::{self, Marker};
 use crate::mscz::{self, MsczError};
+use crate::pieces::{self, Piece, PiecesError};
 use crate::sidecar::SidecarError;
 use crate::timeline::{self, Positions, Timeline, TimelineError};
 
@@ -51,6 +52,24 @@ pub fn open_file(req: OpenFileRequest) -> Result<OpenFileResponse, MsczError> {
         mscz_version,
         needs_upgrade,
     })
+}
+
+/// Detects piece boundaries within a single `.mscz` file (see `pieces` module
+/// docs for why this needs the raw XML rather than webmscore's exposed JS
+/// API). Takes the file's own bytes directly — unlike `import_timeline`,
+/// this is a pure Rust zip+XML operation with nothing for the JS layer to
+/// export first.
+#[derive(Debug, Error)]
+pub enum DetectPiecesError {
+    #[error(transparent)]
+    Mscz(#[from] MsczError),
+    #[error(transparent)]
+    Pieces(#[from] PiecesError),
+}
+
+pub fn detect_pieces(bytes: &[u8]) -> Result<Vec<Piece>, DetectPiecesError> {
+    let contents = mscz::read_rootfile_contents(Cursor::new(bytes))?;
+    Ok(pieces::detect_pieces(&contents)?)
 }
 
 /// Rust never parses `.mscz`/MIDI directly — this receives already-exported

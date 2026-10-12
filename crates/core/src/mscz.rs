@@ -28,16 +28,23 @@ pub enum MsczError {
 /// container.xml" — some real-world files list a non-score file (e.g.
 /// `score_style.mss`) before the actual `.mscx` rootfile.
 pub fn sniff_version<R: Read + Seek>(reader: R) -> Result<String, MsczError> {
-    let mut archive = ZipArchive::new(reader)?;
+    let contents = read_rootfile_contents(reader)?;
+    parse_version_attribute(&contents)
+}
 
+/// Reads the full contents of an `.mscz` archive's score rootfile (the
+/// `.mscx` XML), for callers that need more than `sniff_version`'s cheap
+/// version check — e.g. `pieces::detect_pieces`, which scans the same XML
+/// for piece-boundary title frames.
+pub fn read_rootfile_contents<R: Read + Seek>(reader: R) -> Result<String, MsczError> {
+    let mut archive = ZipArchive::new(reader)?;
     let rootfile_path = find_rootfile_path(&mut archive)?;
 
     let mut rootfile = archive.by_name(&rootfile_path)
         .map_err(|_| MsczError::RootfileMissing(rootfile_path.clone()))?;
     let mut contents = String::new();
     rootfile.read_to_string(&mut contents)?;
-
-    parse_version_attribute(&contents)
+    Ok(contents)
 }
 
 fn find_rootfile_path<R: Read + Seek>(archive: &mut ZipArchive<R>) -> Result<String, MsczError> {
