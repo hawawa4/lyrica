@@ -70,7 +70,24 @@ Deliverable: a comparison table, a clear recommendation with reasons, risks, and
 7. Pieces index and jumping between pieces.
 8. Tabs for multiple files, then the recent-files list.
 
+## Decisions (from research session)
+- **Platform:** desktop + web now. A future server mode is anticipated (tracking practiced pieces, a library view across sessions), so prefer an architecture that splits into a backend service plus thin client rather than a monolithic desktop-only app.
+- **MuseScore versions:** the app's internal engine targets **MS4 only**. Real library sample showed most existing files are MS1–3, so on import: if a file isn't MS4, **auto-upgrade it (re-save via MuseScore 4) but warn the user and ask for confirmation first**, then treat everything internally as MS4.
+- **License:** GPLv3 is acceptable, including if distributed. Not a constraint on approach choice (e.g. embedding MuseScore's own engine is fine).
+- **Rendering approach (Phase 0 research result):** use **webmscore** (MuseScore's engine compiled to WASM) for parsing, SVG page rendering, and position/metadata export — it's the only option with confirmed real MS4 support and a working pipeline (same stack validated by `musescore-web-display` in production). Rejected: from-scratch Rust engraving (no viable crate exists, multi-year effort), MuseScore CLI (measure/note position export reportedly broken in MS4.0.0, plus subprocess-per-file is too slow), Verovio/OpenSheetMusicDisplay (don't read `.mscz` natively, would need a lossy MusicXML conversion step anyway).
+  - **Open risk to verify hands-on before committing further:** confirm webmscore's position-export API actually gives usable per-measure/per-note bounding boxes on a real MS4 file — needed for click-drag selection. Proposed first prototype: load one real multi-page `.mscz` through webmscore, export SVG + position data, confirm a mouse-drag rectangle maps to a measure range.
+- **Architecture:** shared Rust core crate (parsing/state/playback) wrapped by a Tauri shell for desktop and an axum web server for browser/future server mode. webmscore is WASM/JS, not a Rust crate, so rendering likely happens in the webview's JS layer while Rust handles synth/state/server logic.
+- **Audio:** rustysynth (pure Rust soundfont synth) + a bundled General MIDI soundfont (FluidR3Mono_GM.sf3 — verify its exact license before distributing). Speed change (0.5x/0.75x/1.0x) is just re-timing the MIDI event schedule, not real time-stretching, since this is synth playback, not a recording.
+
+## PDF mode (new, secondary pipeline for scores without a usable .mscz)
+Some library items are PDF-only. Automated PDF→MuseScore via OMR (Audiveris, oemer, PlayScore, SmartScore, etc.) was researched and **rejected as a core feature**: even the best tools produce wrong pitches/timing on real piano scores (grand staff, chords, multiple voices) without manual correction in a notation editor, which defeats the app's no-editing premise. Could offer OMR later as an opt-in "rough draft, go fix it yourself in MuseScore" convenience, but the app must not rely on it.
+
+Instead, build a **PDF-native mode**, modeled on **Chorilo**'s PDF-metronome approach (prior art, confirmed to exist and work this way):
+- True audio playback of the piece is **not possible** without real note data — out of scope, and the app should not promise it.
+- **Metronome playback stays in scope.** The user manually calibrates: tap along with a metronome (or place points directly) to mark "this position on this page = measure N, beat 1." The app linearly interpolates time-to-position between calibration points to derive an approximate tempo map.
+- This tempo map is enough to support: loop regions between two calibration points, a scrolling/sweeping position indicator synced to interpolated timing, and a metronome click that follows the interpolated tempo — without any true note data.
+- **Classical computer-vision barline detection as an assist, not authoritative:** detecting barlines (vertical dark-pixel runs spanning the staff height, via staff-line detection + projection profile / Hough lines) is a comparatively well-solved sub-problem even without ML, unlike notehead/pitch recognition. Use it to **pre-place candidate measure markers for the user to review, adjust, and confirm** — never trust it blindly (false positives from stems/beams/slurs; multi-staff systems need barlines aligned across staves). Measure-number OCR is optional/lower priority since marker position matters more than the printed number.
+- Other relevant prior art to study for UX: **forScore** and **MobileSheets** (manual link/button repeat navigation, A-B loop playback on plain PDFs/images). **Tonara** uses live mic-based acoustic score-following instead of OMR or manual calibration — a different technique, likely out of scope for v1 given the complexity of real-time pitch/onset detection and alignment.
+
 ## Open questions for the user
-- Target platform: desktop only, or also web/mobile?
-- Which MuseScore versions must open (3, 4, or both)?
-- Is GPLv3 acceptable (personal use only, or distribution planned)?
+(resolved — see Decisions above)
