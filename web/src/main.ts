@@ -1,13 +1,25 @@
 import { openScore, upgradeScore, getMeasurePositions, getMidi, type OpenScoreResult } from './score-engine'
 import { PageView } from './render/PageView'
-import { SelectionOverlay } from './render/SelectionOverlay'
+import { SelectionOverlay, type MeasureRange } from './render/SelectionOverlay'
 import { Cursor } from './render/Cursor'
-import { isTauri, importTimeline, loadMidi, playMidi, stopMidi } from './api-client'
+import {
+  isTauri,
+  importTimeline,
+  loadMidi,
+  playMidi,
+  stopMidi,
+  setPlaybackSpeed,
+  setLoopRegion,
+  setMetronomeEnabled,
+} from './api-client'
 import type { Timeline } from './types'
 
 const app = document.querySelector<HTMLDivElement>('#app')!
 
 app.innerHTML = `
+  <style>
+    .speed-btn.active { background: #0078ff; color: white; }
+  </style>
   <div style="padding: 16px; font-family: sans-serif;">
     <input id="file-input" type="file" accept=".mscz,.mscx" />
     <span style="color:#888; margin-left: 8px;">or drag a .mscz file anywhere onto the window</span>
@@ -18,8 +30,14 @@ app.innerHTML = `
       <button id="next-page">Next &rarr;</button>
       <button id="play-btn" style="margin-left: 16px;" disabled>&#9654; Play</button>
       <button id="stop-btn" disabled>&#9632; Stop</button>
-      <label style="margin-left: 8px;"><input id="loop-checkbox" type="checkbox" /> Loop</label>
+      <span style="margin-left: 16px;">
+        <button id="speed-05" class="speed-btn" disabled>0.5x</button>
+        <button id="speed-075" class="speed-btn" disabled>0.75x</button>
+        <button id="speed-10" class="speed-btn" disabled>1.0x</button>
+      </span>
+      <label style="margin-left: 16px;"><input id="metronome-checkbox" type="checkbox" disabled /> Metronome</label>
     </div>
+    <div id="loop-status" style="margin-top: 4px; color: #0a0; font-size: 13px;"></div>
     <div id="page" style="margin-top: 16px; max-width: 700px; position: relative;"></div>
     <div id="selection-status" style="margin-top: 4px; color: #888; font-size: 13px;"></div>
   </div>
@@ -43,9 +61,15 @@ const prevBtn = document.querySelector<HTMLButtonElement>('#prev-page')!
 const nextBtn = document.querySelector<HTMLButtonElement>('#next-page')!
 const playBtn = document.querySelector<HTMLButtonElement>('#play-btn')!
 const stopBtn = document.querySelector<HTMLButtonElement>('#stop-btn')!
-const loopCheckbox = document.querySelector<HTMLInputElement>('#loop-checkbox')!
+const speedButtons = {
+  0.5: document.querySelector<HTMLButtonElement>('#speed-05')!,
+  0.75: document.querySelector<HTMLButtonElement>('#speed-075')!,
+  1.0: document.querySelector<HTMLButtonElement>('#speed-10')!,
+}
+const metronomeCheckbox = document.querySelector<HTMLInputElement>('#metronome-checkbox')!
 const pageContainerEl = document.querySelector<HTMLDivElement>('#page')!
 const selectionStatusEl = document.querySelector<HTMLDivElement>('#selection-status')!
+const loopStatusEl = document.querySelector<HTMLDivElement>('#loop-status')!
 const dropOverlay = document.querySelector<HTMLDivElement>('#drop-overlay')!
 const upgradeModal = document.querySelector<HTMLDivElement>('#upgrade-modal')!
 const upgradeConfirmBtn = document.querySelector<HTMLButtonElement>('#upgrade-confirm')!
@@ -66,11 +90,67 @@ const pageView = new PageView(pageContainerEl, (page, pages, positions) => {
 
 const selectionOverlay = new SelectionOverlay(pageContainerEl)
 let currentTimeline: Timeline | null = null
+let currentSelection: MeasureRange | null = null
+let currentSpeed = 1.0
+let currentLoopRegion: [number, number] | null = null
 
 selectionOverlay.onSelect((range) => {
+  currentSelection = range
   selectionStatusEl.textContent = range
-    ? `Selected measures (elid ${range.startElid}-${range.endElid})`
+    ? `Selected measures (elid ${range.startElid}-${range.endElid}) — press L to loop`
     : ''
+})
+
+/**
+ * Converts a drag-selected elid range to a `[loop_start_ms, loop_end_ms]`
+ * pair in the timeline's flattened (1.0x) space, for `setLoopRegion`.
+ * `loop_end_ms` is the start time of the event *after* the last matching
+ * one (or the timeline's duration if the selection reaches the end), so the
+ * loop plays out the full duration of the last selected measure rather than
+ * cutting off at its start.
+ */
+function loopRegionForSelection(timeline: Timeline, range: MeasureRange): [number, number] | null {
+  const matching = timeline.events
+    .map((e, index) => ({ e, index }))
+    .filter(({ e }) => e.source_elid >= range.startElid && e.source_elid <= range.endElid)
+  if (matching.length === 0) return null
+
+  const startMs = Math.min(...matching.map(({ e }) => e.time_ms))
+  const lastIndex = Math.max(...matching.map(({ index }) => index))
+  const endMs = timeline.events[lastIndex + 1]?.time_ms ?? timeline.duration_ms
+  return [startMs, endMs]
+}
+
+async function setLoop(range: MeasureRange | null): Promise<void> {
+  currentLoopRegion = (currentTimeline && range && loopRegionForSelection(currentTimeline, range)) || null
+  loopStatusEl.textContent = currentLoopRegion
+    ? `Looping measures (elid ${range!.startElid}-${range!.endElid})`
+    : ''
+  await setLoopRegion(currentLoopRegion)
+}
+
+window.addEventListener('keydown', (e) => {
+  if (e.key.toLowerCase() !== 'l' || !isTauri() || !currentTimeline) return
+  const target = e.target as HTMLElement | null
+  if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) return
+  void setLoop(currentSelection)
+})
+
+function setSpeed(speed: number): void {
+  currentSpeed = speed
+  for (const [value, btn] of Object.entries(speedButtons)) {
+    btn.classList.toggle('active', Number(value) === speed)
+  }
+  void setPlaybackSpeed(speed)
+}
+
+for (const [value, btn] of Object.entries(speedButtons)) {
+  btn.addEventListener('click', () => setSpeed(Number(value)))
+}
+speedButtons[1.0].classList.add('active')
+
+metronomeCheckbox.addEventListener('change', () => {
+  void setMetronomeEnabled(metronomeCheckbox.checked)
 })
 
 const cursorBoxEl = document.createElement('div')
@@ -158,9 +238,14 @@ async function openBytes(bytes: Uint8Array, filename: string) {
   await pageView.showPage(0)
 
   currentTimeline = null
+  currentSelection = null
+  currentLoopRegion = null
   cursor.setTimeline(null)
   playBtn.disabled = true
   stopBtn.disabled = true
+  for (const btn of Object.values(speedButtons)) btn.disabled = true
+  metronomeCheckbox.disabled = true
+  loopStatusEl.textContent = ''
   cursorBoxEl.style.display = 'none'
 
   if (isTauri()) {
@@ -170,12 +255,18 @@ async function openBytes(bytes: Uint8Array, filename: string) {
     currentTimeline = timeline
     cursor.setTimeline(timeline)
     await loadMidi(midiBytes)
+    await setLoopRegion(null)
+    await setMetronomeEnabled(metronomeCheckbox.checked)
     playBtn.disabled = false
+    for (const btn of Object.values(speedButtons)) btn.disabled = false
+    metronomeCheckbox.disabled = false
   }
 }
 
 playBtn.addEventListener('click', async () => {
-  await playMidi(loopCheckbox.checked)
+  await playMidi(false)
+  await setPlaybackSpeed(currentSpeed)
+  await setLoopRegion(currentLoopRegion)
   cursor.start()
   playBtn.disabled = true
   stopBtn.disabled = false

@@ -58,6 +58,19 @@ export async function setPlaybackSpeed(speed: number): Promise<void> {
   await invoke('set_speed', { speed })
 }
 
+/** `region` is `[loop_start_ms, loop_end_ms]`; `null` clears the loop. */
+export async function setLoopRegion(region: [number, number] | null): Promise<void> {
+  if (!isTauri()) throw new Error('setLoopRegion: desktop-only for now')
+  const { invoke } = await import('@tauri-apps/api/core')
+  await invoke('set_loop_region', { region })
+}
+
+export async function setMetronomeEnabled(enabled: boolean): Promise<void> {
+  if (!isTauri()) throw new Error('setMetronomeEnabled: desktop-only for now')
+  const { invoke } = await import('@tauri-apps/api/core')
+  await invoke('set_metronome_enabled', { enabled })
+}
+
 /** Current playback position in seconds, within the MIDI file's own 1.0x timeline. */
 export async function getPlaybackPosition(): Promise<number> {
   if (!isTauri()) throw new Error('getPlaybackPosition: desktop-only for now')
