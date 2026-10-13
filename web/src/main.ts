@@ -2,7 +2,7 @@ import { openScore, upgradeScore, getMeasurePositions, getMidi, type OpenScoreRe
 import { loadPdf, renderPdfPage, type PdfDocument } from './pdf-engine'
 import { PageView } from './render/PageView'
 import { SelectionOverlay, type MeasureRange } from './render/SelectionOverlay'
-import { CalibrationOverlay } from './views/CalibrationOverlay'
+import { CalibrationOverlay, type PointRange } from './views/CalibrationOverlay'
 import { Cursor } from './render/Cursor'
 import {
   isTauri,
@@ -24,7 +24,7 @@ import { MarkerPanel } from './views/MarkerPanel'
 import { PiecesIndex } from './views/PiecesIndex'
 import { TabBar, type TabInfo } from './views/TabBar'
 import { RecentFilesList } from './views/RecentFilesList'
-import type { CalibrationPoint, Timeline } from './types'
+import type { CalibrationPoint, Timeline, TimelineEvent } from './types'
 
 const app = document.querySelector<HTMLDivElement>('#app')!
 
@@ -69,13 +69,6 @@ app.innerHTML = `
   <div id="drop-overlay" style="display:none; position:fixed; inset:0; background:rgba(0,120,255,0.15); border: 4px dashed rgba(0,120,255,0.6); pointer-events:none; align-items:center; justify-content:center; font-family: sans-serif; font-size: 20px; color: #0078ff;">
     Drop to open
   </div>
-  <div id="upgrade-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); align-items:center; justify-content:center;">
-    <div style="background:white; padding:24px; max-width:420px; border-radius:8px;">
-      <p>This file was made in an older MuseScore version and will be upgraded to MuseScore 4 format for this app. Continue?</p>
-      <button id="upgrade-confirm">Continue</button>
-      <button id="upgrade-cancel">Cancel</button>
-    </div>
-  </div>
 `
 
 const fileInput = document.querySelector<HTMLInputElement>('#file-input')!
@@ -102,9 +95,6 @@ const zoomOutBtn = document.querySelector<HTMLButtonElement>('#zoom-out')!
 const zoomInBtn = document.querySelector<HTMLButtonElement>('#zoom-in')!
 const zoomIndicatorEl = document.querySelector<HTMLSpanElement>('#zoom-indicator')!
 const dropOverlay = document.querySelector<HTMLDivElement>('#drop-overlay')!
-const upgradeModal = document.querySelector<HTMLDivElement>('#upgrade-modal')!
-const upgradeConfirmBtn = document.querySelector<HTMLButtonElement>('#upgrade-confirm')!
-const upgradeCancelBtn = document.querySelector<HTMLButtonElement>('#upgrade-cancel')!
 
 /**
  * Everything that used to be a single set of global variables/objects,
@@ -150,6 +140,7 @@ interface PdfTabState {
   canvasContainer: HTMLDivElement
   calibrationOverlay: CalibrationOverlay
   points: CalibrationPoint[]
+  selectedRange: PointRange | null
   numerator: number
   speed: number
   loopRegion: [number, number] | null
@@ -177,7 +168,7 @@ const recentFilesList = new RecentFilesList(recentFilesEl)
 recentFilesList.onOpen((entry) => void reopenRecentFile(entry.path))
 void recentFilesList.refresh()
 
-const cursor = new Cursor((event) => {
+const msczCursor = new Cursor<TimelineEvent>((event) => {
   const active = activeTab()
   if (!active || active.kind !== 'mscz') return
   if (event.page !== active.pageView.page) {
@@ -188,6 +179,26 @@ const cursor = new Cursor((event) => {
   cursorBoxEl.style.top = `${(event.bbox.y / currentPageHeight()) * 100}%`
   cursorBoxEl.style.width = `${(event.bbox.sx / currentPageWidth()) * 100}%`
   cursorBoxEl.style.height = `${(event.bbox.sy / currentPageHeight()) * 100}%`
+})
+
+/**
+ * PDF mode has no bbox to draw a highlight box from — only each calibration
+ * point's own `{page, x, y}` — so this highlights the *segment* currently
+ * playing (from the active point to the next one, or a small fixed window
+ * past the last point) by driving CalibrationOverlay's own selection
+ * highlighting, the same highlight style drag-selecting a loop range
+ * already uses.
+ */
+const pdfCursor = new Cursor<CalibrationPoint>((_point, itemIndex) => {
+  const active = activeTab()
+  if (!active || active.kind !== 'pdf') return
+  const points = active.calibrationOverlay.getPoints()
+  const target = points[itemIndex]
+  if (!target) return
+  if (target.page !== active.currentPage) {
+    void showPdfPage(active, target.page)
+  }
+  active.calibrationOverlay.setPlayingIndex(itemIndex)
 })
 
 const markerPanelEl = document.querySelector<HTMLDivElement>('#marker-panel')!
@@ -284,12 +295,44 @@ async function setLoop(range: MeasureRange | null): Promise<void> {
   await setLoopRegion(active.loopRegion)
 }
 
+/**
+ * Same idea as `loopRegionForSelection`, but over calibration points instead
+ * of `TimelineEvent`s — the user's own framing (see main.ts's PdfTabState
+ * docs / the conversation this was designed in) is that calibration points
+ * are "converting the PDF to .mscz, but only the measure-boundary part," so
+ * this mirrors `loopRegionForSelection`'s "end at the start of the next item
+ * after the selection" rule exactly, just against `points[]`/`time_ms`
+ * instead of `timeline.events[]`.
+ */
+function loopRegionForPointRange(points: CalibrationPoint[], range: PointRange): [number, number] | null {
+  if (points.length === 0) return null
+  const startMs = points[range.startIndex]?.time_ms
+  if (startMs === undefined) return null
+  const endMs = points[range.endIndex + 1]?.time_ms ?? points[points.length - 1].time_ms + 2000
+  return [startMs, endMs]
+}
+
+async function setPdfLoop(range: PointRange | null): Promise<void> {
+  const active = activeTab()
+  if (!active || active.kind !== 'pdf') return
+  const points = active.calibrationOverlay.getPoints()
+  active.loopRegion = (range && loopRegionForPointRange(points, range)) || null
+  loopStatusEl.textContent = active.loopRegion
+    ? `Looping between calibration points ${range!.startIndex}-${range!.endIndex}`
+    : ''
+  await setLoopRegion(active.loopRegion)
+}
+
 window.addEventListener('keydown', (e) => {
   const active = activeTab()
-  if (e.key.toLowerCase() !== 'l' || !isTauri() || !active || active.kind !== 'mscz' || !active.timeline) return
+  if (e.key.toLowerCase() !== 'l' || !isTauri() || !active) return
   const target = e.target as HTMLElement | null
   if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) return
-  void setLoop(active.selection)
+  if (active.kind === 'mscz' && active.timeline) {
+    void setLoop(active.selection)
+  } else if (active.kind === 'pdf' && !active.markingMode) {
+    void setPdfLoop(active.selectedRange)
+  }
 })
 
 function setSpeed(speed: number): void {
@@ -327,27 +370,6 @@ function currentPageHeight(): number {
   return svg ? parseFloat(svg.getAttribute('viewBox')?.split(' ')[3] ?? '0') : 1
 }
 
-function askUpgradeConfirmation(): Promise<boolean> {
-  return new Promise((resolve) => {
-    upgradeModal.style.display = 'flex'
-    const onConfirm = () => {
-      cleanup()
-      resolve(true)
-    }
-    const onCancel = () => {
-      cleanup()
-      resolve(false)
-    }
-    function cleanup() {
-      upgradeModal.style.display = 'none'
-      upgradeConfirmBtn.removeEventListener('click', onConfirm)
-      upgradeCancelBtn.removeEventListener('click', onCancel)
-    }
-    upgradeConfirmBtn.addEventListener('click', onConfirm)
-    upgradeCancelBtn.addEventListener('click', onCancel)
-  })
-}
-
 function renderTabBar(): void {
   const tabInfos: TabInfo[] = Array.from(tabs.values()).map((t) => ({ fileHash: t.fileHash, title: t.title }))
   tabBar.setTabs(tabInfos, activeHash)
@@ -356,7 +378,8 @@ function renderTabBar(): void {
 /** Stops shared audio playback — the backend owns one synth/stream for the whole app, not one per tab. */
 async function stopAudioForTabSwitch(): Promise<void> {
   await stopMidi()
-  cursor.stop()
+  msczCursor.stop()
+  pdfCursor.stop()
   playBtn.disabled = true
   stopBtn.disabled = true
 }
@@ -384,7 +407,8 @@ async function activateTab(tab: TabState): Promise<void> {
       : ''
     loopStatusEl.textContent = tab.loopRegion ? 'Looping selected measures' : ''
 
-    cursor.setTimeline(tab.timeline)
+    msczCursor.setItems(tab.timeline?.events ?? null)
+    pdfCursor.setItems(null)
     await markerPanel.setFileHash(tab.fileHash)
     await piecesIndex.setScoreBytes(tab.originalBytes)
 
@@ -402,7 +426,9 @@ async function activateTab(tab: TabState): Promise<void> {
       await setMetronomeEnabled(metronomeCheckbox.checked)
     }
   } else {
-    selectionStatusEl.textContent = ''
+    selectionStatusEl.textContent = tab.selectedRange
+      ? `Selected calibration points ${tab.selectedRange.startIndex}-${tab.selectedRange.endIndex} — press L to loop`
+      : ''
     loopStatusEl.textContent = tab.loopRegion ? 'Looping between calibration points' : ''
     calibrationStatusEl.textContent = markingModeStatusText(tab)
     markingModeCheckbox.checked = tab.markingMode
@@ -411,7 +437,8 @@ async function activateTab(tab: TabState): Promise<void> {
     zoomOutBtn.disabled = tab.zoom <= PDF_MIN_ZOOM
     zoomInBtn.disabled = tab.zoom >= PDF_MAX_ZOOM
 
-    cursor.setTimeline(null)
+    msczCursor.setItems(null)
+    pdfCursor.setItems(tab.calibrationOverlay.getPoints())
     await markerPanel.setFileHash(null)
     await piecesIndex.setScoreBytes(null)
 
@@ -553,13 +580,13 @@ async function openMsczBytes(bytes: Uint8Array, filename: string, path: string |
   let { score } = result
   const { needsUpgrade, metadata } = result
 
+  // Upgrading is purely an in-memory re-save inside webmscore's own engine
+  // (to the format version it natively works with) — it never touches the
+  // user's original file on disk (upgradeScore's return value is only ever
+  // persisted into this app's own cache, keyed by the *original* file's
+  // hash — see the comment on hashing below). Nothing for the user to
+  // decide here, so no confirmation prompt.
   if (needsUpgrade) {
-    const confirmed = await askUpgradeConfirmation()
-    if (!confirmed) {
-      statusEl.textContent = `Cancelled: ${filename} was not opened (needs upgrade to MuseScore 4 format).`
-      score.destroy()
-      return
-    }
     const upgradedBytes = await upgradeScore(score)
     score.destroy()
     result = await openScore(upgradedBytes)
@@ -640,11 +667,7 @@ async function openMsczBytes(bytes: Uint8Array, filename: string, path: string |
     tabState.timeline = timeline
 
     if (path) {
-      try {
-        await recordRecentFile(path, fileHash, title)
-      } catch (e) {
-        console.error('Failed to record recent file:', e)
-      }
+      await recordAndRefreshRecentFile(path, fileHash, title)
     }
   }
 
@@ -652,8 +675,31 @@ async function openMsczBytes(bytes: Uint8Array, filename: string, path: string |
   await activateTab(tabState)
 }
 
+/** Records the file in the recent-files list and refreshes the (currently hidden, since a tab is now open) list's data so it's correct whenever it's next shown — e.g. after this tab closes. */
+async function recordAndRefreshRecentFile(path: string, fileHash: string, title: string): Promise<void> {
+  try {
+    await recordRecentFile(path, fileHash, title)
+  } catch (e) {
+    console.error('Failed to record recent file:', e)
+  }
+  void recentFilesList.refresh()
+}
+
 async function openPdfBytes(bytes: Uint8Array, filename: string, path: string | null): Promise<void> {
   statusEl.textContent = `Loading ${filename}...`
+
+  // pdf.js's getDocument() transfers `data.buffer` into its worker (passed
+  // as an explicit Transferable in its internal postMessage call — see
+  // node_modules/pdfjs-dist/build/pdf.mjs's GetDocRequest handling), which
+  // detaches the original ArrayBuffer as a side effect, exactly like
+  // webmscore's worker does for .mscz bytes (see openMsczBytes's comment).
+  // Reading `bytes` again afterward (e.g. to hash it) silently throws,
+  // which was quietly skipping calibration loading AND recent-files
+  // recording for every PDF open — confirmed as the actual cause of PDFs
+  // never showing up in Recent Files even via drag-drop (a real `path` was
+  // always present; `fileHash` just silently came back null). Keep a real
+  // copy before calling loadPdf(), same fix as the .mscz path.
+  const originalBytes = bytes.slice()
 
   let doc: PdfDocument
   try {
@@ -668,7 +714,7 @@ async function openPdfBytes(bytes: Uint8Array, filename: string, path: string | 
   let fileHash: string | null = null
   if (isTauri()) {
     try {
-      fileHash = await hashBytes(bytes)
+      fileHash = await hashBytes(originalBytes)
     } catch (e) {
       console.error('Failed to compute file hash:', e)
       statusEl.textContent = `${title} opened, but calibration is unavailable: ${e instanceof Error ? e.message : String(e)}`
@@ -701,10 +747,19 @@ async function openPdfBytes(bytes: Uint8Array, filename: string, path: string | 
     canvasContainer,
     calibrationOverlay,
     points: [],
+    selectedRange: null,
     numerator: PDF_DEFAULT_NUMERATOR,
     speed: 1.0,
     loopRegion: null,
   }
+
+  calibrationOverlay.onSelect((range) => {
+    tabState.selectedRange = range
+    if (activeHash !== tabState.fileHash) return
+    selectionStatusEl.textContent = range
+      ? `Selected calibration points ${range.startIndex}-${range.endIndex} — press L to loop`
+      : ''
+  })
 
   calibrationOverlay.onChange((points) => {
     tabState.points = points
@@ -731,11 +786,7 @@ async function openPdfBytes(bytes: Uint8Array, filename: string, path: string | 
     }
 
     if (path) {
-      try {
-        await recordRecentFile(path, fileHash, title)
-      } catch (e) {
-        console.error('Failed to record recent file:', e)
-      }
+      await recordAndRefreshRecentFile(path, fileHash, title)
     }
   }
 
@@ -766,28 +817,59 @@ playBtn.addEventListener('click', async () => {
   if (!active) return
   if (active.kind === 'pdf') {
     await loadPdfTabTempoMap(active)
+    pdfCursor.setItems(active.calibrationOverlay.getPoints())
   }
   await playMidi(false)
   await setPlaybackSpeed(active.speed)
   await setLoopRegion(active.loopRegion)
-  if (active.kind === 'mscz') cursor.start()
+  if (active.kind === 'mscz') msczCursor.start()
+  else pdfCursor.start()
   playBtn.disabled = true
   stopBtn.disabled = false
 })
 
 stopBtn.addEventListener('click', async () => {
   await stopMidi()
-  cursor.stop()
+  msczCursor.stop()
+  pdfCursor.stop()
+  const active = activeTab()
+  if (active?.kind === 'pdf') active.calibrationOverlay.setPlayingIndex(null)
   playBtn.disabled = false
   stopBtn.disabled = true
 })
 
-fileInput.addEventListener('change', async () => {
-  const file = fileInput.files?.[0]
-  if (!file) return
-  const bytes = new Uint8Array(await file.arrayBuffer())
-  await openBytes(bytes, file.name, null)
-})
+if (isTauri()) {
+  // Desktop: use the native file dialog instead of the plain HTML file
+  // input. `<input type="file">` never exposes the real filesystem path
+  // (a deliberate browser security restriction), so files opened that way
+  // couldn't be recorded in the recent-files list (no `path` to record) —
+  // confirmed as the cause of PDFs (and .mscz files) never showing up there
+  // when opened via this picker rather than drag-drop. The dialog plugin's
+  // `open()` returns the real path, same as a dropped file's path.
+  fileInput.style.display = 'none'
+  const openFileBtn = document.createElement('button')
+  openFileBtn.textContent = 'Open file...'
+  fileInput.insertAdjacentElement('afterend', openFileBtn)
+  openFileBtn.addEventListener('click', async () => {
+    const { open } = await import('@tauri-apps/plugin-dialog')
+    const { readFile } = await import('@tauri-apps/plugin-fs')
+    const path = await open({
+      multiple: false,
+      filters: [{ name: 'Scores', extensions: ['mscz', 'mscx', 'pdf'] }],
+    })
+    if (!path || Array.isArray(path)) return
+    const bytes = await readFile(path)
+    const filename = path.split(/[/\\]/).pop() ?? path
+    await openBytes(bytes, filename, path)
+  })
+} else {
+  fileInput.addEventListener('change', async () => {
+    const file = fileInput.files?.[0]
+    if (!file) return
+    const bytes = new Uint8Array(await file.arrayBuffer())
+    await openBytes(bytes, file.name, null)
+  })
+}
 
 prevBtn.addEventListener('click', () => {
   const active = activeTab()
