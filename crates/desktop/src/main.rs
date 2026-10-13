@@ -71,6 +71,7 @@ fn main() {
             commands::list_calibration_points,
             commands::save_calibration_points,
             commands::pdf_tempo_map,
+            commands::detect_barlines,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

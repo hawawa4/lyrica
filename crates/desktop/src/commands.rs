@@ -1,4 +1,4 @@
-use mp_core::api::{self, ImportTimelineResponse, OpenFileRequest, OpenFileResponse};
+use mp_core::api::{self, ImportTimelineResponse, OpenFileRequest, OpenFileResponse, StaffSystem};
 use mp_core::audio::midi_events::TempoMapEntry;
 use mp_core::markers::Marker;
 use mp_core::pdf_calibration::CalibrationPoint;
@@ -154,4 +154,10 @@ pub fn save_calibration_points(
 #[tauri::command]
 pub fn pdf_tempo_map(points: Vec<CalibrationPoint>, numerator: u8) -> Vec<TempoMapEntry> {
     api::pdf_tempo_map(&points, numerator)
+}
+
+/// Optional CV barline-detection assist (see `api::detect_barlines`'s docs).
+#[tauri::command]
+pub fn detect_barlines(png_bytes: Vec<u8>) -> Result<Vec<StaffSystem>, String> {
+    api::detect_barlines(&png_bytes).map_err(|e| e.to_string())
 }

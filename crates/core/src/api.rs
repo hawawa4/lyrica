@@ -10,6 +10,7 @@ use thiserror::Error;
 
 use crate::audio::midi_events::TempoMapEntry;
 use crate::markers::{self, Marker};
+pub use cv_barline::{CvBarlineError, StaffSystem};
 use crate::mscz::{self, MsczError};
 use crate::pdf_calibration::{self, CalibrationPoint};
 use crate::pieces::{self, Piece, PiecesError};
@@ -177,6 +178,16 @@ pub fn save_calibration_points(
 /// (see `pdf_calibration::tempo_map`'s docs and `Player::load_tempo_map`).
 pub fn pdf_tempo_map(points: &[CalibrationPoint], numerator: u8) -> Vec<TempoMapEntry> {
     pdf_calibration::tempo_map(points, numerator)
+}
+
+/// Optional CV barline-detection assist for PDF mode (see `cv_barline`'s
+/// module docs). Takes a page's rendered bitmap as PNG bytes (handed from
+/// the JS canvas, same hand-off pattern as `import_timeline`'s MIDI/positions
+/// data) and returns candidate barline x-positions per detected staff system
+/// — suggestions only, never auto-applied; the JS calibration UI renders
+/// them as adjustable/dismissable markers the user must confirm.
+pub fn detect_barlines(png_bytes: &[u8]) -> Result<Vec<StaffSystem>, CvBarlineError> {
+    cv_barline::detect_barlines(png_bytes)
 }
 
 #[cfg(test)]
