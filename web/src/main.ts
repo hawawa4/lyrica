@@ -1,6 +1,8 @@
 import { openScore, upgradeScore, getMeasurePositions, getMidi, type OpenScoreResult, type WebMscore } from './score-engine'
+import { loadPdf, renderPdfPage, type PdfDocument } from './pdf-engine'
 import { PageView } from './render/PageView'
 import { SelectionOverlay, type MeasureRange } from './render/SelectionOverlay'
+import { CalibrationOverlay } from './views/CalibrationOverlay'
 import { Cursor } from './render/Cursor'
 import {
   isTauri,
@@ -13,12 +15,16 @@ import {
   setMetronomeEnabled,
   contentHash,
   recordRecentFile,
+  hashBytes,
+  listCalibrationPoints,
+  saveCalibrationPoints,
+  loadPdfTempoMap,
 } from './api-client'
 import { MarkerPanel } from './views/MarkerPanel'
 import { PiecesIndex } from './views/PiecesIndex'
 import { TabBar, type TabInfo } from './views/TabBar'
 import { RecentFilesList } from './views/RecentFilesList'
-import type { Timeline } from './types'
+import type { CalibrationPoint, Timeline } from './types'
 
 const app = document.querySelector<HTMLDivElement>('#app')!
 
@@ -27,8 +33,8 @@ app.innerHTML = `
     .speed-btn.active { background: #0078ff; color: white; }
   </style>
   <div style="padding: 16px; font-family: sans-serif;">
-    <input id="file-input" type="file" accept=".mscz,.mscx" />
-    <span style="color:#888; margin-left: 8px;">or drag a .mscz file anywhere onto the window</span>
+    <input id="file-input" type="file" accept=".mscz,.mscx,.pdf" />
+    <span style="color:#888; margin-left: 8px;">or drag a .mscz/.pdf file anywhere onto the window</span>
     <div id="status" style="margin-top: 8px; color: #555;"></div>
     <div id="nav" style="margin-top: 8px; display:none;">
       <button id="prev-page">&larr; Prev</button>
@@ -43,8 +49,17 @@ app.innerHTML = `
       </span>
       <label style="margin-left: 16px;"><input id="metronome-checkbox" type="checkbox" disabled /> Metronome</label>
     </div>
+    <div id="pdf-controls" style="margin-top: 8px; display:none;">
+      <label><input id="marking-mode-checkbox" type="checkbox" /> Mark measures</label>
+      <span style="margin-left: 16px;">
+        <button id="zoom-out">&minus;</button>
+        <span id="zoom-indicator" style="margin: 0 6px;">100%</span>
+        <button id="zoom-in">+</button>
+      </span>
+    </div>
     <div id="loop-status" style="margin-top: 4px; color: #0a0; font-size: 13px;"></div>
-    <div id="page" style="margin-top: 16px; max-width: 700px; position: relative;"></div>
+    <div id="calibration-status" style="margin-top: 4px; color: #888; font-size: 13px;"></div>
+    <div id="page" style="margin-top: 16px; max-width: 100%; overflow: auto; position: relative;"></div>
     <div id="selection-status" style="margin-top: 4px; color: #888; font-size: 13px;"></div>
     <div id="pieces-index" style="max-width: 700px;"></div>
     <div id="marker-panel" style="max-width: 700px;"></div>
@@ -80,6 +95,12 @@ const metronomeCheckbox = document.querySelector<HTMLInputElement>('#metronome-c
 const pageContainerEl = document.querySelector<HTMLDivElement>('#page')!
 const selectionStatusEl = document.querySelector<HTMLDivElement>('#selection-status')!
 const loopStatusEl = document.querySelector<HTMLDivElement>('#loop-status')!
+const calibrationStatusEl = document.querySelector<HTMLDivElement>('#calibration-status')!
+const pdfControlsEl = document.querySelector<HTMLDivElement>('#pdf-controls')!
+const markingModeCheckbox = document.querySelector<HTMLInputElement>('#marking-mode-checkbox')!
+const zoomOutBtn = document.querySelector<HTMLButtonElement>('#zoom-out')!
+const zoomInBtn = document.querySelector<HTMLButtonElement>('#zoom-in')!
+const zoomIndicatorEl = document.querySelector<HTMLSpanElement>('#zoom-indicator')!
 const dropOverlay = document.querySelector<HTMLDivElement>('#drop-overlay')!
 const upgradeModal = document.querySelector<HTMLDivElement>('#upgrade-modal')!
 const upgradeConfirmBtn = document.querySelector<HTMLButtonElement>('#upgrade-confirm')!
@@ -94,8 +115,15 @@ const upgradeCancelBtn = document.querySelector<HTMLButtonElement>('#upgrade-can
  * `pageContainerEl` per tab, rather than one shared instance repointed at a
  * new score, so switching back to an already-open tab never re-fetches
  * already-rendered pages (the "no re-fetch lag" requirement).
+ *
+ * Two kinds: `.mscz` tabs (real note data, full timeline/markers/pieces) and
+ * PDF tabs (Phase 9 — no note data, just rendered pages + user-calibrated
+ * tempo points for metronome-only playback). A discriminated union rather
+ * than one shape with optional fields, since the two kinds share almost
+ * nothing beyond "a tab with a title and a page area."
  */
-interface TabState {
+interface MsczTabState {
+  kind: 'mscz'
   fileHash: string
   title: string
   score: WebMscore
@@ -109,7 +137,34 @@ interface TabState {
   originalBytes: Uint8Array
 }
 
+interface PdfTabState {
+  kind: 'pdf'
+  fileHash: string
+  title: string
+  doc: PdfDocument
+  pageCount: number
+  currentPage: number
+  zoom: number
+  markingMode: boolean
+  pageContainer: HTMLDivElement
+  canvasContainer: HTMLDivElement
+  calibrationOverlay: CalibrationOverlay
+  points: CalibrationPoint[]
+  numerator: number
+  speed: number
+  loopRegion: [number, number] | null
+}
+
+type TabState = MsczTabState | PdfTabState
+
 const tabs = new Map<string, TabState>()
+
+/** Default time signature numerator for calibration (used for bar-accent tracking) — no concept of a parsed time signature exists for a plain PDF, so this is a fixed assumption the user isn't currently able to change (future UI could expose it). */
+const PDF_DEFAULT_NUMERATOR = 4
+const PDF_BASE_WIDTH = 700
+const PDF_ZOOM_STEP = 0.25
+const PDF_MIN_ZOOM = 0.5
+const PDF_MAX_ZOOM = 3
 let activeHash: string | null = null
 
 const tabBarEl = document.querySelector<HTMLDivElement>('#tab-bar')!
@@ -124,7 +179,7 @@ void recentFilesList.refresh()
 
 const cursor = new Cursor((event) => {
   const active = activeTab()
-  if (!active) return
+  if (!active || active.kind !== 'mscz') return
   if (event.page !== active.pageView.page) {
     active.pageView.showPage(event.page)
   }
@@ -146,7 +201,7 @@ const markerPanel = new MarkerPanel(markerPanelEl)
  */
 markerPanel.onRequestMeasureIndex(() => {
   const active = activeTab()
-  if (!active?.timeline || !active.selection) return null
+  if (!active || active.kind !== 'mscz' || !active.timeline || !active.selection) return null
   const event = active.timeline.events.find((e) => e.source_elid === active.selection!.startElid)
   return event?.measure_index ?? null
 })
@@ -161,7 +216,7 @@ markerPanel.onRequestMeasureIndex(() => {
  */
 function jumpToMeasure(measureIndex: number): void {
   const active = activeTab()
-  if (!active?.timeline) return
+  if (!active || active.kind !== 'mscz' || !active.timeline) return
   const event = active.timeline.events.find((e) => e.measure_index === measureIndex)
   if (!event) return
   if (event.page !== active.pageView.page) {
@@ -183,7 +238,7 @@ markerPanel.onJumpToMeasure(jumpToMeasure)
  */
 function jumpToElid(elid: number): void {
   const active = activeTab()
-  if (!active?.timeline) return
+  if (!active || active.kind !== 'mscz' || !active.timeline) return
   const event = active.timeline.events.find((e) => e.source_elid === elid)
   if (!event) return
   if (event.page !== active.pageView.page) {
@@ -221,7 +276,7 @@ function loopRegionForSelection(timeline: Timeline, range: MeasureRange): [numbe
 
 async function setLoop(range: MeasureRange | null): Promise<void> {
   const active = activeTab()
-  if (!active) return
+  if (!active || active.kind !== 'mscz') return
   active.loopRegion = (active.timeline && range && loopRegionForSelection(active.timeline, range)) || null
   loopStatusEl.textContent = active.loopRegion
     ? `Looping measures (elid ${range!.startElid}-${range!.endElid})`
@@ -231,7 +286,7 @@ async function setLoop(range: MeasureRange | null): Promise<void> {
 
 window.addEventListener('keydown', (e) => {
   const active = activeTab()
-  if (e.key.toLowerCase() !== 'l' || !isTauri() || !active?.timeline) return
+  if (e.key.toLowerCase() !== 'l' || !isTauri() || !active || active.kind !== 'mscz' || !active.timeline) return
   const target = e.target as HTMLElement | null
   if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) return
   void setLoop(active.selection)
@@ -311,42 +366,113 @@ async function activateTab(tab: TabState): Promise<void> {
   activeHash = tab.fileHash
   pageContainerEl.innerHTML = ''
   pageContainerEl.appendChild(tab.pageContainer)
-  pageContainerEl.appendChild(cursorBoxEl)
-  cursorBoxEl.style.display = 'none'
-
-  navEl.style.display = tab.pageView.pages > 1 ? 'block' : 'none'
-  pageIndicatorEl.textContent = `Page ${tab.pageView.page + 1} / ${tab.pageView.pages}`
-  prevBtn.disabled = tab.pageView.page <= 0
-  nextBtn.disabled = tab.pageView.page >= tab.pageView.pages - 1
-  selectionStatusEl.textContent = tab.selection
-    ? `Selected measures (elid ${tab.selection.startElid}-${tab.selection.endElid}) — press L to loop`
-    : ''
-  loopStatusEl.textContent = tab.loopRegion
-    ? 'Looping selected measures'
-    : ''
 
   statusEl.textContent = tab.title
+  calibrationStatusEl.textContent = ''
+  pdfControlsEl.style.display = tab.kind === 'pdf' ? 'block' : 'none'
 
-  cursor.setTimeline(tab.timeline)
-  await markerPanel.setFileHash(tab.fileHash)
-  await piecesIndex.setScoreBytes(tab.originalBytes)
+  if (tab.kind === 'mscz') {
+    pageContainerEl.appendChild(cursorBoxEl)
+    cursorBoxEl.style.display = 'none'
 
-  const hasAudio = tab.timeline !== null
-  playBtn.disabled = !hasAudio
-  stopBtn.disabled = true
-  for (const btn of Object.values(speedButtons)) btn.disabled = !hasAudio
-  metronomeCheckbox.disabled = !hasAudio
+    navEl.style.display = tab.pageView.pages > 1 ? 'block' : 'none'
+    pageIndicatorEl.textContent = `Page ${tab.pageView.page + 1} / ${tab.pageView.pages}`
+    prevBtn.disabled = tab.pageView.page <= 0
+    nextBtn.disabled = tab.pageView.page >= tab.pageView.pages - 1
+    selectionStatusEl.textContent = tab.selection
+      ? `Selected measures (elid ${tab.selection.startElid}-${tab.selection.endElid}) — press L to loop`
+      : ''
+    loopStatusEl.textContent = tab.loopRegion ? 'Looping selected measures' : ''
 
-  if (hasAudio) {
-    setSpeed(tab.speed)
-    const midiBytes = await getMidi(tab.score)
-    await loadMidi(midiBytes)
-    await setLoopRegion(tab.loopRegion)
-    await setMetronomeEnabled(metronomeCheckbox.checked)
+    cursor.setTimeline(tab.timeline)
+    await markerPanel.setFileHash(tab.fileHash)
+    await piecesIndex.setScoreBytes(tab.originalBytes)
+
+    const hasAudio = tab.timeline !== null
+    playBtn.disabled = !hasAudio
+    stopBtn.disabled = true
+    for (const btn of Object.values(speedButtons)) btn.disabled = !hasAudio
+    metronomeCheckbox.disabled = !hasAudio
+
+    if (hasAudio) {
+      setSpeed(tab.speed)
+      const midiBytes = await getMidi(tab.score)
+      await loadMidi(midiBytes)
+      await setLoopRegion(tab.loopRegion)
+      await setMetronomeEnabled(metronomeCheckbox.checked)
+    }
+  } else {
+    selectionStatusEl.textContent = ''
+    loopStatusEl.textContent = tab.loopRegion ? 'Looping between calibration points' : ''
+    calibrationStatusEl.textContent = markingModeStatusText(tab)
+    markingModeCheckbox.checked = tab.markingMode
+    tab.calibrationOverlay.setMarkingMode(tab.markingMode)
+    zoomIndicatorEl.textContent = `${Math.round(tab.zoom * 100)}%`
+    zoomOutBtn.disabled = tab.zoom <= PDF_MIN_ZOOM
+    zoomInBtn.disabled = tab.zoom >= PDF_MAX_ZOOM
+
+    cursor.setTimeline(null)
+    await markerPanel.setFileHash(null)
+    await piecesIndex.setScoreBytes(null)
+
+    navEl.style.display = tab.pageCount > 1 ? 'block' : 'none'
+    pageIndicatorEl.textContent = `Page ${tab.currentPage + 1} / ${tab.pageCount}`
+    prevBtn.disabled = tab.currentPage <= 0
+    nextBtn.disabled = tab.currentPage >= tab.pageCount - 1
+
+    const hasAudio = tab.points.length >= 2
+    playBtn.disabled = !hasAudio
+    stopBtn.disabled = true
+    for (const btn of Object.values(speedButtons)) btn.disabled = !hasAudio
+    metronomeCheckbox.disabled = !hasAudio
+
+    if (hasAudio) {
+      setSpeed(tab.speed)
+      await loadPdfTabTempoMap(tab)
+      await setLoopRegion(tab.loopRegion)
+      await setMetronomeEnabled(metronomeCheckbox.checked)
+    }
   }
 
   renderTabBar()
 }
+
+/** Derives and loads the tempo map for a PDF tab's current calibration points, for metronome-only playback. */
+async function loadPdfTabTempoMap(tab: PdfTabState): Promise<void> {
+  const durationMs = Math.max(...tab.points.map((p) => p.time_ms)) + 4000
+  await loadPdfTempoMap(tab.points, tab.numerator, durationMs)
+}
+
+function markingModeStatusText(tab: PdfTabState): string {
+  return tab.markingMode
+    ? `Marking mode: click the page to add a calibration point. ${tab.points.length} point(s) so far.`
+    : `${tab.points.length} calibration point(s). Turn on "Mark measures" to add or remove them.`
+}
+
+markingModeCheckbox.addEventListener('change', () => {
+  const active = activeTab()
+  if (!active || active.kind !== 'pdf') return
+  active.markingMode = markingModeCheckbox.checked
+  active.calibrationOverlay.setMarkingMode(active.markingMode)
+  calibrationStatusEl.textContent = markingModeStatusText(active)
+})
+
+function setPdfZoom(tab: PdfTabState, zoom: number): void {
+  tab.zoom = Math.min(PDF_MAX_ZOOM, Math.max(PDF_MIN_ZOOM, zoom))
+  zoomIndicatorEl.textContent = `${Math.round(tab.zoom * 100)}%`
+  zoomOutBtn.disabled = tab.zoom <= PDF_MIN_ZOOM
+  zoomInBtn.disabled = tab.zoom >= PDF_MAX_ZOOM
+  void showPdfPage(tab, tab.currentPage)
+}
+
+zoomOutBtn.addEventListener('click', () => {
+  const active = activeTab()
+  if (active?.kind === 'pdf') setPdfZoom(active, active.zoom - PDF_ZOOM_STEP)
+})
+zoomInBtn.addEventListener('click', () => {
+  const active = activeTab()
+  if (active?.kind === 'pdf') setPdfZoom(active, active.zoom + PDF_ZOOM_STEP)
+})
 
 async function switchToTab(fileHash: string): Promise<void> {
   if (fileHash === activeHash) return
@@ -359,8 +485,12 @@ async function switchToTab(fileHash: string): Promise<void> {
 function closeTab(fileHash: string): void {
   const tab = tabs.get(fileHash)
   if (!tab) return
-  tab.selectionOverlay.destroy()
-  tab.score.destroy()
+  if (tab.kind === 'mscz') {
+    tab.selectionOverlay.destroy()
+    tab.score.destroy()
+  } else {
+    tab.calibrationOverlay.destroy()
+  }
   tabs.delete(fileHash)
 
   if (activeHash === fileHash) {
@@ -376,6 +506,7 @@ function closeTab(fileHash: string): void {
       statusEl.textContent = ''
       selectionStatusEl.textContent = ''
       loopStatusEl.textContent = ''
+      calibrationStatusEl.textContent = ''
       void markerPanel.setFileHash(null)
       void piecesIndex.setScoreBytes(null)
       playBtn.disabled = true
@@ -388,7 +519,19 @@ function closeTab(fileHash: string): void {
   renderTabBar()
 }
 
+function isPdfFile(name: string): boolean {
+  return /\.pdf$/i.test(name)
+}
+
 async function openBytes(bytes: Uint8Array, filename: string, path: string | null): Promise<void> {
+  if (isPdfFile(filename)) {
+    await openPdfBytes(bytes, filename, path)
+  } else {
+    await openMsczBytes(bytes, filename, path)
+  }
+}
+
+async function openMsczBytes(bytes: Uint8Array, filename: string, path: string | null): Promise<void> {
   statusEl.textContent = `Loading ${filename}...`
 
   // webmscore's worker-based load() transfers `data.buffer` into the worker
@@ -464,7 +607,8 @@ async function openBytes(bytes: Uint8Array, filename: string, path: string | nul
   })
   const selectionOverlay = new SelectionOverlay(pageContainer)
 
-  const tabState: TabState = {
+  const tabState: MsczTabState = {
+    kind: 'mscz',
     fileHash: fileHash ?? `untracked-${Date.now()}`,
     title,
     score,
@@ -508,13 +652,125 @@ async function openBytes(bytes: Uint8Array, filename: string, path: string | nul
   await activateTab(tabState)
 }
 
+async function openPdfBytes(bytes: Uint8Array, filename: string, path: string | null): Promise<void> {
+  statusEl.textContent = `Loading ${filename}...`
+
+  let doc: PdfDocument
+  try {
+    doc = await loadPdf(bytes)
+  } catch (e) {
+    statusEl.textContent = `Failed to open ${filename}: ${e instanceof Error ? e.message : String(e)}`
+    return
+  }
+
+  const title = filename
+
+  let fileHash: string | null = null
+  if (isTauri()) {
+    try {
+      fileHash = await hashBytes(bytes)
+    } catch (e) {
+      console.error('Failed to compute file hash:', e)
+      statusEl.textContent = `${title} opened, but calibration is unavailable: ${e instanceof Error ? e.message : String(e)}`
+    }
+  }
+
+  if (fileHash && tabs.has(fileHash)) {
+    await switchToTab(fileHash)
+    return
+  }
+
+  await stopAudioForTabSwitch()
+
+  const pageContainer = document.createElement('div')
+  pageContainer.style.position = 'relative'
+  const canvasContainer = document.createElement('div')
+  pageContainer.appendChild(canvasContainer)
+  const calibrationOverlay = new CalibrationOverlay(pageContainer)
+
+  const tabState: PdfTabState = {
+    kind: 'pdf',
+    fileHash: fileHash ?? `untracked-${Date.now()}`,
+    title,
+    doc,
+    pageCount: doc.numPages,
+    currentPage: 0,
+    zoom: 1,
+    markingMode: false,
+    pageContainer,
+    canvasContainer,
+    calibrationOverlay,
+    points: [],
+    numerator: PDF_DEFAULT_NUMERATOR,
+    speed: 1.0,
+    loopRegion: null,
+  }
+
+  calibrationOverlay.onChange((points) => {
+    tabState.points = points
+    if (!tabState.fileHash.startsWith('untracked-')) {
+      void saveCalibrationPoints(tabState.fileHash, points).catch((e) =>
+        console.error('Failed to save calibration points:', e),
+      )
+    }
+    if (activeHash !== tabState.fileHash) return
+    calibrationStatusEl.textContent = markingModeStatusText(tabState)
+    const hasAudio = points.length >= 2
+    const isPlaying = !stopBtn.disabled
+    playBtn.disabled = !hasAudio || isPlaying
+    for (const btn of Object.values(speedButtons)) btn.disabled = !hasAudio
+    metronomeCheckbox.disabled = !hasAudio
+  })
+
+  if (fileHash) {
+    try {
+      tabState.points = await listCalibrationPoints(fileHash)
+      calibrationOverlay.setPoints(tabState.points)
+    } catch (e) {
+      console.error('Failed to load calibration points:', e)
+    }
+
+    if (path) {
+      try {
+        await recordRecentFile(path, fileHash, title)
+      } catch (e) {
+        console.error('Failed to record recent file:', e)
+      }
+    }
+  }
+
+  await showPdfPage(tabState, 0)
+
+  tabs.set(tabState.fileHash, tabState)
+  await activateTab(tabState)
+}
+
+async function showPdfPage(tab: PdfTabState, pageNumber: number): Promise<void> {
+  if (pageNumber < 0 || pageNumber >= tab.pageCount) return
+  tab.currentPage = pageNumber
+  const canvas = await renderPdfPage(tab.doc, pageNumber + 1, PDF_BASE_WIDTH * tab.zoom)
+  if (tab.currentPage !== pageNumber) return // stale: navigated elsewhere while this render was in flight
+  tab.canvasContainer.innerHTML = ''
+  tab.canvasContainer.appendChild(canvas)
+  tab.calibrationOverlay.setPage(pageNumber)
+
+  if (activeHash === tab.fileHash) {
+    pageIndicatorEl.textContent = `Page ${pageNumber + 1} / ${tab.pageCount}`
+    prevBtn.disabled = pageNumber <= 0
+    nextBtn.disabled = pageNumber >= tab.pageCount - 1
+  }
+}
+
 playBtn.addEventListener('click', async () => {
   const active = activeTab()
   if (!active) return
+  if (active.kind === 'pdf') {
+    await loadPdfTabTempoMap(active)
+  }
   await playMidi(false)
   await setPlaybackSpeed(active.speed)
   await setLoopRegion(active.loopRegion)
-  cursor.start()
+  if (active.kind === 'mscz') cursor.start()
   playBtn.disabled = true
   stopBtn.disabled = false
 })
@@ -533,11 +789,21 @@ fileInput.addEventListener('change', async () => {
   await openBytes(bytes, file.name, null)
 })
 
-prevBtn.addEventListener('click', () => activeTab()?.pageView.prev())
-nextBtn.addEventListener('click', () => activeTab()?.pageView.next())
+prevBtn.addEventListener('click', () => {
+  const active = activeTab()
+  if (!active) return
+  if (active.kind === 'mscz') void active.pageView.prev()
+  else void showPdfPage(active, active.currentPage - 1)
+})
+nextBtn.addEventListener('click', () => {
+  const active = activeTab()
+  if (!active) return
+  if (active.kind === 'mscz') void active.pageView.next()
+  else void showPdfPage(active, active.currentPage + 1)
+})
 
-function isMsczFile(name: string): boolean {
-  return /\.(mscz|mscx)$/i.test(name)
+function isOpenableFile(name: string): boolean {
+  return /\.(mscz|mscx|pdf)$/i.test(name)
 }
 
 async function reopenRecentFile(path: string): Promise<void> {
@@ -563,7 +829,7 @@ if (isTauri()) {
       dropOverlay.style.display = 'none'
       if (event.payload.type !== 'drop') return
 
-      const path = event.payload.paths.find(isMsczFile) ?? event.payload.paths[0]
+      const path = event.payload.paths.find(isOpenableFile) ?? event.payload.paths[0]
       if (!path) return
       const bytes = await readFile(path)
       const filename = path.split(/[/\\]/).pop() ?? path
@@ -596,7 +862,11 @@ if (isTauri()) {
   bytes: Uint8Array,
   filename: string,
 ) => openBytes(bytes, filename, null)
-;(window as unknown as { __musepracticePageView: () => PageView | null }).__musepracticePageView = () =>
-  activeTab()?.pageView ?? null
-;(window as unknown as { __musepracticeGetTimeline: () => Timeline | null }).__musepracticeGetTimeline = () =>
-  activeTab()?.timeline ?? null
+;(window as unknown as { __musepracticePageView: () => PageView | null }).__musepracticePageView = () => {
+  const active = activeTab()
+  return active?.kind === 'mscz' ? active.pageView : null
+}
+;(window as unknown as { __musepracticeGetTimeline: () => Timeline | null }).__musepracticeGetTimeline = () => {
+  const active = activeTab()
+  return active?.kind === 'mscz' ? active.timeline : null
+}

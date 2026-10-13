@@ -18,23 +18,33 @@ export async function loadPdf(bytes: Uint8Array): Promise<PdfDocument> {
 }
 
 /**
- * Renders one page to a freshly-created canvas at the given CSS pixel width
- * (height follows the page's own aspect ratio), returning the canvas for the
- * caller to mount. Each call renders fresh — unlike PageView's cached SVG
- * strings for webmscore (vector, cheap to keep many of), a rendered PDF
- * canvas is a raster bitmap sized to the container; callers wanting a cache
- * should keep the canvas element around themselves rather than re-deriving
- * cache logic here.
+ * Renders one page to a freshly-created canvas at the given CSS display
+ * width (height follows the page's own aspect ratio), returning the canvas
+ * for the caller to mount. Each call renders fresh — unlike PageView's
+ * cached SVG strings for webmscore (vector, cheap to keep many of), a
+ * rendered PDF canvas is a raster bitmap sized to the container; callers
+ * wanting a cache should keep the canvas element around themselves rather
+ * than re-deriving cache logic here.
+ *
+ * The canvas's backing pixel buffer is rendered at `cssWidth * devicePixelRatio`
+ * (with explicit CSS `width`/`height` set to the un-multiplied `cssWidth`) —
+ * rendering at exactly `cssWidth` and letting the browser's own CSS scaling
+ * stretch it would blur the page on any HiDPI display, same reasoning as
+ * drawing any canvas content crisply at a given CSS size.
  */
-export async function renderPdfPage(doc: PdfDocument, pageNumber: number, targetWidth: number): Promise<HTMLCanvasElement> {
+export async function renderPdfPage(doc: PdfDocument, pageNumber: number, cssWidth: number): Promise<HTMLCanvasElement> {
   const page = await doc.getPage(pageNumber)
   const baseViewport = page.getViewport({ scale: 1 })
-  const scale = targetWidth / baseViewport.width
+  const pixelRatio = window.devicePixelRatio || 1
+  const scale = (cssWidth * pixelRatio) / baseViewport.width
   const viewport = page.getViewport({ scale })
 
   const canvas = document.createElement('canvas')
   canvas.width = viewport.width
   canvas.height = viewport.height
+  canvas.style.width = `${cssWidth}px`
+  canvas.style.height = `${cssWidth * (viewport.height / viewport.width)}px`
+  canvas.style.display = 'block'
   const context = canvas.getContext('2d')
   if (!context) throw new Error('renderPdfPage: failed to get 2d canvas context')
 

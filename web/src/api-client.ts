@@ -1,5 +1,5 @@
 import type { Positions } from './score-engine'
-import type { ImportTimelineResponse, Marker, Piece, RecentFile } from './types'
+import type { CalibrationPoint, ImportTimelineResponse, Marker, Piece, RecentFile } from './types'
 
 /** True when running inside the Tauri desktop webview, false in a plain browser tab. */
 export function isTauri(): boolean {
@@ -159,4 +159,46 @@ export async function recordRecentFile(path: string, fileHash: string, title: st
   if (!isTauri()) throw new Error('recordRecentFile: desktop-only for now')
   const { invoke } = await import('@tauri-apps/api/core')
   return invoke<RecentFile[]>('record_recent_file', { path, fileHash, title })
+}
+
+/**
+ * PDF mode (Phase 9): stable content-hash key for a PDF's bytes, same blake3
+ * scheme `contentHash`/`open_file` use for `.mscz` (see Rust's
+ * `api::hash_bytes` docs for why PDFs need a separate command rather than
+ * reusing `open_file` itself — no MuseScore-version concept to sniff).
+ */
+export async function hashBytes(bytes: Uint8Array): Promise<string> {
+  if (!isTauri()) throw new Error('hashBytes: desktop-only for now')
+  const { invoke } = await import('@tauri-apps/api/core')
+  return invoke<string>('hash_bytes', { bytes: Array.from(bytes) })
+}
+
+export async function listCalibrationPoints(fileHash: string): Promise<CalibrationPoint[]> {
+  if (!isTauri()) throw new Error('listCalibrationPoints: desktop-only for now')
+  const { invoke } = await import('@tauri-apps/api/core')
+  return invoke<CalibrationPoint[]>('list_calibration_points', { fileHash })
+}
+
+/** Replaces the full point list (there's no incremental id-based CRUD — see pdf_calibration.rs's docs). */
+export async function saveCalibrationPoints(fileHash: string, points: CalibrationPoint[]): Promise<CalibrationPoint[]> {
+  if (!isTauri()) throw new Error('saveCalibrationPoints: desktop-only for now')
+  const { invoke } = await import('@tauri-apps/api/core')
+  return invoke<CalibrationPoint[]>('save_calibration_points', { fileHash, points })
+}
+
+/**
+ * Loads a calibration-derived tempo map for metronome-only "playback" (no
+ * note data — see Rust's `Player::load_tempo_map` docs). Derives the tempo
+ * map server-side (`pdf_tempo_map` needs `numerator` for bar-accent
+ * tracking, not just the simplified `(time_ms, qpm)` pairs the rest of the
+ * app's `Timeline.tempo_map` uses) and loads it in one call.
+ */
+export async function loadPdfTempoMap(points: CalibrationPoint[], numerator: number, durationMs: number): Promise<void> {
+  if (!isTauri()) throw new Error('loadPdfTempoMap: desktop-only for now')
+  const { invoke } = await import('@tauri-apps/api/core')
+  const tempoMap = await invoke<{ time_ms: number; qpm: number; numerator: number }[]>('pdf_tempo_map', {
+    points,
+    numerator,
+  })
+  await invoke('load_tempo_map', { tempoMap, durationMs })
 }

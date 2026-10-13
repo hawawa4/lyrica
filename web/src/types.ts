@@ -44,3 +44,12 @@ export interface RecentFile {
   last_opened: number
   title: string
 }
+
+export interface CalibrationPoint {
+  page: number
+  x: number
+  y: number
+  time_ms: number
+  measure: number
+  beat: number
+}
