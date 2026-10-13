@@ -59,6 +59,16 @@ pub struct StaffSystem {
 mod tuning {
     /// Pixel luminance (0-255) at or below which a pixel counts as "ink".
     pub const DARK_THRESHOLD: u8 = 128;
+    /// Upper bound (in pixels) on a gap between staff-line rows that could
+    /// plausibly be a real within-staff line spacing, used by
+    /// `estimate_line_spacing` to exclude inter-staff/inter-system gaps (and
+    /// implausibly large noise) before finding the modal small gap. This is
+    /// deliberately generous — real within-staff spacing is normally well
+    /// under half of this even at a heavily zoomed-in render — since being
+    /// too strict here would risk excluding genuine staff-line gaps on an
+    /// unusually large render instead of just excluding bigger structural
+    /// gaps, which is this constant's actual job.
+    pub const NOISE_ROW_GAP_CUTOFF: u32 = 60;
     /// A row counts as a staff line if at least this fraction of its pixels
     /// (within the page's horizontal ink extent, not the whole page width —
     /// see `horizontal_ink_extent`) are dark.
@@ -71,6 +81,15 @@ mod tuning {
     /// A detected staff must have at least this many staff-line rows to
     /// count as real (cuts out stray single dark rows from noise/artifacts).
     pub const MIN_LINES_PER_STAFF: usize = 3;
+    /// A detected staff's overall height (top row to bottom row) must be at
+    /// least this many multiples of the staff-line spacing to count as real.
+    /// A genuine `MIN_LINES_PER_STAFF`-row cluster of real staff lines spans
+    /// at least `(MIN_LINES_PER_STAFF - 1) * line_spacing`; this is set just
+    /// under that, so it rejects a staff-line-density false positive (rows
+    /// crammed much closer together than real staff lines ever are — e.g.
+    /// several adjacent 1px-apart rows from an unrelated thin mark) without
+    /// rejecting real, slightly-irregular staff rendering.
+    pub const MIN_STAFF_HEIGHT_LINE_SPACINGS: f32 = 1.5;
     /// Two consecutive staves are grouped into the same system (e.g. a piano
     /// grand staff's treble+bass pair) if the gap between them is at most
     /// this many multiples of the staff-line spacing (see `group_into_staves`).
@@ -180,28 +199,63 @@ fn find_staff_line_rows(img: &GrayImage, ink_left: u32, ink_right: u32, ink_widt
     rows
 }
 
-/// Estimates the within-staff line spacing as the *smallest* gap between any
-/// two consecutive detected staff-line rows: by construction, every gap in
-/// `staff_line_rows` is either a within-staff line gap, an inter-staff gap
-/// (within one system), or an inter-system gap, and the within-staff gap is
-/// always the smallest of the three at any sane render resolution — so the
-/// smallest gap present is necessarily a real within-staff line spacing. All
-/// other distance thresholds in this module are expressed as multiples of
-/// this value, so detection scales correctly at any render resolution
-/// instead of being tuned to one fixed pixel gap.
+/// Estimates the within-staff line spacing as the *most frequent* (modal)
+/// gap between consecutive detected staff-line rows, among gaps small enough
+/// to plausibly be a within-staff spacing (below `NOISE_ROW_GAP_CUTOFF`) —
+/// not the single *smallest* gap, which an earlier version of this function
+/// used. That was wrong: `find_staff_line_rows` can produce occasional
+/// spurious single-pixel-tall "staff line" rows from unrelated thin
+/// horizontal marks (a dynamics hairpin, a tie, anti-aliasing noise) that
+/// happen to pass the row-density check without being a real staff line at
+/// all — confirmed against a real page, where one such stray row poisoned
+/// `min()` with a gap of 1px and broke staff detection for the *entire*
+/// page (every real ~11px staff-line gap then looked enormous relative to
+/// that 1px floor). A real staff's line spacing recurs four times per staff
+/// (5 lines, 4 gaps) and many times across a page with multiple staves, so
+/// it dominates the mode even with a few one-off noise gaps mixed in; a
+/// single stray small gap does not. All other distance thresholds in this
+/// module are expressed as multiples of this value, so detection scales
+/// correctly at any render resolution instead of being tuned to one fixed
+/// pixel gap.
 fn estimate_line_spacing(staff_line_rows: &[u32]) -> f32 {
-    staff_line_rows
+    let mut gaps: Vec<u32> = staff_line_rows
         .windows(2)
         .map(|pair| pair[1] - pair[0])
-        .min()
-        .unwrap_or(1)
-        .max(1) as f32
+        .filter(|&gap| gap > 0 && gap <= tuning::NOISE_ROW_GAP_CUTOFF)
+        .collect();
+    if gaps.is_empty() {
+        return 1.0;
+    }
+    gaps.sort_unstable();
+
+    let mut best_gap = gaps[0];
+    let mut best_count = 0usize;
+    let mut i = 0;
+    while i < gaps.len() {
+        let mut j = i;
+        while j < gaps.len() && gaps[j] == gaps[i] {
+            j += 1;
+        }
+        let count = j - i;
+        if count > best_count {
+            best_count = count;
+            best_gap = gaps[i];
+        }
+        i = j;
+    }
+    best_gap.max(1) as f32
 }
 
 /// Groups staff-line rows into individual 5-line staves, using `line_spacing`
 /// (see `estimate_line_spacing`) to scale the clustering threshold. Keeps
-/// only groups with enough rows to plausibly be a real staff. Returns each
-/// staff's `(top, bottom)` row span.
+/// only groups with enough rows to plausibly be a real staff *and* whose
+/// overall height is plausible for that many rows at the real line spacing
+/// — rejecting, for instance, 4 rows crammed into a handful of pixels (an
+/// unrelated thin horizontal mark like a hairpin/tie that happened to
+/// produce several adjacent spurious "staff line" rows, confirmed as a real
+/// false positive against a real rendered page) even though it technically
+/// has enough rows and they're technically close enough together to cluster.
+/// Returns each staff's `(top, bottom)` row span.
 fn group_into_staves(staff_line_rows: &[u32], line_spacing: f32) -> Vec<(u32, u32)> {
     if staff_line_rows.is_empty() {
         return Vec::new();
@@ -209,11 +263,13 @@ fn group_into_staves(staff_line_rows: &[u32], line_spacing: f32) -> Vec<(u32, u3
 
     let real_gap = (line_spacing * tuning::MAX_GAP_WITHIN_STAFF_LINE_SPACINGS).max(1.0) as u32;
     let groups = cluster_by_gap(staff_line_rows, real_gap);
+    let min_plausible_height = (line_spacing * tuning::MIN_STAFF_HEIGHT_LINE_SPACINGS) as u32;
 
     groups
         .into_iter()
         .filter(|g| g.len() >= tuning::MIN_LINES_PER_STAFF)
         .map(|g| (*g.first().unwrap(), *g.last().unwrap()))
+        .filter(|&(top, bottom)| bottom - top >= min_plausible_height)
         .collect()
 }
 
@@ -409,6 +465,43 @@ mod tests {
         assert_eq!(systems[0].top, top);
         assert_eq!(systems[0].bottom, bottom);
         assert_eq!(systems[0].barline_xs, vec![50, 300]);
+    }
+
+    /// A real bug, confirmed against an actual rendered page: a single
+    /// unrelated thin horizontal mark (a dynamics hairpin, a tie — anything
+    /// that happens to pass the row-density check as a "staff line" without
+    /// being one) produced a run of several adjacent 1px-apart rows
+    /// elsewhere on the page. `estimate_line_spacing` naively taking the
+    /// *smallest* gap anywhere on the page got poisoned by that 1px gap,
+    /// which made every *real* ~11px staff-line gap look enormous by
+    /// comparison and broke clustering for the whole page (collapsing 5 real
+    /// systems down to a single tiny 4-row false "staff" at the noise's
+    /// location, with "barlines" that were really just closely-spaced
+    /// unrelated marks). Both real systems must still be detected correctly,
+    /// and the noise cluster must not appear as a system at all.
+    #[test]
+    fn a_stray_thin_mark_elsewhere_on_the_page_does_not_break_detection() {
+        let mut img = blank(800, 700);
+        let (top1, bottom1) = draw_synthetic_system(&mut img, 50, 10, 30, &[50, 400], 30, 790);
+        let (top2, bottom2) = draw_synthetic_system(&mut img, 450, 10, 30, &[60, 420], 30, 790);
+
+        // 4 spurious rows, 1px apart — exactly the real false-positive shape
+        // (e.g. a hairpin rendered as several near-adjacent thin rows),
+        // placed well clear of both real systems.
+        for y in 240..=243u32 {
+            for x in 300..=320u32 {
+                img.put_pixel(x, y, Luma([0u8]));
+            }
+        }
+
+        let systems = detect_barlines_in_image(&img);
+        assert_eq!(systems.len(), 2, "expected exactly the 2 real systems, got {systems:?}");
+        assert_eq!(systems[0].top, top1);
+        assert_eq!(systems[0].bottom, bottom1);
+        assert_eq!(systems[0].barline_xs, vec![50, 400]);
+        assert_eq!(systems[1].top, top2);
+        assert_eq!(systems[1].bottom, bottom2);
+        assert_eq!(systems[1].barline_xs, vec![60, 420]);
     }
 
     #[test]
