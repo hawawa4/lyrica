@@ -11,6 +11,7 @@ use thiserror::Error;
 use crate::markers::{self, Marker};
 use crate::mscz::{self, MsczError};
 use crate::pieces::{self, Piece, PiecesError};
+use crate::recent_files::{self, RecentFile, RecentFilesError};
 use crate::sidecar::SidecarError;
 use crate::timeline::{self, Positions, Timeline, TimelineError};
 
@@ -124,6 +125,23 @@ pub fn delete_marker(
     marker_id: &str,
 ) -> Result<Vec<Marker>, SidecarError> {
     markers::delete_marker(base_dir, file_hash, marker_id)
+}
+
+/// Recent-files list (desktop-only — "path" is meaningless for a future
+/// web/server shell, where files arrive as uploaded bytes with no on-disk
+/// location). Separate from `open_file` itself so that boundary stays
+/// shell-agnostic: desktop calls this explicitly once it has the real path.
+pub fn list_recent_files(base_dir: &Path) -> Result<Vec<RecentFile>, RecentFilesError> {
+    recent_files::list_recent_files(base_dir)
+}
+
+pub fn record_recent_file(
+    base_dir: &Path,
+    path: String,
+    file_hash: String,
+    title: String,
+) -> Result<Vec<RecentFile>, RecentFilesError> {
+    recent_files::record_opened(base_dir, path, file_hash, title)
 }
 
 #[cfg(test)]

@@ -3,5 +3,6 @@ pub mod audio;
 pub mod markers;
 pub mod mscz;
 pub mod pieces;
+pub mod recent_files;
 pub mod sidecar;
 pub mod timeline;

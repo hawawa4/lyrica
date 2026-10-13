@@ -1,6 +1,7 @@
 use mp_core::api::{self, ImportTimelineResponse, OpenFileRequest, OpenFileResponse};
 use mp_core::markers::Marker;
 use mp_core::pieces::Piece;
+use mp_core::recent_files::RecentFile;
 use mp_core::timeline::Positions;
 use tauri::{AppHandle, Manager, State};
 
@@ -97,4 +98,21 @@ pub fn delete_marker(app: AppHandle, file_hash: String, marker_id: String) -> Re
 #[tauri::command]
 pub fn detect_pieces(bytes: Vec<u8>) -> Result<Vec<Piece>, String> {
     api::detect_pieces(&bytes).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn list_recent_files(app: AppHandle) -> Result<Vec<RecentFile>, String> {
+    let base_dir = markers_base_dir(&app)?;
+    api::list_recent_files(&base_dir).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn record_recent_file(
+    app: AppHandle,
+    path: String,
+    file_hash: String,
+    title: String,
+) -> Result<Vec<RecentFile>, String> {
+    let base_dir = markers_base_dir(&app)?;
+    api::record_recent_file(&base_dir, path, file_hash, title).map_err(|e| e.to_string())
 }
