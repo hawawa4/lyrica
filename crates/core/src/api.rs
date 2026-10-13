@@ -8,8 +8,10 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use crate::audio::midi_events::TempoMapEntry;
 use crate::markers::{self, Marker};
 use crate::mscz::{self, MsczError};
+use crate::pdf_calibration::{self, CalibrationPoint};
 use crate::pieces::{self, Piece, PiecesError};
 use crate::recent_files::{self, RecentFile, RecentFilesError};
 use crate::sidecar::SidecarError;
@@ -41,7 +43,7 @@ pub struct OpenFileResponse {
 const MS4_VERSION_FLOOR: f32 = 4.0;
 
 pub fn open_file(req: OpenFileRequest) -> Result<OpenFileResponse, MsczError> {
-    let file_hash = blake3::hash(&req.bytes).to_hex().to_string();
+    let file_hash = hash_bytes(&req.bytes);
     let mscz_version = mscz::sniff_version(Cursor::new(&req.bytes))?;
     let needs_upgrade = mscz_version
         .parse::<f32>()
@@ -53,6 +55,14 @@ pub fn open_file(req: OpenFileRequest) -> Result<OpenFileResponse, MsczError> {
         mscz_version,
         needs_upgrade,
     })
+}
+
+/// Stable content-hash key (blake3 of the raw bytes) for anything that needs
+/// the same hash-keyed-sidecar scheme `open_file` uses for `.mscz` files but
+/// isn't itself a `.mscz` — currently just PDF mode's calibration data
+/// (`pdf_calibration`), which has no MuseScore-version concept to sniff.
+pub fn hash_bytes(bytes: &[u8]) -> String {
+    blake3::hash(bytes).to_hex().to_string()
 }
 
 /// Detects piece boundaries within a single `.mscz` file (see `pieces` module
@@ -142,6 +152,31 @@ pub fn record_recent_file(
     title: String,
 ) -> Result<Vec<RecentFile>, RecentFilesError> {
     recent_files::record_opened(base_dir, path, file_hash, title)
+}
+
+/// PDF mode (Phase 9) calibration CRUD, keyed by the PDF's own content hash
+/// (same blake3-of-bytes scheme as `.mscz` files, via `open_file`/`mscz`'s
+/// hashing — PDFs aren't parsed by `mscz`, but nothing stops reusing the same
+/// hash function directly on the raw bytes).
+pub fn list_calibration_points(
+    base_dir: &Path,
+    file_hash: &str,
+) -> Result<Vec<CalibrationPoint>, SidecarError> {
+    pdf_calibration::list_points(base_dir, file_hash)
+}
+
+pub fn save_calibration_points(
+    base_dir: &Path,
+    file_hash: &str,
+    points: Vec<CalibrationPoint>,
+) -> Result<Vec<CalibrationPoint>, SidecarError> {
+    pdf_calibration::save_points(base_dir, file_hash, points)
+}
+
+/// Derives a tempo map from calibration points for metronome-only playback
+/// (see `pdf_calibration::tempo_map`'s docs and `Player::load_tempo_map`).
+pub fn pdf_tempo_map(points: &[CalibrationPoint], numerator: u8) -> Vec<TempoMapEntry> {
+    pdf_calibration::tempo_map(points, numerator)
 }
 
 #[cfg(test)]

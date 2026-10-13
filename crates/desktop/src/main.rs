@@ -54,6 +54,7 @@ fn main() {
             commands::open_file,
             commands::import_timeline,
             commands::load_midi,
+            commands::load_tempo_map,
             commands::play,
             commands::stop,
             commands::set_speed,
@@ -66,6 +67,10 @@ fn main() {
             commands::detect_pieces,
             commands::list_recent_files,
             commands::record_recent_file,
+            commands::hash_bytes,
+            commands::list_calibration_points,
+            commands::save_calibration_points,
+            commands::pdf_tempo_map,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

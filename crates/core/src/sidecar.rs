@@ -26,9 +26,20 @@ pub enum SidecarError {
 /// `{base_dir}/scores/{file_hash}/meta.json`'s path, creating the score's
 /// directory (but not the file itself) if it doesn't exist yet.
 fn meta_path(base_dir: &Path, file_hash: &str) -> io::Result<PathBuf> {
-    let dir = base_dir.join("scores").join(file_hash);
+    item_path(base_dir, "scores", file_hash, "meta.json")
+}
+
+/// Generalized form of `meta_path`: `{base_dir}/{kind}/{item_hash}/{filename}`,
+/// creating the item's directory (but not the file itself) if needed. `kind`
+/// is the top-level grouping (`"scores"` for `.mscz` sidecars, `"pdfs"` for
+/// PDF-mode calibration data — see `pdf_calibration`), so different kinds of
+/// content-hash-keyed data never collide even if a `.mscz` and a PDF happened
+/// to share a hash (astronomically unlikely, but keeps the two namespaces
+/// conceptually and physically separate regardless).
+fn item_path(base_dir: &Path, kind: &str, item_hash: &str, filename: &str) -> io::Result<PathBuf> {
+    let dir = base_dir.join(kind).join(item_hash);
     std::fs::create_dir_all(&dir)?;
-    Ok(dir.join("meta.json"))
+    Ok(dir.join(filename))
 }
 
 /// Reads and deserializes `meta.json` for the given score, returning `T`'s
@@ -38,11 +49,7 @@ pub fn load_meta<T: DeserializeOwned + Default>(
     file_hash: &str,
 ) -> Result<T, SidecarError> {
     let path = meta_path(base_dir, file_hash)?;
-    if !path.exists() {
-        return Ok(T::default());
-    }
-    let contents = std::fs::read_to_string(path)?;
-    Ok(serde_json::from_str(&contents)?)
+    load_json(&path)
 }
 
 /// Serializes and writes `meta.json` for the given score, overwriting
@@ -53,6 +60,41 @@ pub fn save_meta<T: Serialize>(
     value: &T,
 ) -> Result<(), SidecarError> {
     let path = meta_path(base_dir, file_hash)?;
+    save_json(&path, value)
+}
+
+/// Same as `load_meta`/`save_meta` but at `{base_dir}/{kind}/{item_hash}/{filename}`
+/// instead of the hardcoded `scores/{hash}/meta.json` — see `item_path`.
+pub fn load_item<T: DeserializeOwned + Default>(
+    base_dir: &Path,
+    kind: &str,
+    item_hash: &str,
+    filename: &str,
+) -> Result<T, SidecarError> {
+    let path = item_path(base_dir, kind, item_hash, filename)?;
+    load_json(&path)
+}
+
+pub fn save_item<T: Serialize>(
+    base_dir: &Path,
+    kind: &str,
+    item_hash: &str,
+    filename: &str,
+    value: &T,
+) -> Result<(), SidecarError> {
+    let path = item_path(base_dir, kind, item_hash, filename)?;
+    save_json(&path, value)
+}
+
+fn load_json<T: DeserializeOwned + Default>(path: &Path) -> Result<T, SidecarError> {
+    if !path.exists() {
+        return Ok(T::default());
+    }
+    let contents = std::fs::read_to_string(path)?;
+    Ok(serde_json::from_str(&contents)?)
+}
+
+fn save_json<T: Serialize>(path: &Path, value: &T) -> Result<(), SidecarError> {
     let contents = serde_json::to_string_pretty(value)?;
     std::fs::write(path, contents)?;
     Ok(())

@@ -1,3 +1,4 @@
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -19,7 +20,7 @@ pub struct ScheduledEvent {
 }
 
 /// One tempo/time-signature breakpoint in the flattened timeline.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct TempoMapEntry {
     pub time_ms: f64,
     pub qpm: f64,

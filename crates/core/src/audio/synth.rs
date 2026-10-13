@@ -94,6 +94,23 @@ impl Player {
         }))
     }
 
+    /// Builds metronome-only "playback" from a tempo map with no note events
+    /// at all — PDF mode (IMPLEMENTATION_PLAN.md Phase 9) has no note data to
+    /// synthesize (true audio playback isn't possible without it, per the
+    /// handoff spec), only a user-calibrated tempo map. An empty `events` list
+    /// is a no-op for every event-dispatch path in `render`/`dispatch_due_events`
+    /// (loops zero times) while `rebuild_clicks`/loop-wrap/position-tracking
+    /// all key off `tempo_map`/`duration_ms` alone — so this reuses the exact
+    /// same clock, A/B loop region, and click-generation machinery as `.mscz`
+    /// playback with no changes to any of it.
+    pub fn load_tempo_map(&self, tempo_map: Vec<TempoMapEntry>, duration_ms: f64) -> Arc<LoadedMidi> {
+        Arc::new(LoadedMidi {
+            events: Vec::new(),
+            tempo_map,
+            duration_ms,
+        })
+    }
+
     pub fn play(&mut self, midi: &Arc<LoadedMidi>, play_loop: bool) {
         self.midi = Some(midi.clone());
         self.next_event_index = 0;

@@ -1,6 +1,7 @@
 use std::fs;
 use std::path::Path;
 
+use mp_core::audio::midi_events::TempoMapEntry;
 use mp_core::audio::synth::Player;
 
 fn soundfont_path() -> std::path::PathBuf {
@@ -181,4 +182,54 @@ fn metronome_clicks_are_audible_without_relying_on_notes() {
     assert!(left.iter().all(|s| s.is_finite()));
     let max_abs = left.iter().chain(right.iter()).fold(0.0f32, |acc, s| acc.max(s.abs()));
     assert!(max_abs > 0.001, "expected audible metronome clicks, got max abs sample = {max_abs}");
+}
+
+/// PDF mode (Phase 9) has no note data at all — only a user-calibrated tempo
+/// map — so `Player::load_tempo_map` must produce audible metronome clicks
+/// and a working A/B loop region exactly like `.mscz` MIDI playback does,
+/// with zero note events ever dispatched.
+#[test]
+fn tempo_map_only_playback_produces_clicks_with_no_notes() {
+    let soundfont_path = soundfont_path();
+    if !soundfont_path.exists() {
+        eprintln!("skipping: soundfont not present in this environment");
+        return;
+    }
+    let soundfont_bytes = fs::read(&soundfont_path).unwrap();
+
+    let tempo_map = vec![TempoMapEntry {
+        time_ms: 0.0,
+        qpm: 120.0,
+        numerator: 4,
+    }];
+    let duration_ms = 4000.0;
+
+    let mut player = Player::new(&soundfont_bytes, 44100).unwrap();
+    let midi = player.load_tempo_map(tempo_map, duration_ms);
+    player.set_metronome_enabled(true);
+    player.play(&midi, true);
+
+    let frame_count = 44100 * 2;
+    let mut left = vec![0.0f32; frame_count];
+    let mut right = vec![0.0f32; frame_count];
+    player.render(&mut left, &mut right);
+
+    assert!(left.iter().all(|s| s.is_finite()));
+    let max_abs = left.iter().chain(right.iter()).fold(0.0f32, |acc, s| acc.max(s.abs()));
+    assert!(max_abs > 0.001, "expected audible metronome clicks, got max abs sample = {max_abs}");
+
+    // Loop region defaults to the whole duration when play_loop is true —
+    // confirm it actually wraps rather than running past `duration_ms`.
+    let mut total_rendered_ms = 0.0;
+    let mut max_observed_position_ms = 0.0_f64;
+    while total_rendered_ms < duration_ms * 1.5 {
+        player.render(&mut left, &mut right);
+        max_observed_position_ms = max_observed_position_ms.max(player.position_secs() * 1000.0);
+        total_rendered_ms += frame_count as f64 / 44100.0 * 1000.0;
+    }
+    assert!(
+        max_observed_position_ms < duration_ms + 200.0,
+        "expected position to stay within the {duration_ms}ms loop region (plus slack), \
+         but observed {max_observed_position_ms}ms"
+    );
 }

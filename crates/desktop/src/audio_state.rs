@@ -1,6 +1,7 @@
 use std::sync::{Arc, Mutex};
 use std::thread;
 
+use mp_core::audio::midi_events::TempoMapEntry;
 use mp_core::audio::output_cpal;
 use mp_core::audio::synth::{LoadedMidi, Player};
 
@@ -83,6 +84,13 @@ impl AudioState {
             .map_err(|e| e.to_string())?;
         *self.current_midi.lock().unwrap() = Some(midi_file);
         Ok(())
+    }
+
+    /// PDF mode (Phase 9): metronome-only "playback" from a calibration-
+    /// derived tempo map, no note data — see `Player::load_tempo_map`'s docs.
+    pub fn load_tempo_map(&self, tempo_map: Vec<TempoMapEntry>, duration_ms: f64) {
+        let midi_file = self.player.lock().unwrap().load_tempo_map(tempo_map, duration_ms);
+        *self.current_midi.lock().unwrap() = Some(midi_file);
     }
 
     pub fn play(&self, play_loop: bool) -> Result<(), String> {

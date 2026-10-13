@@ -1,5 +1,7 @@
 use mp_core::api::{self, ImportTimelineResponse, OpenFileRequest, OpenFileResponse};
+use mp_core::audio::midi_events::TempoMapEntry;
 use mp_core::markers::Marker;
+use mp_core::pdf_calibration::CalibrationPoint;
 use mp_core::pieces::Piece;
 use mp_core::recent_files::RecentFile;
 use mp_core::timeline::Positions;
@@ -38,6 +40,15 @@ pub fn import_timeline(
 #[tauri::command]
 pub fn load_midi(audio: State<AudioState>, midi_bytes: Vec<u8>) -> Result<(), String> {
     audio.load_midi(&midi_bytes)
+}
+
+/// PDF mode (Phase 9): loads a calibration-derived tempo map for
+/// metronome-only "playback" (no note data — see `AudioState::load_tempo_map`'s
+/// docs for why this is safe to drive through the same `play`/`stop`/
+/// `set_loop_region` commands as `.mscz` MIDI playback).
+#[tauri::command]
+pub fn load_tempo_map(audio: State<AudioState>, tempo_map: Vec<TempoMapEntry>, duration_ms: f64) {
+    audio.load_tempo_map(tempo_map, duration_ms)
 }
 
 #[tauri::command]
@@ -115,4 +126,32 @@ pub fn record_recent_file(
 ) -> Result<Vec<RecentFile>, String> {
     let base_dir = markers_base_dir(&app)?;
     api::record_recent_file(&base_dir, path, file_hash, title).map_err(|e| e.to_string())
+}
+
+/// PDF mode (Phase 9): stable content-hash key for a PDF's bytes, same blake3
+/// scheme `open_file` uses for `.mscz` (see `api::hash_bytes`'s docs).
+#[tauri::command]
+pub fn hash_bytes(bytes: Vec<u8>) -> String {
+    api::hash_bytes(&bytes)
+}
+
+#[tauri::command]
+pub fn list_calibration_points(app: AppHandle, file_hash: String) -> Result<Vec<CalibrationPoint>, String> {
+    let base_dir = markers_base_dir(&app)?;
+    api::list_calibration_points(&base_dir, &file_hash).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn save_calibration_points(
+    app: AppHandle,
+    file_hash: String,
+    points: Vec<CalibrationPoint>,
+) -> Result<Vec<CalibrationPoint>, String> {
+    let base_dir = markers_base_dir(&app)?;
+    api::save_calibration_points(&base_dir, &file_hash, points).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn pdf_tempo_map(points: Vec<CalibrationPoint>, numerator: u8) -> Vec<TempoMapEntry> {
+    api::pdf_tempo_map(&points, numerator)
 }
