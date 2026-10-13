@@ -51,5 +51,11 @@ export interface CalibrationPoint {
   y: number
   time_ms: number
   measure: number
-  beat: number
+}
+
+/** One detected staff and its candidate barline x-positions — suggestions only, see crates/cv-barline. */
+export interface StaffSystem {
+  top: number
+  bottom: number
+  barline_xs: number[]
 }

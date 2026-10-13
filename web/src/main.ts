@@ -1,5 +1,5 @@
 import { openScore, upgradeScore, getMeasurePositions, getMidi, type OpenScoreResult, type WebMscore } from './score-engine'
-import { loadPdf, renderPdfPage, type PdfDocument } from './pdf-engine'
+import { loadPdf, renderPdfPage, canvasToPngBytes, type PdfDocument } from './pdf-engine'
 import { PageView } from './render/PageView'
 import { SelectionOverlay, type MeasureRange } from './render/SelectionOverlay'
 import { CalibrationOverlay, type PointRange } from './views/CalibrationOverlay'
@@ -19,6 +19,7 @@ import {
   listCalibrationPoints,
   saveCalibrationPoints,
   loadPdfTempoMap,
+  detectBarlines,
 } from './api-client'
 import { MarkerPanel } from './views/MarkerPanel'
 import { PiecesIndex } from './views/PiecesIndex'
@@ -51,6 +52,8 @@ app.innerHTML = `
     </div>
     <div id="pdf-controls" style="margin-top: 8px; display:none;">
       <label><input id="marking-mode-checkbox" type="checkbox" /> Mark measures</label>
+      <button id="suggest-barlines-btn" style="margin-left: 16px; display:none;">Suggest barlines</button>
+      <button id="clear-points-btn" style="margin-left: 8px; display:none;">Clear all points</button>
       <span style="margin-left: 16px;">
         <button id="zoom-out">&minus;</button>
         <span id="zoom-indicator" style="margin: 0 6px;">100%</span>
@@ -91,6 +94,8 @@ const loopStatusEl = document.querySelector<HTMLDivElement>('#loop-status')!
 const calibrationStatusEl = document.querySelector<HTMLDivElement>('#calibration-status')!
 const pdfControlsEl = document.querySelector<HTMLDivElement>('#pdf-controls')!
 const markingModeCheckbox = document.querySelector<HTMLInputElement>('#marking-mode-checkbox')!
+const suggestBarlinesBtn = document.querySelector<HTMLButtonElement>('#suggest-barlines-btn')!
+const clearPointsBtn = document.querySelector<HTMLButtonElement>('#clear-points-btn')!
 const zoomOutBtn = document.querySelector<HTMLButtonElement>('#zoom-out')!
 const zoomInBtn = document.querySelector<HTMLButtonElement>('#zoom-in')!
 const zoomIndicatorEl = document.querySelector<HTMLSpanElement>('#zoom-indicator')!
@@ -433,6 +438,8 @@ async function activateTab(tab: TabState): Promise<void> {
     calibrationStatusEl.textContent = markingModeStatusText(tab)
     markingModeCheckbox.checked = tab.markingMode
     tab.calibrationOverlay.setMarkingMode(tab.markingMode)
+    suggestBarlinesBtn.style.display = tab.markingMode ? 'inline-block' : 'none'
+    clearPointsBtn.style.display = tab.markingMode ? 'inline-block' : 'none'
     zoomIndicatorEl.textContent = `${Math.round(tab.zoom * 100)}%`
     zoomOutBtn.disabled = tab.zoom <= PDF_MIN_ZOOM
     zoomInBtn.disabled = tab.zoom >= PDF_MAX_ZOOM
@@ -481,6 +488,38 @@ markingModeCheckbox.addEventListener('change', () => {
   if (!active || active.kind !== 'pdf') return
   active.markingMode = markingModeCheckbox.checked
   active.calibrationOverlay.setMarkingMode(active.markingMode)
+  suggestBarlinesBtn.style.display = active.markingMode ? 'inline-block' : 'none'
+  clearPointsBtn.style.display = active.markingMode ? 'inline-block' : 'none'
+  calibrationStatusEl.textContent = markingModeStatusText(active)
+})
+
+suggestBarlinesBtn.addEventListener('click', async () => {
+  const active = activeTab()
+  if (!active || active.kind !== 'pdf') return
+  const canvas = active.canvasContainer.querySelector('canvas')
+  if (!canvas) return
+  suggestBarlinesBtn.disabled = true
+  try {
+    const pngBytes = await canvasToPngBytes(canvas)
+    const systems = await detectBarlines(pngBytes)
+    const count = systems.reduce((n, s) => n + s.barline_xs.length, 0)
+    active.calibrationOverlay.addPointsFromBarlines(systems)
+    calibrationStatusEl.textContent = `Added ${count} calibration point(s) from detected barlines — double-check them, the detector isn't always right.`
+  } catch (e) {
+    console.error('Failed to detect barlines:', e)
+    calibrationStatusEl.textContent = `Barline suggestion failed: ${e instanceof Error ? e.message : String(e)}`
+  } finally {
+    suggestBarlinesBtn.disabled = false
+  }
+})
+
+clearPointsBtn.addEventListener('click', () => {
+  const active = activeTab()
+  if (!active || active.kind !== 'pdf') return
+  const count = active.calibrationOverlay.getPoints().length
+  if (count === 0) return
+  if (!window.confirm(`Remove all ${count} calibration point(s) for this file? This can't be undone.`)) return
+  active.calibrationOverlay.clearAllPoints()
   calibrationStatusEl.textContent = markingModeStatusText(active)
 })
 
@@ -731,8 +770,17 @@ async function openPdfBytes(bytes: Uint8Array, filename: string, path: string | 
   const pageContainer = document.createElement('div')
   pageContainer.style.position = 'relative'
   const canvasContainer = document.createElement('div')
+  // Shrink-wraps exactly to the canvas's own CSS size (a plain block <div>
+  // would otherwise stretch to its parent's full width, leaving blank space
+  // to the right of the canvas whenever the zoomed canvas is narrower than
+  // the available page width) — CalibrationOverlay positions its dots as
+  // percentages of `canvasContainer`'s own box (`stage`'s `inset: 0`
+  // children), so that box must exactly match the canvas's box or every
+  // dot's position silently drifts off-target.
+  canvasContainer.style.position = 'relative'
+  canvasContainer.style.display = 'inline-block'
   pageContainer.appendChild(canvasContainer)
-  const calibrationOverlay = new CalibrationOverlay(pageContainer)
+  const calibrationOverlay = new CalibrationOverlay(canvasContainer)
 
   const tabState: PdfTabState = {
     kind: 'pdf',
@@ -801,8 +849,14 @@ async function showPdfPage(tab: PdfTabState, pageNumber: number): Promise<void> 
   tab.currentPage = pageNumber
   const canvas = await renderPdfPage(tab.doc, pageNumber + 1, PDF_BASE_WIDTH * tab.zoom)
   if (tab.currentPage !== pageNumber) return // stale: navigated elsewhere while this render was in flight
-  tab.canvasContainer.innerHTML = ''
-  tab.canvasContainer.appendChild(canvas)
+  // Remove only the old <canvas>, not canvasContainer's whole subtree —
+  // CalibrationOverlay's own layers (dots/drag-rect/form) are also mounted
+  // inside canvasContainer (so they stay sized/positioned exactly to the
+  // canvas, see that constructor call's comment), and innerHTML = '' would
+  // silently detach them from the DOM on every page change/zoom, leaving
+  // `render()` drawing into disconnected nodes nothing ever displays.
+  tab.canvasContainer.querySelector('canvas')?.remove()
+  tab.canvasContainer.insertBefore(canvas, tab.canvasContainer.firstChild)
   tab.calibrationOverlay.setPage(pageNumber)
 
   if (activeHash === tab.fileHash) {

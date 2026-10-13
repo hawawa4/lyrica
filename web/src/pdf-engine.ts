@@ -51,3 +51,16 @@ export async function renderPdfPage(doc: PdfDocument, pageNumber: number, cssWid
   await page.render({ canvas, canvasContext: context, viewport }).promise
   return canvas
 }
+
+/**
+ * Extracts a rendered PDF page canvas's pixels as PNG bytes, for handing to
+ * the optional CV barline-detection assist (`crates/cv-barline`, called via
+ * `detectBarlines` in api-client.ts) — same "render to canvas, export bytes,
+ * hand across the API boundary" pattern Phase 4 uses for MIDI/positions
+ * data. Rust never touches the canvas/DOM directly.
+ */
+export async function canvasToPngBytes(canvas: HTMLCanvasElement): Promise<Uint8Array> {
+  const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'))
+  if (!blob) throw new Error('canvasToPngBytes: canvas.toBlob() returned null')
+  return new Uint8Array(await blob.arrayBuffer())
+}

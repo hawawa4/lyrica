@@ -1,9 +1,11 @@
 //! PDF mode (IMPLEMENTATION_PLAN.md Phase 9): user-calibrated tempo points
 //! for scores with no usable `.mscz` — the user taps along (or places points
-//! directly) to mark "this position on this page = measure N, beat B", and
-//! the app linearly interpolates between consecutive points to derive an
-//! approximate tempo map (see `tempo_map` below), since true note data
-//! doesn't exist for a plain PDF.
+//! directly) to mark "this position on this page = measure N", and the app
+//! linearly interpolates between consecutive points to derive an approximate
+//! tempo map (see `tempo_map` below), since true note data doesn't exist for
+//! a plain PDF. Tracks measure number only, not a sub-measure beat position
+//! — the app only cares about measure boundaries (for loop/jump purposes),
+//! and a per-beat distinction added real UI friction for no practical use.
 //!
 //! Persisted via `sidecar`'s generic item storage at
 //! `{base_dir}/pdfs/{file_hash}/calibration.json`, hashed the same way
@@ -37,7 +39,6 @@ pub struct CalibrationPoint {
     /// tempo derivation, not any absolute clock.
     pub time_ms: f64,
     pub measure: u32,
-    pub beat: u32,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -74,20 +75,12 @@ pub fn save_points(
 /// audio code (see `crates/core/src/audio/synth.rs`'s `load_tempo_map` docs).
 ///
 /// Between two consecutive points, the local tempo is however many beats
-/// elapsed (by `beat`/`measure` numbering, assuming a constant time
-/// signature equal to the first point's bar length... see note below)
-/// divided by the elapsed `time_ms` — i.e. local qpm = beats / minutes.
-/// Needs at least 2 points to derive any tempo; fewer returns an empty map
-/// (no tempo info derivable yet, so no clicks/loop should play).
-///
-/// Simplification: this treats `beat` as always counting within a bar whose
-/// length is `numerator` (passed in, since calibration points don't carry
-/// their own time signature) — correct as long as the time signature doesn't
-/// change between calibration points, which is a reasonable assumption for
-/// manual calibration (the user places points more densely around tempo
-/// changes anyway, and a time-signature change close to a calibration point
-/// just gets the usual linear-interpolation approximation like a tempo
-/// change would).
+/// elapsed — `(b.measure - a.measure) * numerator` beats, assuming a
+/// constant time signature of `numerator` beats per measure (passed in,
+/// since calibration points don't carry their own time signature) — divided
+/// by the elapsed `time_ms`, i.e. local qpm = beats / minutes. Needs at
+/// least 2 points to derive any tempo; fewer returns an empty map (no tempo
+/// info derivable yet, so no clicks/loop should play).
 pub fn tempo_map(points: &[CalibrationPoint], numerator: u8) -> Vec<TempoMapEntry> {
     if points.len() < 2 {
         return Vec::new();
@@ -95,6 +88,7 @@ pub fn tempo_map(points: &[CalibrationPoint], numerator: u8) -> Vec<TempoMapEntr
     let mut sorted = points.to_vec();
     sorted.sort_by(|a, b| a.time_ms.total_cmp(&b.time_ms));
 
+    let beats_per_measure = numerator.max(1) as f64;
     let mut map = Vec::with_capacity(sorted.len().saturating_sub(1));
     for pair in sorted.windows(2) {
         let [a, b] = [pair[0], pair[1]];
@@ -102,7 +96,7 @@ pub fn tempo_map(points: &[CalibrationPoint], numerator: u8) -> Vec<TempoMapEntr
         if elapsed_ms <= 0.0 {
             continue;
         }
-        let beats_elapsed = beats_between(a, b, numerator);
+        let beats_elapsed = (b.measure as f64 - a.measure as f64) * beats_per_measure;
         if beats_elapsed <= 0.0 {
             continue;
         }
@@ -114,13 +108,6 @@ pub fn tempo_map(points: &[CalibrationPoint], numerator: u8) -> Vec<TempoMapEntr
         });
     }
     map
-}
-
-fn beats_between(a: CalibrationPoint, b: CalibrationPoint, numerator: u8) -> f64 {
-    let numerator = numerator.max(1) as i64;
-    let a_total_beats = a.measure as i64 * numerator + a.beat as i64;
-    let b_total_beats = b.measure as i64 * numerator + b.beat as i64;
-    (b_total_beats - a_total_beats) as f64
 }
 
 #[cfg(test)]
@@ -135,8 +122,8 @@ mod tests {
         assert_eq!(list_points(tmp.path(), hash).unwrap().len(), 0);
 
         let points = vec![
-            CalibrationPoint { page: 0, x: 10.0, y: 20.0, time_ms: 0.0, measure: 0, beat: 0 },
-            CalibrationPoint { page: 0, x: 30.0, y: 20.0, time_ms: 2000.0, measure: 1, beat: 0 },
+            CalibrationPoint { page: 0, x: 10.0, y: 20.0, time_ms: 0.0, measure: 0 },
+            CalibrationPoint { page: 0, x: 30.0, y: 20.0, time_ms: 2000.0, measure: 1 },
         ];
         save_points(tmp.path(), hash, points.clone()).unwrap();
 
@@ -152,7 +139,7 @@ mod tests {
         save_points(
             tmp.path(),
             hash,
-            vec![CalibrationPoint { page: 0, x: 0.0, y: 0.0, time_ms: 0.0, measure: 0, beat: 0 }],
+            vec![CalibrationPoint { page: 0, x: 0.0, y: 0.0, time_ms: 0.0, measure: 0 }],
         )
         .unwrap();
 
@@ -166,11 +153,11 @@ mod tests {
     }
 
     #[test]
-    fn tempo_map_derives_qpm_from_measure_beat_and_elapsed_time() {
+    fn tempo_map_derives_qpm_from_measure_count_and_elapsed_time() {
         // 4/4, 2 measures (8 beats) elapsed over exactly 4 seconds => 120 qpm.
         let points = vec![
-            CalibrationPoint { page: 0, x: 0.0, y: 0.0, time_ms: 0.0, measure: 0, beat: 0 },
-            CalibrationPoint { page: 0, x: 0.0, y: 0.0, time_ms: 4000.0, measure: 2, beat: 0 },
+            CalibrationPoint { page: 0, x: 0.0, y: 0.0, time_ms: 0.0, measure: 0 },
+            CalibrationPoint { page: 0, x: 0.0, y: 0.0, time_ms: 4000.0, measure: 2 },
         ];
         let map = tempo_map(&points, 4);
         assert_eq!(map.len(), 1);
@@ -182,9 +169,9 @@ mod tests {
     #[test]
     fn tempo_map_produces_one_entry_per_segment_for_varying_tempo() {
         let points = vec![
-            CalibrationPoint { page: 0, x: 0.0, y: 0.0, time_ms: 0.0, measure: 0, beat: 0 },
-            CalibrationPoint { page: 0, x: 0.0, y: 0.0, time_ms: 2000.0, measure: 1, beat: 0 }, // 4 beats / 2s = 120qpm
-            CalibrationPoint { page: 0, x: 0.0, y: 0.0, time_ms: 6000.0, measure: 2, beat: 0 }, // 4 beats / 4s = 60qpm
+            CalibrationPoint { page: 0, x: 0.0, y: 0.0, time_ms: 0.0, measure: 0 },
+            CalibrationPoint { page: 0, x: 0.0, y: 0.0, time_ms: 2000.0, measure: 1 }, // 4 beats / 2s = 120qpm
+            CalibrationPoint { page: 0, x: 0.0, y: 0.0, time_ms: 6000.0, measure: 2 }, // 4 beats / 4s = 60qpm
         ];
         let map = tempo_map(&points, 4);
         assert_eq!(map.len(), 2);
@@ -196,7 +183,7 @@ mod tests {
     #[test]
     fn fewer_than_two_points_derives_no_tempo() {
         assert_eq!(tempo_map(&[], 4).len(), 0);
-        let one = vec![CalibrationPoint { page: 0, x: 0.0, y: 0.0, time_ms: 0.0, measure: 0, beat: 0 }];
+        let one = vec![CalibrationPoint { page: 0, x: 0.0, y: 0.0, time_ms: 0.0, measure: 0 }];
         assert_eq!(tempo_map(&one, 4).len(), 0);
     }
 }

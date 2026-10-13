@@ -1,4 +1,4 @@
-import type { CalibrationPoint } from '../types'
+import type { CalibrationPoint, StaffSystem } from '../types'
 
 /**
  * A selected range of calibration points, by index into the time-sorted
@@ -18,8 +18,8 @@ export interface PointRange {
  * mutually exclusive via `setMarkingMode`:
  *
  * - **Marking mode** (`setMarkingMode(true)`, off by default): click to place
- *   a calibration point (opens a small inline form to assign measure+beat),
- *   click an existing point's dot to remove it. A PDF is typically reopened
+ *   a calibration point (opens a small inline form to assign its measure
+ *   number), click an existing point's dot to remove it. A PDF is typically reopened
  *   already calibrated from a past session, so placement/removal needs an
  *   explicit toggle — without it, an ordinary click while reading/practicing
  *   would silently add an unwanted point.
@@ -27,18 +27,22 @@ export interface PointRange {
  *   existing points (like `SelectionOverlay`'s drag-to-select-measures for
  *   `.mscz`) for `main.ts`'s L-to-loop, instead of adding/removing anything.
  *
- * Positions are stored in PDF-point space (the page's own coordinate system
- * at `scale: 1`, matching `pdf-engine.ts`'s `renderPdfPage`), not raw pixel
- * offsets into the canvas — so calibration stays valid across window
- * resizes/zoom, the same reasoning `SelectionOverlay` uses for `.mscz`
- * measure boxes.
+ * Positions are stored in the rendered canvas's own native pixel space
+ * (`canvas.width`/`canvas.height`, i.e. `cssWidth * devicePixelRatio` per
+ * `pdf-engine.ts`'s `renderPdfPage`), not raw *displayed* pixel offsets —
+ * `render()`/`handleStageClick()` both convert through `canvas.width`/
+ * `canvas.height` as percentages, so dots stay correctly placed regardless
+ * of the page's current CSS display size. This does mean a point's stored
+ * `x`/`y` is tied to whatever zoom level was active when it was placed; at
+ * a different zoom the *percentage* position is still correct (dots are
+ * positioned by `% of canvas size`, not absolute pixels), so this isn't a
+ * bug in practice, just worth knowing if ever debugging point placement.
  */
 export class CalibrationOverlay {
   private readonly dotsLayer: HTMLDivElement
   private readonly dragRectEl: HTMLDivElement
   private readonly formEl: HTMLDivElement
   private readonly measureInput: HTMLInputElement
-  private readonly beatInput: HTMLInputElement
   private points: CalibrationPoint[] = []
   private currentPage = 0
   private markingMode = false
@@ -74,15 +78,12 @@ export class CalibrationOverlay {
     this.formEl.innerHTML = `
       <div style="font-size: 12px; margin-bottom: 4px;">New calibration point</div>
       <label style="font-size: 12px;">Measure <input type="number" min="0" value="0" style="width: 50px;" /></label>
-      <label style="font-size: 12px; margin-left: 6px;">Beat <input type="number" min="0" value="0" style="width: 40px;" /></label>
       <div style="margin-top: 4px;">
         <button class="confirm" style="font-size: 12px;">Add</button>
         <button class="cancel" style="font-size: 12px;">Cancel</button>
       </div>
     `
-    const inputs = this.formEl.querySelectorAll('input')
-    this.measureInput = inputs[0]
-    this.beatInput = inputs[1]
+    this.measureInput = this.formEl.querySelector('input')!
     this.formEl.querySelector('.confirm')!.addEventListener('click', () => this.confirmPending())
     this.formEl.querySelector('.cancel')!.addEventListener('click', () => this.cancelPending())
 
@@ -136,6 +137,48 @@ export class CalibrationOverlay {
     this.render()
   }
 
+  /**
+   * CV barline-detection assist (`crates/cv-barline`, optional/Phase 9):
+   * directly adds a real calibration point for every detected barline x
+   * (across all detected staff systems), auto-numbering them in reading
+   * order (system top-to-bottom, then x left-to-right within a system) —
+   * no separate "suggestion, click to confirm" step. The detector can and
+   * does produce false positives (stems, chord stacks — see cv-barline's
+   * module docs), so these are meant to be spot-corrected afterward via the
+   * normal Mark-measures add/remove flow, not treated as guaranteed-correct.
+   */
+  addPointsFromBarlines(systems: StaffSystem[]): void {
+    const sorted = [...systems].sort((a, b) => a.top - b.top)
+    let measure = nextMeasure(this.points)
+    const newPoints: CalibrationPoint[] = []
+    let nextTime = nextTimeMs(this.points)
+
+    for (const system of sorted) {
+      const xs = [...system.barline_xs].sort((a, b) => a - b)
+      const y = (system.top + system.bottom) / 2
+      for (const x of xs) {
+        newPoints.push({ page: this.currentPage, x, y, time_ms: nextTime, measure })
+        measure += 1
+        nextTime += 1000
+      }
+    }
+
+    if (newPoints.length === 0) return
+    this.points = [...this.points, ...newPoints].sort((a, b) => a.time_ms - b.time_ms)
+    this.render()
+    this.onChangeCallback?.(this.points)
+  }
+
+  /** Removes every calibration point for this file (all pages, not just the current one) — the caller is responsible for confirming with the user first, since this can't be undone. */
+  clearAllPoints(): void {
+    if (this.points.length === 0) return
+    this.points = []
+    this.selectedRange = null
+    this.onSelectCallback?.(null)
+    this.render()
+    this.onChangeCallback?.(this.points)
+  }
+
   destroy(): void {
     this.stage.removeEventListener('click', this.handleStageClick)
     this.stage.removeEventListener('mousedown', this.handleMouseDown)
@@ -164,10 +207,13 @@ export class CalibrationOverlay {
     const scaleX = canvas.width / rect.width
     const scaleY = canvas.height / rect.height
 
-    this.pendingClick = { x: pixelX * scaleX, y: pixelY * scaleY }
-    const { measure, beat } = nextMeasureBeat(this.points)
-    this.measureInput.value = String(measure)
-    this.beatInput.value = String(beat)
+    this.openPendingForm(pixelX * scaleX, pixelY * scaleY, pixelX, pixelY)
+  }
+
+  /** Opens the measure confirmation form, positioned at `pixelX`/`pixelY` (displayed pixels, for the form's own CSS position) for a pending point at `canvasX`/`canvasY` (canvas-native pixel space, what actually gets stored). */
+  private openPendingForm(canvasX: number, canvasY: number, pixelX: number, pixelY: number): void {
+    this.pendingClick = { x: canvasX, y: canvasY }
+    this.measureInput.value = String(nextMeasure(this.points))
     this.formEl.style.left = `${pixelX}px`
     this.formEl.style.top = `${pixelY}px`
     this.formEl.style.display = 'block'
@@ -232,14 +278,12 @@ export class CalibrationOverlay {
   private confirmPending(): void {
     if (!this.pendingClick) return
     const measure = Number(this.measureInput.value) || 0
-    const beat = Number(this.beatInput.value) || 0
     const point: CalibrationPoint = {
       page: this.currentPage,
       x: this.pendingClick.x,
       y: this.pendingClick.y,
       time_ms: nextTimeMs(this.points),
       measure,
-      beat,
     }
     this.points = [...this.points, point].sort((a, b) => a.time_ms - b.time_ms)
     this.cancelPending()
@@ -297,17 +341,17 @@ export class CalibrationOverlay {
       dot.style.display = 'flex'
       dot.style.alignItems = 'center'
       dot.style.justifyContent = 'center'
-      dot.textContent = `${p.measure}.${p.beat}`
+      dot.textContent = String(p.measure)
       if (this.markingMode) {
         dot.style.pointerEvents = 'auto'
         dot.style.cursor = 'pointer'
-        dot.title = `Measure ${p.measure}, beat ${p.beat} — click to remove`
+        dot.title = `Measure ${p.measure} — click to remove`
         dot.addEventListener('click', (e) => {
           e.stopPropagation()
           this.removePoint(index)
         })
       } else {
-        dot.title = `Measure ${p.measure}, beat ${p.beat}`
+        dot.title = `Measure ${p.measure}`
       }
       this.dotsLayer.appendChild(dot)
     }
@@ -320,9 +364,9 @@ function nextTimeMs(existing: CalibrationPoint[]): number {
   return Math.max(...existing.map((p) => p.time_ms)) + 1000
 }
 
-/** Defaults a new point's measure/beat to right after the latest existing point's (by time) — always the next measure, beat 0 — rather than always defaulting to measure 0/beat 0, which made every point need manual correction. */
-function nextMeasureBeat(existing: CalibrationPoint[]): { measure: number; beat: number } {
-  if (existing.length === 0) return { measure: 0, beat: 0 }
+/** Defaults a new point's measure to right after the latest existing point's (by time) — always the next measure — rather than always defaulting to measure 0, which made every point need manual correction. */
+function nextMeasure(existing: CalibrationPoint[]): number {
+  if (existing.length === 0) return 0
   const latest = existing.reduce((a, b) => (a.time_ms >= b.time_ms ? a : b))
-  return { measure: latest.measure + 1, beat: 0 }
+  return latest.measure + 1
 }

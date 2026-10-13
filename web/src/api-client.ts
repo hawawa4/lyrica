@@ -1,5 +1,5 @@
 import type { Positions } from './score-engine'
-import type { CalibrationPoint, ImportTimelineResponse, Marker, Piece, RecentFile } from './types'
+import type { CalibrationPoint, ImportTimelineResponse, Marker, Piece, RecentFile, StaffSystem } from './types'
 
 /** True when running inside the Tauri desktop webview, false in a plain browser tab. */
 export function isTauri(): boolean {
@@ -201,4 +201,18 @@ export async function loadPdfTempoMap(points: CalibrationPoint[], numerator: num
     numerator,
   })
   await invoke('load_tempo_map', { tempoMap, durationMs })
+}
+
+/**
+ * Optional CV barline-detection assist (see crates/cv-barline's module
+ * docs). Takes a rendered page's PNG bytes (via pdf-engine.ts's
+ * `canvasToPngBytes`) and returns candidate barline x-positions per
+ * detected staff system — suggestions only; the caller renders them as
+ * adjustable/dismissable markers the user must confirm before they become
+ * real calibration points.
+ */
+export async function detectBarlines(pngBytes: Uint8Array): Promise<StaffSystem[]> {
+  if (!isTauri()) throw new Error('detectBarlines: desktop-only for now')
+  const { invoke } = await import('@tauri-apps/api/core')
+  return invoke<StaffSystem[]>('detect_barlines', { pngBytes: Array.from(pngBytes) })
 }
