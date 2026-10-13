@@ -37,3 +37,10 @@ export interface Piece {
   start_measure_index: number
   title: string
 }
+
+export interface RecentFile {
+  path: string
+  file_hash: string
+  last_opened: number
+  title: string
+}

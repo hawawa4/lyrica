@@ -1,5 +1,5 @@
 import type { Positions } from './score-engine'
-import type { ImportTimelineResponse, Marker, Piece } from './types'
+import type { ImportTimelineResponse, Marker, Piece, RecentFile } from './types'
 
 /** True when running inside the Tauri desktop webview, false in a plain browser tab. */
 export function isTauri(): boolean {
@@ -141,4 +141,22 @@ export async function getPlaybackPosition(): Promise<number> {
   if (!isTauri()) throw new Error('getPlaybackPosition: desktop-only for now')
   const { invoke } = await import('@tauri-apps/api/core')
   return invoke<number>('playback_position')
+}
+
+/**
+ * Recent-files list, for reopening a past file after restarting the app.
+ * Desktop-only: "path" is meaningless for a future web/server shell, where
+ * files arrive as uploaded bytes with no on-disk location.
+ */
+export async function listRecentFiles(): Promise<RecentFile[]> {
+  if (!isTauri()) throw new Error('listRecentFiles: desktop-only for now')
+  const { invoke } = await import('@tauri-apps/api/core')
+  return invoke<RecentFile[]>('list_recent_files')
+}
+
+/** Records a file as just-opened; `path` is the real on-disk path (not just a filename). */
+export async function recordRecentFile(path: string, fileHash: string, title: string): Promise<RecentFile[]> {
+  if (!isTauri()) throw new Error('recordRecentFile: desktop-only for now')
+  const { invoke } = await import('@tauri-apps/api/core')
+  return invoke<RecentFile[]>('record_recent_file', { path, fileHash, title })
 }

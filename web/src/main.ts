@@ -1,4 +1,4 @@
-import { openScore, upgradeScore, getMeasurePositions, getMidi, type OpenScoreResult } from './score-engine'
+import { openScore, upgradeScore, getMeasurePositions, getMidi, type OpenScoreResult, type WebMscore } from './score-engine'
 import { PageView } from './render/PageView'
 import { SelectionOverlay, type MeasureRange } from './render/SelectionOverlay'
 import { Cursor } from './render/Cursor'
@@ -12,9 +12,12 @@ import {
   setLoopRegion,
   setMetronomeEnabled,
   contentHash,
+  recordRecentFile,
 } from './api-client'
 import { MarkerPanel } from './views/MarkerPanel'
 import { PiecesIndex } from './views/PiecesIndex'
+import { TabBar, type TabInfo } from './views/TabBar'
+import { RecentFilesList } from './views/RecentFilesList'
 import type { Timeline } from './types'
 
 const app = document.querySelector<HTMLDivElement>('#app')!
@@ -45,6 +48,8 @@ app.innerHTML = `
     <div id="selection-status" style="margin-top: 4px; color: #888; font-size: 13px;"></div>
     <div id="pieces-index" style="max-width: 700px;"></div>
     <div id="marker-panel" style="max-width: 700px;"></div>
+    <div id="recent-files" style="max-width: 700px;"></div>
+    <div id="tab-bar" style="max-width: 700px;"></div>
   </div>
   <div id="drop-overlay" style="display:none; position:fixed; inset:0; background:rgba(0,120,255,0.15); border: 4px dashed rgba(0,120,255,0.6); pointer-events:none; align-items:center; justify-content:center; font-family: sans-serif; font-size: 20px; color: #0078ff;">
     Drop to open
@@ -80,30 +85,54 @@ const upgradeModal = document.querySelector<HTMLDivElement>('#upgrade-modal')!
 const upgradeConfirmBtn = document.querySelector<HTMLButtonElement>('#upgrade-confirm')!
 const upgradeCancelBtn = document.querySelector<HTMLButtonElement>('#upgrade-cancel')!
 
-// Construction order matters: PageView must be created first so its SVG
-// layer is the first child of #page, with SelectionOverlay's boxes/drag-rect
-// layers appended after (and thus stacked visually on top).
-const pageView = new PageView(pageContainerEl, (page, pages, positions) => {
-  pageIndicatorEl.textContent = `Page ${page + 1} / ${pages}`
-  prevBtn.disabled = page <= 0
-  nextBtn.disabled = page >= pages - 1
-  selectionStatusEl.textContent = ''
-  if (positions) {
-    selectionOverlay.setPage(positions.elements, page)
+/**
+ * Everything that used to be a single set of global variables/objects,
+ * bundled per open file (keyed by file hash) so switching tabs swaps state
+ * wholesale instead of mutating shared globals. `pageView`/`selectionOverlay`
+ * each own DOM-cached state (rendered SVG pages, measure selection boxes)
+ * tied to a specific container element — one dedicated, hidden/shown
+ * `pageContainerEl` per tab, rather than one shared instance repointed at a
+ * new score, so switching back to an already-open tab never re-fetches
+ * already-rendered pages (the "no re-fetch lag" requirement).
+ */
+interface TabState {
+  fileHash: string
+  title: string
+  score: WebMscore
+  pageView: PageView
+  selectionOverlay: SelectionOverlay
+  pageContainer: HTMLDivElement
+  timeline: Timeline | null
+  selection: MeasureRange | null
+  speed: number
+  loopRegion: [number, number] | null
+  originalBytes: Uint8Array
+}
+
+const tabs = new Map<string, TabState>()
+let activeHash: string | null = null
+
+const tabBarEl = document.querySelector<HTMLDivElement>('#tab-bar')!
+const tabBar = new TabBar(tabBarEl)
+tabBar.onSwitch((hash) => void switchToTab(hash))
+tabBar.onClose((hash) => closeTab(hash))
+
+const recentFilesEl = document.querySelector<HTMLDivElement>('#recent-files')!
+const recentFilesList = new RecentFilesList(recentFilesEl)
+recentFilesList.onOpen((entry) => void reopenRecentFile(entry.path))
+void recentFilesList.refresh()
+
+const cursor = new Cursor((event) => {
+  const active = activeTab()
+  if (!active) return
+  if (event.page !== active.pageView.page) {
+    active.pageView.showPage(event.page)
   }
-})
-
-const selectionOverlay = new SelectionOverlay(pageContainerEl)
-let currentTimeline: Timeline | null = null
-let currentSelection: MeasureRange | null = null
-let currentSpeed = 1.0
-let currentLoopRegion: [number, number] | null = null
-
-selectionOverlay.onSelect((range) => {
-  currentSelection = range
-  selectionStatusEl.textContent = range
-    ? `Selected measures (elid ${range.startElid}-${range.endElid}) — press L to loop`
-    : ''
+  cursorBoxEl.style.display = 'block'
+  cursorBoxEl.style.left = `${(event.bbox.x / currentPageWidth()) * 100}%`
+  cursorBoxEl.style.top = `${(event.bbox.y / currentPageHeight()) * 100}%`
+  cursorBoxEl.style.width = `${(event.bbox.sx / currentPageWidth()) * 100}%`
+  cursorBoxEl.style.height = `${(event.bbox.sy / currentPageHeight()) * 100}%`
 })
 
 const markerPanelEl = document.querySelector<HTMLDivElement>('#marker-panel')!
@@ -116,8 +145,9 @@ const markerPanel = new MarkerPanel(markerPanelEl)
  * feature already uses, rather than a separate "pick a measure" step.
  */
 markerPanel.onRequestMeasureIndex(() => {
-  if (!currentTimeline || !currentSelection) return null
-  const event = currentTimeline.events.find((e) => e.source_elid === currentSelection!.startElid)
+  const active = activeTab()
+  if (!active?.timeline || !active.selection) return null
+  const event = active.timeline.events.find((e) => e.source_elid === active.selection!.startElid)
   return event?.measure_index ?? null
 })
 
@@ -130,11 +160,12 @@ markerPanel.onRequestMeasureIndex(() => {
  * `source_elid`), so marker jump-to and timeline/cursor lookups share it.
  */
 function jumpToMeasure(measureIndex: number): void {
-  if (!currentTimeline) return
-  const event = currentTimeline.events.find((e) => e.measure_index === measureIndex)
+  const active = activeTab()
+  if (!active?.timeline) return
+  const event = active.timeline.events.find((e) => e.measure_index === measureIndex)
   if (!event) return
-  if (event.page !== pageView.page) {
-    void pageView.showPage(event.page)
+  if (event.page !== active.pageView.page) {
+    void active.pageView.showPage(event.page)
   }
 }
 
@@ -151,17 +182,22 @@ markerPanel.onJumpToMeasure(jumpToMeasure)
  * every piece after the first repeat anywhere earlier in the file.
  */
 function jumpToElid(elid: number): void {
-  if (!currentTimeline) return
-  const event = currentTimeline.events.find((e) => e.source_elid === elid)
+  const active = activeTab()
+  if (!active?.timeline) return
+  const event = active.timeline.events.find((e) => e.source_elid === elid)
   if (!event) return
-  if (event.page !== pageView.page) {
-    void pageView.showPage(event.page)
+  if (event.page !== active.pageView.page) {
+    void active.pageView.showPage(event.page)
   }
 }
 
 const piecesIndexEl = document.querySelector<HTMLDivElement>('#pieces-index')!
 const piecesIndex = new PiecesIndex(piecesIndexEl)
 piecesIndex.onJumpToElid(jumpToElid)
+
+function activeTab(): TabState | null {
+  return activeHash ? tabs.get(activeHash) ?? null : null
+}
 
 /**
  * Converts a drag-selected elid range to a `[loop_start_ms, loop_end_ms]`
@@ -184,22 +220,26 @@ function loopRegionForSelection(timeline: Timeline, range: MeasureRange): [numbe
 }
 
 async function setLoop(range: MeasureRange | null): Promise<void> {
-  currentLoopRegion = (currentTimeline && range && loopRegionForSelection(currentTimeline, range)) || null
-  loopStatusEl.textContent = currentLoopRegion
+  const active = activeTab()
+  if (!active) return
+  active.loopRegion = (active.timeline && range && loopRegionForSelection(active.timeline, range)) || null
+  loopStatusEl.textContent = active.loopRegion
     ? `Looping measures (elid ${range!.startElid}-${range!.endElid})`
     : ''
-  await setLoopRegion(currentLoopRegion)
+  await setLoopRegion(active.loopRegion)
 }
 
 window.addEventListener('keydown', (e) => {
-  if (e.key.toLowerCase() !== 'l' || !isTauri() || !currentTimeline) return
+  const active = activeTab()
+  if (e.key.toLowerCase() !== 'l' || !isTauri() || !active?.timeline) return
   const target = e.target as HTMLElement | null
   if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) return
-  void setLoop(currentSelection)
+  void setLoop(active.selection)
 })
 
 function setSpeed(speed: number): void {
-  currentSpeed = speed
+  const active = activeTab()
+  if (active) active.speed = speed
   for (const [value, btn] of Object.entries(speedButtons)) {
     btn.classList.toggle('active', Number(value) === speed)
   }
@@ -221,26 +261,14 @@ cursorBoxEl.style.border = '2px solid rgba(0, 180, 0, 0.9)'
 cursorBoxEl.style.background = 'rgba(0, 180, 0, 0.12)'
 cursorBoxEl.style.pointerEvents = 'none'
 cursorBoxEl.style.display = 'none'
-pageContainerEl.appendChild(cursorBoxEl)
-
-const cursor = new Cursor((event) => {
-  if (event.page !== pageView.page) {
-    pageView.showPage(event.page)
-  }
-  cursorBoxEl.style.display = 'block'
-  cursorBoxEl.style.left = `${(event.bbox.x / currentPageWidth()) * 100}%`
-  cursorBoxEl.style.top = `${(event.bbox.y / currentPageHeight()) * 100}%`
-  cursorBoxEl.style.width = `${(event.bbox.sx / currentPageWidth()) * 100}%`
-  cursorBoxEl.style.height = `${(event.bbox.sy / currentPageHeight()) * 100}%`
-})
 
 function currentPageWidth(): number {
-  const svg = pageContainerEl.querySelector('svg')
+  const svg = activeTab()?.pageContainer.querySelector('svg')
   return svg ? parseFloat(svg.getAttribute('viewBox')?.split(' ')[2] ?? '0') : 1
 }
 
 function currentPageHeight(): number {
-  const svg = pageContainerEl.querySelector('svg')
+  const svg = activeTab()?.pageContainer.querySelector('svg')
   return svg ? parseFloat(svg.getAttribute('viewBox')?.split(' ')[3] ?? '0') : 1
 }
 
@@ -265,9 +293,103 @@ function askUpgradeConfirmation(): Promise<boolean> {
   })
 }
 
-async function openBytes(bytes: Uint8Array, filename: string) {
+function renderTabBar(): void {
+  const tabInfos: TabInfo[] = Array.from(tabs.values()).map((t) => ({ fileHash: t.fileHash, title: t.title }))
+  tabBar.setTabs(tabInfos, activeHash)
+}
+
+/** Stops shared audio playback — the backend owns one synth/stream for the whole app, not one per tab. */
+async function stopAudioForTabSwitch(): Promise<void> {
+  await stopMidi()
+  cursor.stop()
+  playBtn.disabled = true
+  stopBtn.disabled = true
+}
+
+/** Mounts `tab.pageContainer` as the visible page, restores its UI state (speed/loop/selection), and re-points the shared panels. */
+async function activateTab(tab: TabState): Promise<void> {
+  activeHash = tab.fileHash
+  pageContainerEl.innerHTML = ''
+  pageContainerEl.appendChild(tab.pageContainer)
+  pageContainerEl.appendChild(cursorBoxEl)
+  cursorBoxEl.style.display = 'none'
+
+  navEl.style.display = tab.pageView.pages > 1 ? 'block' : 'none'
+  pageIndicatorEl.textContent = `Page ${tab.pageView.page + 1} / ${tab.pageView.pages}`
+  prevBtn.disabled = tab.pageView.page <= 0
+  nextBtn.disabled = tab.pageView.page >= tab.pageView.pages - 1
+  selectionStatusEl.textContent = tab.selection
+    ? `Selected measures (elid ${tab.selection.startElid}-${tab.selection.endElid}) — press L to loop`
+    : ''
+  loopStatusEl.textContent = tab.loopRegion
+    ? 'Looping selected measures'
+    : ''
+
+  statusEl.textContent = tab.title
+
+  cursor.setTimeline(tab.timeline)
+  await markerPanel.setFileHash(tab.fileHash)
+  await piecesIndex.setScoreBytes(tab.originalBytes)
+
+  const hasAudio = tab.timeline !== null
+  playBtn.disabled = !hasAudio
+  stopBtn.disabled = true
+  for (const btn of Object.values(speedButtons)) btn.disabled = !hasAudio
+  metronomeCheckbox.disabled = !hasAudio
+
+  if (hasAudio) {
+    setSpeed(tab.speed)
+    const midiBytes = await getMidi(tab.score)
+    await loadMidi(midiBytes)
+    await setLoopRegion(tab.loopRegion)
+    await setMetronomeEnabled(metronomeCheckbox.checked)
+  }
+
+  renderTabBar()
+}
+
+async function switchToTab(fileHash: string): Promise<void> {
+  if (fileHash === activeHash) return
+  const tab = tabs.get(fileHash)
+  if (!tab) return
+  await stopAudioForTabSwitch()
+  await activateTab(tab)
+}
+
+function closeTab(fileHash: string): void {
+  const tab = tabs.get(fileHash)
+  if (!tab) return
+  tab.selectionOverlay.destroy()
+  tab.score.destroy()
+  tabs.delete(fileHash)
+
+  if (activeHash === fileHash) {
+    activeHash = null
+    const next = tabs.values().next().value as TabState | undefined
+    if (next) {
+      void stopAudioForTabSwitch().then(() => activateTab(next))
+    } else {
+      void stopAudioForTabSwitch()
+      pageContainerEl.innerHTML = ''
+      pageContainerEl.appendChild(cursorBoxEl)
+      navEl.style.display = 'none'
+      statusEl.textContent = ''
+      selectionStatusEl.textContent = ''
+      loopStatusEl.textContent = ''
+      void markerPanel.setFileHash(null)
+      void piecesIndex.setScoreBytes(null)
+      playBtn.disabled = true
+      stopBtn.disabled = true
+      for (const btn of Object.values(speedButtons)) btn.disabled = true
+      metronomeCheckbox.disabled = true
+      void recentFilesList.refresh()
+    }
+  }
+  renderTabBar()
+}
+
+async function openBytes(bytes: Uint8Array, filename: string, path: string | null): Promise<void> {
   statusEl.textContent = `Loading ${filename}...`
-  navEl.style.display = 'none'
 
   // webmscore's worker-based load() transfers `data.buffer` into the worker
   // (an explicit `Transferable`, see node_modules/webmscore/src/worker-helper.js),
@@ -301,59 +423,97 @@ async function openBytes(bytes: Uint8Array, filename: string) {
     score = result.score
   }
 
-  statusEl.textContent = `${metadata.title || filename} — ${metadata.pages} page(s), format version ${metadata.fileVersion}`
+  const title = metadata.title || filename
+
+  // Hashed from `originalBytes` (captured before openScore() detaches the
+  // original buffer), not any upgraded re-save of it — markers/tabs should
+  // stay anchored to "this piece" across an MS4 upgrade round-trip, not fork
+  // onto a new key.
+  let fileHash: string | null = null
+  if (isTauri()) {
+    try {
+      fileHash = await contentHash(originalBytes, filename)
+    } catch (e) {
+      console.error('Failed to compute file hash:', e)
+      statusEl.textContent = `${title} opened, but markers/tabs are unavailable: ${e instanceof Error ? e.message : String(e)}`
+    }
+  }
+
+  // Reopening a file that's already open as a tab just switches to it,
+  // rather than creating a duplicate tab for the same score.
+  if (fileHash && tabs.has(fileHash)) {
+    score.destroy()
+    await switchToTab(fileHash)
+    return
+  }
+
+  await stopAudioForTabSwitch()
+
+  const pageContainer = document.createElement('div')
+  pageContainer.style.position = 'relative'
+
+  const pageView = new PageView(pageContainer, (page, pages, positions) => {
+    if (activeHash !== tabState.fileHash) return
+    pageIndicatorEl.textContent = `Page ${page + 1} / ${pages}`
+    prevBtn.disabled = page <= 0
+    nextBtn.disabled = page >= pages - 1
+    selectionStatusEl.textContent = ''
+    if (positions) {
+      selectionOverlay.setPage(positions.elements, page)
+    }
+  })
+  const selectionOverlay = new SelectionOverlay(pageContainer)
+
+  const tabState: TabState = {
+    fileHash: fileHash ?? `untracked-${Date.now()}`,
+    title,
+    score,
+    pageView,
+    selectionOverlay,
+    pageContainer,
+    timeline: null,
+    selection: null,
+    speed: 1.0,
+    loopRegion: null,
+    originalBytes,
+  }
+
+  selectionOverlay.onSelect((range) => {
+    tabState.selection = range
+    if (activeHash !== tabState.fileHash) return
+    selectionStatusEl.textContent = range
+      ? `Selected measures (elid ${range.startElid}-${range.endElid}) — press L to loop`
+      : ''
+  })
 
   await pageView.setScore(score, metadata.pages)
-  navEl.style.display = metadata.pages > 1 ? 'block' : 'none'
   await pageView.showPage(0)
 
-  currentTimeline = null
-  currentSelection = null
-  currentLoopRegion = null
-  cursor.setTimeline(null)
-  playBtn.disabled = true
-  stopBtn.disabled = true
-  for (const btn of Object.values(speedButtons)) btn.disabled = true
-  metronomeCheckbox.disabled = true
-  loopStatusEl.textContent = ''
-  cursorBoxEl.style.display = 'none'
-  await markerPanel.setFileHash(null)
-  await piecesIndex.setScoreBytes(null)
-
-  if (isTauri()) {
-    // Hashed from `originalBytes` (captured before openScore() detaches the
-    // original buffer), not any upgraded re-save of it — markers should stay
-    // anchored to "this piece" across an MS4 upgrade round-trip, not fork
-    // onto a new key. Failure here must not abort the rest of this block —
-    // markers are optional, playback setup isn't.
-    try {
-      await markerPanel.setFileHash(await contentHash(originalBytes, filename))
-    } catch (e) {
-      const message = e instanceof Error ? e.message : String(e)
-      console.error('Failed to compute file hash for markers:', e)
-      statusEl.textContent += ` (markers unavailable: ${message})`
-      await markerPanel.setFileHash(null)
-    }
-    await piecesIndex.setScoreBytes(originalBytes)
-
+  if (isTauri() && fileHash) {
     const positions = await getMeasurePositions(score)
     const midiBytes = await getMidi(score)
     const { timeline } = await importTimeline(positions, midiBytes)
-    currentTimeline = timeline
-    cursor.setTimeline(timeline)
-    await loadMidi(midiBytes)
-    await setLoopRegion(null)
-    await setMetronomeEnabled(metronomeCheckbox.checked)
-    playBtn.disabled = false
-    for (const btn of Object.values(speedButtons)) btn.disabled = false
-    metronomeCheckbox.disabled = false
+    tabState.timeline = timeline
+
+    if (path) {
+      try {
+        await recordRecentFile(path, fileHash, title)
+      } catch (e) {
+        console.error('Failed to record recent file:', e)
+      }
+    }
   }
+
+  tabs.set(tabState.fileHash, tabState)
+  await activateTab(tabState)
 }
 
 playBtn.addEventListener('click', async () => {
+  const active = activeTab()
+  if (!active) return
   await playMidi(false)
-  await setPlaybackSpeed(currentSpeed)
-  await setLoopRegion(currentLoopRegion)
+  await setPlaybackSpeed(active.speed)
+  await setLoopRegion(active.loopRegion)
   cursor.start()
   playBtn.disabled = true
   stopBtn.disabled = false
@@ -370,14 +530,22 @@ fileInput.addEventListener('change', async () => {
   const file = fileInput.files?.[0]
   if (!file) return
   const bytes = new Uint8Array(await file.arrayBuffer())
-  await openBytes(bytes, file.name)
+  await openBytes(bytes, file.name, null)
 })
 
-prevBtn.addEventListener('click', () => pageView.prev())
-nextBtn.addEventListener('click', () => pageView.next())
+prevBtn.addEventListener('click', () => activeTab()?.pageView.prev())
+nextBtn.addEventListener('click', () => activeTab()?.pageView.next())
 
 function isMsczFile(name: string): boolean {
   return /\.(mscz|mscx)$/i.test(name)
+}
+
+async function reopenRecentFile(path: string): Promise<void> {
+  if (!isTauri()) return
+  const { readFile } = await import('@tauri-apps/plugin-fs')
+  const bytes = await readFile(path)
+  const filename = path.split(/[/\\]/).pop() ?? path
+  await openBytes(bytes, filename, path)
 }
 
 if (isTauri()) {
@@ -399,7 +567,7 @@ if (isTauri()) {
       if (!path) return
       const bytes = await readFile(path)
       const filename = path.split(/[/\\]/).pop() ?? path
-      await openBytes(bytes, filename)
+      await openBytes(bytes, filename, path)
     })
   })
 } else {
@@ -419,12 +587,16 @@ if (isTauri()) {
     const file = e.dataTransfer?.files[0]
     if (!file) return
     const bytes = new Uint8Array(await file.arrayBuffer())
-    await openBytes(bytes, file.name)
+    await openBytes(bytes, file.name, null)
   })
 }
 
 // Manual test hooks retained for Playwright/manual verification during development.
-;(window as unknown as { __musepracticeOpenBytes: typeof openBytes }).__musepracticeOpenBytes = openBytes
-;(window as unknown as { __musepracticePageView: typeof pageView }).__musepracticePageView = pageView
+;(window as unknown as { __musepracticeOpenBytes: typeof openBytes }).__musepracticeOpenBytes = (
+  bytes: Uint8Array,
+  filename: string,
+) => openBytes(bytes, filename, null)
+;(window as unknown as { __musepracticePageView: () => PageView | null }).__musepracticePageView = () =>
+  activeTab()?.pageView ?? null
 ;(window as unknown as { __musepracticeGetTimeline: () => Timeline | null }).__musepracticeGetTimeline = () =>
-  currentTimeline
+  activeTab()?.timeline ?? null

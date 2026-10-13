@@ -55,7 +55,7 @@ async function ensureReady(): Promise<typeof WebMscoreCtor> {
   return WebMscore
 }
 
-let cjkFontPromise: Promise<Uint8Array[]> | null = null
+let cjkFontBytesPromise: Promise<ArrayBuffer | null> | null = null
 
 /**
  * webmscore's WASM build only bundles Edwin/FreeSerif/FreeSans/MuseJazz/mscore
@@ -69,15 +69,25 @@ let cjkFontPromise: Promise<Uint8Array[]> | null = null
  * Fetched on demand (`just fetch-cjk-font`, not committed to git — see
  * Justfile), same pattern as the soundfont. Missing file is non-fatal: scores
  * without CJK text still render fine without it.
+ *
+ * Returns a fresh `Uint8Array` backed by a fresh `ArrayBuffer` on every call
+ * (sliced from a cached network fetch, fetched only once) — `WebMscore.load()`
+ * passes each font's `.buffer` as a `Transferable` in its worker postMessage
+ * (same mechanism documented in openBytes()'s comment for score bytes),
+ * which detaches it as a side effect. Returning the same cached instance
+ * across multiple `openScore()` calls (one per opened tab) would hand the
+ * second call an already-detached buffer, throwing "The object can not be
+ * cloned." — confirmed empirically when opening a second file after Phase 8's
+ * multi-tab support was added.
  */
-function loadCjkFont(): Promise<Uint8Array[]> {
-  if (!cjkFontPromise) {
-    cjkFontPromise = fetch('/vendor/fonts/NotoSansJP-Regular.otf')
+async function loadCjkFont(): Promise<Uint8Array[]> {
+  if (!cjkFontBytesPromise) {
+    cjkFontBytesPromise = fetch('/vendor/fonts/NotoSansJP-Regular.otf')
       .then((res) => (res.ok ? res.arrayBuffer() : null))
-      .then((buf) => (buf ? [new Uint8Array(buf)] : []))
-      .catch(() => [])
+      .catch(() => null)
   }
-  return cjkFontPromise
+  const cached = await cjkFontBytesPromise
+  return cached ? [new Uint8Array(cached.slice(0))] : []
 }
 
 export interface OpenScoreResult {
