@@ -25,7 +25,7 @@ import { MarkerPanel } from './views/MarkerPanel'
 import { PiecesIndex } from './views/PiecesIndex'
 import { TabBar, type TabInfo } from './views/TabBar'
 import { RecentFilesList } from './views/RecentFilesList'
-import type { CalibrationPoint, Timeline, TimelineEvent } from './types'
+import type { CalibrationPoint, StaffSystem, Timeline, TimelineEvent } from './types'
 
 const app = document.querySelector<HTMLDivElement>('#app')!
 
@@ -825,10 +825,12 @@ async function openPdfBytes(bytes: Uint8Array, filename: string, path: string | 
     metronomeCheckbox.disabled = !hasAudio
   })
 
+  let needsAutoScan = false
   if (fileHash) {
     try {
       tabState.points = await listCalibrationPoints(fileHash)
       calibrationOverlay.setPoints(tabState.points)
+      needsAutoScan = tabState.points.length === 0
     } catch (e) {
       console.error('Failed to load calibration points:', e)
     }
@@ -842,6 +844,42 @@ async function openPdfBytes(bytes: Uint8Array, filename: string, path: string | 
 
   tabs.set(tabState.fileHash, tabState)
   await activateTab(tabState)
+
+  // Auto-scan only an uncalibrated PDF (fresh open, zero existing points) —
+  // never re-scan one the user has already calibrated/corrected, which
+  // would silently fight their edits. Runs after activateTab so the page is
+  // already visible and the user isn't staring at a blank/unresponsive UI
+  // while it works; renders each page to its own offscreen canvas (not
+  // tab.canvasContainer) so it doesn't interfere with the user navigating
+  // pages while the scan is still running in the background.
+  if (needsAutoScan) {
+    void autoScanBarlines(tabState)
+  }
+}
+
+async function autoScanBarlines(tab: PdfTabState): Promise<void> {
+  const pageResults: { page: number; systems: StaffSystem[] }[] = []
+  for (let pageNumber = 0; pageNumber < tab.pageCount; pageNumber++) {
+    if (!tabs.has(tab.fileHash)) return // tab closed mid-scan
+    if (activeHash === tab.fileHash) {
+      calibrationStatusEl.textContent = `Scanning for barlines: page ${pageNumber + 1} / ${tab.pageCount}...`
+    }
+    try {
+      const canvas = await renderPdfPage(tab.doc, pageNumber + 1, PDF_BASE_WIDTH * tab.zoom)
+      const pngBytes = await canvasToPngBytes(canvas)
+      const systems = await detectBarlines(pngBytes)
+      pageResults.push({ page: pageNumber, systems })
+    } catch (e) {
+      console.error(`Failed to scan page ${pageNumber + 1} for barlines:`, e)
+    }
+  }
+
+  if (!tabs.has(tab.fileHash)) return
+  tab.calibrationOverlay.addPointsFromBarlinesAcrossPages(pageResults)
+  if (activeHash === tab.fileHash) {
+    const count = pageResults.reduce((n, r) => n + r.systems.reduce((m, s) => m + s.barline_xs.length, 0), 0)
+    calibrationStatusEl.textContent = `Auto-detected ${count} calibration point(s) across ${tab.pageCount} page(s) — double-check them, the detector isn't always right.`
+  }
 }
 
 async function showPdfPage(tab: PdfTabState, pageNumber: number): Promise<void> {

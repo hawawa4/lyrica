@@ -139,34 +139,72 @@ export class CalibrationOverlay {
 
   /**
    * CV barline-detection assist (`crates/cv-barline`, optional/Phase 9):
-   * directly adds a real calibration point for every detected barline x
-   * (across all detected staff systems), auto-numbering them in reading
-   * order (system top-to-bottom, then x left-to-right within a system) —
-   * no separate "suggestion, click to confirm" step. The detector can and
-   * does produce false positives (stems, chord stacks — see cv-barline's
-   * module docs), so these are meant to be spot-corrected afterward via the
-   * normal Mark-measures add/remove flow, not treated as guaranteed-correct.
+   * directly adds a real calibration point for every detected barline x on
+   * the current page (across all detected staff systems), auto-numbering
+   * them in reading order (system top-to-bottom, then x left-to-right
+   * within a system) — no separate "suggestion, click to confirm" step. The
+   * detector can and does produce false positives (stems, chord stacks —
+   * see cv-barline's module docs), so these are meant to be spot-corrected
+   * afterward via the normal Mark-measures add/remove flow, not treated as
+   * guaranteed-correct.
    */
   addPointsFromBarlines(systems: StaffSystem[]): void {
-    const sorted = [...systems].sort((a, b) => a.top - b.top)
+    const newPoints = this.pointsFromBarlines(this.currentPage, systems, nextMeasure(this.points), nextTimeMs(this.points))
+    if (newPoints.length === 0) return
+    this.points = [...this.points, ...newPoints].sort((a, b) => a.time_ms - b.time_ms)
+    this.render()
+    this.onChangeCallback?.(this.points)
+  }
+
+  /**
+   * Same idea as `addPointsFromBarlines`, but for a whole-document scan
+   * (`main.ts`'s auto-scan-on-open): takes one `(page, systems)` pair per
+   * *already-rendered* page (so this method does no rendering/detection
+   * itself — that's main.ts's job, since it needs the live canvas/API
+   * calls), with measure numbers and `time_ms` continuing to increment
+   * across the whole document rather than resetting per page. Fires
+   * `onChange` exactly once at the end (not once per page) — a 45-page scan
+   * would otherwise trigger 45 redundant saves of a growing array.
+   */
+  addPointsFromBarlinesAcrossPages(pageResults: { page: number; systems: StaffSystem[] }[]): void {
     let measure = nextMeasure(this.points)
-    const newPoints: CalibrationPoint[] = []
     let nextTime = nextTimeMs(this.points)
+    const allNewPoints: CalibrationPoint[] = []
+
+    for (const { page, systems } of pageResults) {
+      const newPoints = this.pointsFromBarlines(page, systems, measure, nextTime)
+      allNewPoints.push(...newPoints)
+      measure += newPoints.length
+      nextTime += newPoints.length * 1000
+    }
+
+    if (allNewPoints.length === 0) return
+    this.points = [...this.points, ...allNewPoints].sort((a, b) => a.time_ms - b.time_ms)
+    this.render()
+    this.onChangeCallback?.(this.points)
+  }
+
+  private pointsFromBarlines(
+    page: number,
+    systems: StaffSystem[],
+    startMeasure: number,
+    startTimeMs: number,
+  ): CalibrationPoint[] {
+    const sorted = [...systems].sort((a, b) => a.top - b.top)
+    let measure = startMeasure
+    let time_ms = startTimeMs
+    const points: CalibrationPoint[] = []
 
     for (const system of sorted) {
       const xs = [...system.barline_xs].sort((a, b) => a - b)
       const y = (system.top + system.bottom) / 2
       for (const x of xs) {
-        newPoints.push({ page: this.currentPage, x, y, time_ms: nextTime, measure })
+        points.push({ page, x, y, time_ms, measure })
         measure += 1
-        nextTime += 1000
+        time_ms += 1000
       }
     }
-
-    if (newPoints.length === 0) return
-    this.points = [...this.points, ...newPoints].sort((a, b) => a.time_ms - b.time_ms)
-    this.render()
-    this.onChangeCallback?.(this.points)
+    return points
   }
 
   /** Removes every calibration point for this file (all pages, not just the current one) — the caller is responsible for confirming with the user first, since this can't be undone. */
