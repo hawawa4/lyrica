@@ -45,6 +45,7 @@
   --shadow-sm: 0 1px 3px rgba(20, 22, 26, 0.1);
 
   --page-texture: none;
+  --score-filter: none;
   color-scheme: light;
 }
 
@@ -86,6 +87,18 @@
   --shadow-sm: 0 1px 4px rgba(0, 0, 0, 0.4);
 
   --page-texture: none;
+  /*
+   * webmscore's SVG always engraves black ink on a background it no longer
+   * paints itself (score-engine.ts's renderPage passes drawPageBackground:
+   * false so CSS supplies the page color instead, see .page-stage) — it's
+   * pure black (#000) strokes/fills with no color option in webmscore's API,
+   * so inverting the whole rendered SVG (black -> white) is the only way to
+   * get white notation on the dark page background `--bg-page` now provides
+   * underneath it. Safe here because the source is black-and-white only; a
+   * color asset would shift hue under invert()+hue-rotate(), but no themed
+   * score content has any color.
+   */
+  --score-filter: invert(1) hue-rotate(180deg);
   color-scheme: dark;
 }
 
@@ -145,11 +158,16 @@
       transparent 1px,
       transparent 3px
     );
+  --score-filter: none;
   color-scheme: light;
 }
 
 * {
   box-sizing: border-box;
+}
+
+.score-svg-layer svg {
+  filter: var(--score-filter);
 }
 
 html,

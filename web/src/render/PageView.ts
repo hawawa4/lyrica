@@ -35,6 +35,7 @@ export class PageView {
     private readonly onZoomChange?: (zoom: number) => void,
   ) {
     this.svgLayer = document.createElement('div')
+    this.svgLayer.className = 'score-svg-layer'
     this.container.appendChild(this.svgLayer)
   }
 

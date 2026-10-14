@@ -138,8 +138,16 @@ export async function upgradeScore(score: WebMscore): Promise<Uint8Array> {
   return score.saveMsc('mscz')
 }
 
+/**
+ * `drawPageBackground: false` — the page background comes from CSS
+ * (`.page-stage`'s `--bg-page`, see PageView/app.css) instead of a baked-in
+ * white rect in the SVG itself, so the rendered page matches the active
+ * theme (dark theme: dark background; paper theme: paper-colored
+ * background) rather than always being white underneath whatever CSS filter
+ * is applied for ink color.
+ */
 export async function renderPage(score: WebMscore, pageIndex: number): Promise<string> {
-  return score.saveSvg(pageIndex, true)
+  return score.saveSvg(pageIndex, false)
 }
 
 export async function getMeasurePositions(score: WebMscore): Promise<Positions> {

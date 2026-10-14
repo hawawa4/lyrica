@@ -436,7 +436,7 @@ async function activateTab(tab: TabState): Promise<void> {
   zoomGroupEl.style.display = 'flex'
 
   if (tab.kind === 'mscz') {
-    pageContainerEl.appendChild(cursorBoxEl)
+    tab.pageContainer.appendChild(cursorBoxEl)
     cursorBoxEl.style.display = 'none'
 
     navEl.style.display = tab.pageView.pages > 1 ? 'flex' : 'none'
@@ -624,7 +624,6 @@ function closeTab(fileHash: string): void {
       pageContainerEl.innerHTML = ''
       pageContainerEl.appendChild(emptyStateEl)
       emptyStateEl.style.display = 'flex'
-      pageContainerEl.appendChild(cursorBoxEl)
       navEl.style.display = 'none'
       transportEl.style.display = 'none'
       zoomGroupEl.style.display = 'none'
@@ -974,9 +973,9 @@ async function showPdfPage(tab: PdfTabState, pageNumber: number): Promise<void> 
   }
 }
 
-playBtn.addEventListener('click', async () => {
+async function playActive(): Promise<void> {
   const active = activeTab()
-  if (!active) return
+  if (!active || playBtn.disabled) return
   if (active.kind === 'pdf') {
     await loadPdfTabTempoMap(active)
     pdfCursor.setItems(active.calibrationOverlay.getPoints())
@@ -988,9 +987,10 @@ playBtn.addEventListener('click', async () => {
   else pdfCursor.start()
   playBtn.disabled = true
   stopBtn.disabled = false
-})
+}
 
-stopBtn.addEventListener('click', async () => {
+async function stopActive(): Promise<void> {
+  if (stopBtn.disabled) return
   await stopMidi()
   msczCursor.stop()
   pdfCursor.stop()
@@ -998,6 +998,19 @@ stopBtn.addEventListener('click', async () => {
   if (active?.kind === 'pdf') active.calibrationOverlay.setPlayingIndex(null)
   playBtn.disabled = false
   stopBtn.disabled = true
+}
+
+playBtn.addEventListener('click', () => void playActive())
+stopBtn.addEventListener('click', () => void stopActive())
+
+/** Spacebar toggles play/pause for the active tab, like a standard media player — mirrored by the play/stop buttons' own disabled state so both stay in sync. */
+window.addEventListener('keydown', (e) => {
+  if (e.key !== ' ' && e.code !== 'Space') return
+  const target = e.target as HTMLElement | null
+  if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'BUTTON' || target.tagName === 'SELECT')) return
+  e.preventDefault()
+  if (stopBtn.disabled) void playActive()
+  else void stopActive()
 })
 
 if (isTauri()) {
