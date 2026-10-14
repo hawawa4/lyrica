@@ -6,7 +6,8 @@ export interface TabInfo {
 /**
  * Excel-style bottom tab bar, one tab per open file (keyed by file hash).
  * Purely presentational — owns no score/timeline state itself; `main.ts`
- * keeps per-tab state and swaps it in when `onSwitch` fires.
+ * keeps per-tab state and swaps it in when `onSwitch` fires. Styling lives
+ * in app.css (`.tab-bar`, `.tab-bar-item`); this class only toggles classes.
  */
 export class TabBar {
   private readonly root: HTMLDivElement
@@ -16,14 +17,7 @@ export class TabBar {
   private onCloseCallback: ((fileHash: string) => void) | null = null
 
   constructor(container: HTMLElement) {
-    this.root = document.createElement('div')
-    this.root.style.display = 'flex'
-    this.root.style.gap = '2px'
-    this.root.style.borderTop = '1px solid #ddd'
-    this.root.style.marginTop = '8px'
-    this.root.style.paddingTop = '4px'
-    this.root.style.flexWrap = 'wrap'
-    container.appendChild(this.root)
+    this.root = container as HTMLDivElement
   }
 
   onSwitch(callback: (fileHash: string) => void): void {
@@ -47,31 +41,16 @@ export class TabBar {
 
     for (const tab of this.tabs) {
       const tabEl = document.createElement('div')
-      tabEl.style.display = 'flex'
-      tabEl.style.alignItems = 'center'
-      tabEl.style.gap = '6px'
-      tabEl.style.padding = '4px 8px'
-      tabEl.style.cursor = 'pointer'
-      tabEl.style.border = '1px solid #ddd'
-      tabEl.style.borderBottom = 'none'
-      tabEl.style.borderRadius = '4px 4px 0 0'
-      tabEl.style.background = tab.fileHash === this.activeHash ? '#fff' : '#f0f0f0'
-      tabEl.style.fontWeight = tab.fileHash === this.activeHash ? 'bold' : 'normal'
+      tabEl.className = 'tab-bar-item' + (tab.fileHash === this.activeHash ? ' active' : '')
 
       const label = document.createElement('span')
+      label.className = 'label'
       label.textContent = tab.title
-      label.style.maxWidth = '160px'
-      label.style.overflow = 'hidden'
-      label.style.textOverflow = 'ellipsis'
-      label.style.whiteSpace = 'nowrap'
       label.addEventListener('click', () => this.onSwitchCallback?.(tab.fileHash))
 
       const closeBtn = document.createElement('button')
+      closeBtn.className = 'close-btn'
       closeBtn.textContent = '✕'
-      closeBtn.style.border = 'none'
-      closeBtn.style.background = 'transparent'
-      closeBtn.style.cursor = 'pointer'
-      closeBtn.style.fontSize = '12px'
       closeBtn.addEventListener('click', (e) => {
         e.stopPropagation()
         this.onCloseCallback?.(tab.fileHash)

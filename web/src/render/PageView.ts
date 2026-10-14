@@ -1,5 +1,12 @@
 import { renderPage, getMeasurePositions, type WebMscore, type Positions } from '../score-engine'
 
+export const ZOOM_STEP = 0.1
+export const MIN_ZOOM = 0.3
+export const MAX_ZOOM = 3
+
+/** CSS px width at 100% zoom — the SVG is sized in absolute px (not a %) so it has a real intrinsic size inside a flex-centered `.page-stage`, instead of a 0-width collapse (a percentage width has nothing to resolve against there). */
+const BASE_WIDTH_PX = 700
+
 /**
  * Paged, vertical page-by-page display of a score. Caches each rendered SVG
  * page in memory per score instance, so repeat navigation (going back to a
@@ -13,6 +20,7 @@ export class PageView {
   private readonly cache = new Map<number, string>()
   private positions: Positions | null = null
   private readonly svgLayer: HTMLDivElement
+  private zoom = 1
 
   /**
    * `container` is shared with SelectionOverlay (both render into the same
@@ -24,9 +32,21 @@ export class PageView {
   constructor(
     private readonly container: HTMLElement,
     private readonly onPageChange?: (page: number, pageCount: number, positions: Positions | null) => void,
+    private readonly onZoomChange?: (zoom: number) => void,
   ) {
     this.svgLayer = document.createElement('div')
     this.container.appendChild(this.svgLayer)
+  }
+
+  getZoom(): number {
+    return this.zoom
+  }
+
+  setZoom(zoom: number): void {
+    this.zoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, zoom))
+    const svgEl = this.svgLayer.querySelector('svg')
+    if (svgEl) svgEl.style.width = `${BASE_WIDTH_PX * this.zoom}px`
+    this.onZoomChange?.(this.zoom)
   }
 
   /**
@@ -40,6 +60,7 @@ export class PageView {
     this.pageCount = pageCount
     this.currentPage = 0
     this.cache.clear()
+    this.zoom = 1
     this.positions = await getMeasurePositions(score)
   }
 
@@ -77,7 +98,7 @@ export class PageView {
     this.svgLayer.innerHTML = svg
     const svgEl = this.svgLayer.querySelector('svg')
     if (svgEl) {
-      svgEl.style.width = '100%'
+      svgEl.style.width = `${BASE_WIDTH_PX * this.zoom}px`
       svgEl.style.height = 'auto'
       svgEl.style.display = 'block'
     }

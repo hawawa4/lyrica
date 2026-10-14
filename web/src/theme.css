@@ -1,0 +1,246 @@
+/*
+ * Three themes (dark / light / paper), switched via `data-theme` on <html>.
+ * Every component reads these custom properties instead of hardcoding
+ * colors, so adding/adjusting a theme never requires touching component
+ * code. `light` is the default (no data-theme attribute needed), matching
+ * `theme.ts`'s fallback.
+ */
+
+:root,
+:root[data-theme='light'] {
+  --bg: #f5f6f8;
+  --bg-elevated: #ffffff;
+  --bg-toolbar: #ffffff;
+  --bg-sidebar: #eef0f3;
+  --bg-hover: #e8eaed;
+  --bg-active: #dde6f7;
+  --bg-page: #ffffff;
+  --bg-page-area: #d7dae0;
+
+  --text: #1c1f24;
+  --text-muted: #6b7280;
+  --text-faint: #9aa1ab;
+
+  --border: #d8dadf;
+  --border-strong: #c2c5cc;
+
+  --accent: #2563eb;
+  --accent-text: #ffffff;
+  --accent-soft: rgba(37, 99, 235, 0.12);
+
+  --success: #1a8a4a;
+  --success-soft: rgba(26, 138, 74, 0.12);
+  --danger: #d6392b;
+  --danger-soft: rgba(214, 57, 43, 0.12);
+
+  --selection: rgba(255, 140, 0, 0.3);
+  --selection-border: rgba(214, 100, 0, 0.9);
+  --point-idle: rgba(214, 60, 20, 0.85);
+  --point-selected: rgba(37, 99, 235, 0.9);
+  --point-playing: rgba(26, 138, 74, 0.9);
+  --cursor-box: rgba(26, 138, 74, 0.9);
+  --cursor-fill: rgba(26, 138, 74, 0.12);
+
+  --shadow: 0 2px 10px rgba(20, 22, 26, 0.12);
+  --shadow-sm: 0 1px 3px rgba(20, 22, 26, 0.1);
+
+  --page-texture: none;
+  color-scheme: light;
+}
+
+:root[data-theme='dark'] {
+  --bg: #16181d;
+  --bg-elevated: #1e2127;
+  --bg-toolbar: #1a1c21;
+  --bg-sidebar: #1a1c21;
+  --bg-hover: #262a31;
+  --bg-active: #2a3550;
+  --bg-page: #232629;
+  --bg-page-area: #0f1013;
+
+  --text: #e6e8eb;
+  --text-muted: #9aa0ab;
+  --text-faint: #6b7178;
+
+  --border: #2c3036;
+  --border-strong: #3a3f47;
+
+  --accent: #4d8eff;
+  --accent-text: #0b0d10;
+  --accent-soft: rgba(77, 142, 255, 0.16);
+
+  --success: #3ec27c;
+  --success-soft: rgba(62, 194, 124, 0.16);
+  --danger: #f06a5a;
+  --danger-soft: rgba(240, 106, 90, 0.16);
+
+  --selection: rgba(255, 160, 40, 0.28);
+  --selection-border: rgba(255, 160, 40, 0.9);
+  --point-idle: rgba(240, 110, 70, 0.9);
+  --point-selected: rgba(77, 142, 255, 0.95);
+  --point-playing: rgba(62, 194, 124, 0.95);
+  --cursor-box: rgba(62, 194, 124, 0.95);
+  --cursor-fill: rgba(62, 194, 124, 0.14);
+
+  --shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
+  --shadow-sm: 0 1px 4px rgba(0, 0, 0, 0.4);
+
+  --page-texture: none;
+  color-scheme: dark;
+}
+
+:root[data-theme='paper'] {
+  --bg: #ddd3bc;
+  --bg-elevated: #f3ead3;
+  --bg-toolbar: #e8dcbe;
+  --bg-sidebar: #e3d7b9;
+  --bg-hover: #d9cca8;
+  --bg-active: #cdbd8e;
+  --bg-page: #f3ead3;
+  --bg-page-area: #cbbd98;
+
+  --text: #3a3123;
+  --text-muted: #6e6248;
+  --text-faint: #8c7f60;
+
+  --border: #c3b48b;
+  --border-strong: #ab9a6c;
+
+  --accent: #8a5a2b;
+  --accent-text: #fbf3df;
+  --accent-soft: rgba(138, 90, 43, 0.16);
+
+  --success: #4f7a3a;
+  --success-soft: rgba(79, 122, 58, 0.16);
+  --danger: #a3402b;
+  --danger-soft: rgba(163, 64, 43, 0.14);
+
+  --selection: rgba(163, 100, 30, 0.25);
+  --selection-border: rgba(138, 80, 20, 0.85);
+  --point-idle: rgba(163, 64, 43, 0.85);
+  --point-selected: rgba(80, 95, 130, 0.85);
+  --point-playing: rgba(79, 122, 58, 0.9);
+  --cursor-box: rgba(79, 122, 58, 0.9);
+  --cursor-fill: rgba(79, 122, 58, 0.12);
+
+  --shadow: 0 2px 10px rgba(58, 49, 35, 0.2);
+  --shadow-sm: 0 1px 3px rgba(58, 49, 35, 0.16);
+
+  /*
+   * Layered fibrous/mottled paper texture: two radial-gradient grain layers
+   * at different scales plus a faint linear fiber streak, all low-contrast
+   * tints of the paper base color — not a flat yellow. Applied as a
+   * background on `.page-area` (the scrollable canvas around the page),
+   * tiled via background-repeat.
+   */
+  --page-texture:
+    radial-gradient(circle at 20% 30%, rgba(120, 100, 60, 0.05) 0%, transparent 45%),
+    radial-gradient(circle at 70% 65%, rgba(120, 100, 60, 0.045) 0%, transparent 40%),
+    radial-gradient(circle at 45% 85%, rgba(90, 75, 45, 0.04) 0%, transparent 35%),
+    radial-gradient(circle at 85% 15%, rgba(90, 75, 45, 0.04) 0%, transparent 35%),
+    repeating-linear-gradient(
+      115deg,
+      rgba(90, 75, 45, 0.025) 0px,
+      rgba(90, 75, 45, 0.025) 1px,
+      transparent 1px,
+      transparent 3px
+    );
+  color-scheme: light;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family:
+    -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+button,
+input {
+  font-family: inherit;
+  font-size: inherit;
+  color: inherit;
+}
+
+button {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  cursor: pointer;
+  color: var(--text);
+  transition: background-color 0.12s, border-color 0.12s;
+}
+
+button:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+
+button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-text);
+}
+
+button.primary:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
+button.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-text);
+}
+
+input[type='text'],
+input[type='number'],
+input[type='file'] {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 8px;
+  color: var(--text);
+}
+
+select {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 8px;
+  color: var(--text);
+  font-family: inherit;
+  font-size: inherit;
+}
+
+::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 7px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}

@@ -61,25 +61,26 @@ export class CalibrationOverlay {
 
     this.dragRectEl = document.createElement('div')
     this.dragRectEl.style.position = 'absolute'
-    this.dragRectEl.style.border = '1px dashed #0a0'
-    this.dragRectEl.style.background = 'rgba(0, 200, 0, 0.1)'
+    this.dragRectEl.style.border = '1px dashed var(--selection-border)'
+    this.dragRectEl.style.background = 'var(--selection)'
     this.dragRectEl.style.pointerEvents = 'none'
     this.dragRectEl.style.display = 'none'
 
     this.formEl = document.createElement('div')
     this.formEl.style.position = 'absolute'
     this.formEl.style.display = 'none'
-    this.formEl.style.background = 'white'
-    this.formEl.style.border = '1px solid #888'
-    this.formEl.style.borderRadius = '4px'
-    this.formEl.style.padding = '6px'
-    this.formEl.style.boxShadow = '0 2px 6px rgba(0,0,0,0.2)'
+    this.formEl.style.background = 'var(--bg-elevated)'
+    this.formEl.style.color = 'var(--text)'
+    this.formEl.style.border = '1px solid var(--border-strong)'
+    this.formEl.style.borderRadius = '6px'
+    this.formEl.style.padding = '8px'
+    this.formEl.style.boxShadow = 'var(--shadow)'
     this.formEl.style.zIndex = '10'
     this.formEl.innerHTML = `
       <div style="font-size: 12px; margin-bottom: 4px;">New calibration point</div>
       <label style="font-size: 12px;">Measure <input type="number" min="0" value="0" style="width: 50px;" /></label>
       <div style="margin-top: 4px;">
-        <button class="confirm" style="font-size: 12px;">Add</button>
+        <button class="confirm primary" style="font-size: 12px;">Add</button>
         <button class="cancel" style="font-size: 12px;">Cancel</button>
       </div>
     `
@@ -364,17 +365,17 @@ export class CalibrationOverlay {
       dot.style.height = isPlaying ? '22px' : '16px'
       dot.style.borderRadius = '50%'
       dot.style.background = isPlaying
-        ? 'rgba(0, 180, 0, 0.9)'
+        ? 'var(--point-playing)'
         : isSelected
-          ? 'rgba(0, 150, 255, 0.9)'
-          : 'rgba(255, 60, 0, 0.85)'
+          ? 'var(--point-selected)'
+          : 'var(--point-idle)'
       dot.style.boxShadow = isPlaying
-        ? '0 0 0 4px rgba(0, 180, 0, 0.35)'
+        ? '0 0 0 4px var(--success-soft)'
         : isSelected
-          ? '0 0 0 3px rgba(0, 150, 255, 0.35)'
+          ? '0 0 0 3px var(--accent-soft)'
           : 'none'
       dot.style.transition = 'width 0.1s, height 0.1s'
-      dot.style.color = 'white'
+      dot.style.color = 'var(--accent-text)'
       dot.style.fontSize = '9px'
       dot.style.display = 'flex'
       dot.style.alignItems = 'center'

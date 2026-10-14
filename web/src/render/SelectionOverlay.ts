@@ -36,8 +36,8 @@ export class SelectionOverlay {
 
     this.dragRectEl = document.createElement('div')
     this.dragRectEl.style.position = 'absolute'
-    this.dragRectEl.style.border = '1px dashed #0a0'
-    this.dragRectEl.style.background = 'rgba(0, 200, 0, 0.1)'
+    this.dragRectEl.style.border = '1px dashed var(--selection-border)'
+    this.dragRectEl.style.background = 'var(--selection)'
     this.dragRectEl.style.pointerEvents = 'none'
     this.dragRectEl.style.display = 'none'
 
@@ -141,8 +141,8 @@ export class SelectionOverlay {
       const br = bl + boxRect.width
       const bb = bt + boxRect.height
       const overlaps = bl < dragBox.right && br > dragBox.left && bt < dragBox.bottom && bb > dragBox.top
-      box.style.background = overlaps ? 'rgba(255, 60, 0, 0.35)' : 'transparent'
-      box.style.border = overlaps ? '1px solid rgba(255, 60, 0, 0.9)' : 'none'
+      box.style.background = overlaps ? 'var(--selection)' : 'transparent'
+      box.style.border = overlaps ? '1px solid var(--selection-border)' : 'none'
       if (overlaps) selectedIds.push(Number(box.dataset.elid))
     }
 

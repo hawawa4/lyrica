@@ -1,6 +1,8 @@
+import './theme.css'
+import './app.css'
 import { openScore, upgradeScore, getMeasurePositions, getMidi, type OpenScoreResult, type WebMscore } from './score-engine'
 import { loadPdf, renderPdfPage, canvasToPngBytes, type PdfDocument } from './pdf-engine'
-import { PageView } from './render/PageView'
+import { PageView, ZOOM_STEP, MIN_ZOOM, MAX_ZOOM } from './render/PageView'
 import { SelectionOverlay, type MeasureRange } from './render/SelectionOverlay'
 import { CalibrationOverlay, type PointRange } from './views/CalibrationOverlay'
 import { Cursor } from './render/Cursor'
@@ -26,57 +28,77 @@ import { PiecesIndex } from './views/PiecesIndex'
 import { TabBar, type TabInfo } from './views/TabBar'
 import { RecentFilesList } from './views/RecentFilesList'
 import type { CalibrationPoint, StaffSystem, Timeline, TimelineEvent } from './types'
+import { initTheme, applyTheme, THEME_LABELS, type Theme } from './theme'
+
+initTheme()
 
 const app = document.querySelector<HTMLDivElement>('#app')!
 
 app.innerHTML = `
-  <style>
-    .speed-btn.active { background: #0078ff; color: white; }
-  </style>
-  <div style="padding: 16px; font-family: sans-serif;">
-    <input id="file-input" type="file" accept=".mscz,.mscx,.pdf" />
-    <span style="color:#888; margin-left: 8px;">or drag a .mscz/.pdf file anywhere onto the window</span>
-    <div id="status" style="margin-top: 8px; color: #555;"></div>
-    <div id="nav" style="margin-top: 8px; display:none;">
-      <button id="prev-page">&larr; Prev</button>
-      <span id="page-indicator" style="margin: 0 8px;"></span>
-      <button id="next-page">Next &rarr;</button>
-      <button id="play-btn" style="margin-left: 16px;" disabled>&#9654; Play</button>
-      <button id="stop-btn" disabled>&#9632; Stop</button>
-      <span style="margin-left: 16px;">
-        <button id="speed-05" class="speed-btn" disabled>0.5x</button>
-        <button id="speed-075" class="speed-btn" disabled>0.75x</button>
-        <button id="speed-10" class="speed-btn" disabled>1.0x</button>
-      </span>
-      <label style="margin-left: 16px;"><input id="metronome-checkbox" type="checkbox" disabled /> Metronome</label>
+  <div class="toolbar">
+    <span class="app-title">MusePractice</span>
+    <div class="toolbar-group">
+      <input id="file-input" type="file" accept=".mscz,.mscx,.pdf" />
+      <button id="open-file-btn" class="primary" style="display:none;">Open file&hellip;</button>
     </div>
-    <div id="pdf-controls" style="margin-top: 8px; display:none;">
+    <div id="nav" class="toolbar-group" style="display:none;">
+      <button id="prev-page" class="icon-btn" title="Previous page">&larr;</button>
+      <span id="page-indicator"></span>
+      <button id="next-page" class="icon-btn" title="Next page">&rarr;</button>
+    </div>
+    <div id="transport" class="toolbar-group" style="display:none;">
+      <button id="play-btn" class="icon-btn primary" disabled title="Play">&#9654;</button>
+      <button id="stop-btn" class="icon-btn" disabled title="Stop">&#9632;</button>
+      <button id="speed-05" class="speed-btn" disabled>0.5x</button>
+      <button id="speed-075" class="speed-btn" disabled>0.75x</button>
+      <button id="speed-10" class="speed-btn" disabled>1.0x</button>
+      <label><input id="metronome-checkbox" type="checkbox" disabled /> Metronome</label>
+    </div>
+    <div id="zoom-group" class="toolbar-group zoom-control" style="display:none;">
+      <button id="zoom-out" class="icon-btn" title="Zoom out">&minus;</button>
+      <span id="zoom-indicator" class="zoom-indicator">100%</span>
+      <button id="zoom-in" class="icon-btn" title="Zoom in">+</button>
+    </div>
+    <div class="toolbar-spacer"></div>
+    <div class="toolbar-group">
+      <select id="theme-select" class="theme-select" title="Theme"></select>
+    </div>
+  </div>
+
+  <div class="sidebar">
+    <div id="pieces-index" class="sidebar-section"></div>
+    <div id="marker-panel" class="sidebar-section"></div>
+    <div id="recent-files" class="sidebar-section"></div>
+  </div>
+
+  <div class="main-area">
+    <div id="pdf-controls" class="pdf-toolbar">
       <label><input id="marking-mode-checkbox" type="checkbox" /> Mark measures</label>
-      <button id="suggest-barlines-btn" style="margin-left: 16px; display:none;">Suggest barlines</button>
-      <button id="clear-points-btn" style="margin-left: 8px; display:none;">Clear all points</button>
-      <span style="margin-left: 16px;">
-        <button id="zoom-out">&minus;</button>
-        <span id="zoom-indicator" style="margin: 0 6px;">100%</span>
-        <button id="zoom-in">+</button>
-      </span>
+      <button id="suggest-barlines-btn" style="display:none;">Suggest barlines</button>
+      <button id="clear-points-btn" style="display:none;">Clear all points</button>
     </div>
-    <div id="loop-status" style="margin-top: 4px; color: #0a0; font-size: 13px;"></div>
-    <div id="calibration-status" style="margin-top: 4px; color: #888; font-size: 13px;"></div>
-    <div id="page" style="margin-top: 16px; max-width: 100%; overflow: auto; position: relative;"></div>
-    <div id="selection-status" style="margin-top: 4px; color: #888; font-size: 13px;"></div>
-    <div id="pieces-index" style="max-width: 700px;"></div>
-    <div id="marker-panel" style="max-width: 700px;"></div>
-    <div id="recent-files" style="max-width: 700px;"></div>
-    <div id="tab-bar" style="max-width: 700px;"></div>
+    <div class="status-bar">
+      <span id="status"></span>
+      <span id="selection-status"></span>
+      <span id="loop-status" class="loop-status"></span>
+      <span id="calibration-status" class="calibration-status"></span>
+    </div>
+    <div id="page" class="page-area">
+      <div class="empty-state" id="empty-state">
+        <div>No file open</div>
+        <div class="hint">Open a .mscz or .pdf file, or drag one onto this window</div>
+      </div>
+    </div>
   </div>
-  <div id="drop-overlay" style="display:none; position:fixed; inset:0; background:rgba(0,120,255,0.15); border: 4px dashed rgba(0,120,255,0.6); pointer-events:none; align-items:center; justify-content:center; font-family: sans-serif; font-size: 20px; color: #0078ff;">
-    Drop to open
-  </div>
+
+  <div id="tab-bar" class="tab-bar"></div>
 `
 
 const fileInput = document.querySelector<HTMLInputElement>('#file-input')!
-const statusEl = document.querySelector<HTMLDivElement>('#status')!
+const statusEl = document.querySelector<HTMLSpanElement>('#status')!
 const navEl = document.querySelector<HTMLDivElement>('#nav')!
+const transportEl = document.querySelector<HTMLDivElement>('#transport')!
+const zoomGroupEl = document.querySelector<HTMLDivElement>('#zoom-group')!
 const pageIndicatorEl = document.querySelector<HTMLSpanElement>('#page-indicator')!
 const prevBtn = document.querySelector<HTMLButtonElement>('#prev-page')!
 const nextBtn = document.querySelector<HTMLButtonElement>('#next-page')!
@@ -89,9 +111,10 @@ const speedButtons = {
 }
 const metronomeCheckbox = document.querySelector<HTMLInputElement>('#metronome-checkbox')!
 const pageContainerEl = document.querySelector<HTMLDivElement>('#page')!
-const selectionStatusEl = document.querySelector<HTMLDivElement>('#selection-status')!
-const loopStatusEl = document.querySelector<HTMLDivElement>('#loop-status')!
-const calibrationStatusEl = document.querySelector<HTMLDivElement>('#calibration-status')!
+const emptyStateEl = document.querySelector<HTMLDivElement>('#empty-state')!
+const selectionStatusEl = document.querySelector<HTMLSpanElement>('#selection-status')!
+const loopStatusEl = document.querySelector<HTMLSpanElement>('#loop-status')!
+const calibrationStatusEl = document.querySelector<HTMLSpanElement>('#calibration-status')!
 const pdfControlsEl = document.querySelector<HTMLDivElement>('#pdf-controls')!
 const markingModeCheckbox = document.querySelector<HTMLInputElement>('#marking-mode-checkbox')!
 const suggestBarlinesBtn = document.querySelector<HTMLButtonElement>('#suggest-barlines-btn')!
@@ -99,7 +122,17 @@ const clearPointsBtn = document.querySelector<HTMLButtonElement>('#clear-points-
 const zoomOutBtn = document.querySelector<HTMLButtonElement>('#zoom-out')!
 const zoomInBtn = document.querySelector<HTMLButtonElement>('#zoom-in')!
 const zoomIndicatorEl = document.querySelector<HTMLSpanElement>('#zoom-indicator')!
+const themeSelectEl = document.querySelector<HTMLSelectElement>('#theme-select')!
 const dropOverlay = document.querySelector<HTMLDivElement>('#drop-overlay')!
+
+for (const theme of Object.keys(THEME_LABELS) as Theme[]) {
+  const opt = document.createElement('option')
+  opt.value = theme
+  opt.textContent = THEME_LABELS[theme]
+  themeSelectEl.appendChild(opt)
+}
+themeSelectEl.value = document.documentElement.getAttribute('data-theme') ?? 'light'
+themeSelectEl.addEventListener('change', () => applyTheme(themeSelectEl.value as Theme))
 
 /**
  * Everything that used to be a single set of global variables/objects,
@@ -360,8 +393,8 @@ metronomeCheckbox.addEventListener('change', () => {
 
 const cursorBoxEl = document.createElement('div')
 cursorBoxEl.style.position = 'absolute'
-cursorBoxEl.style.border = '2px solid rgba(0, 180, 0, 0.9)'
-cursorBoxEl.style.background = 'rgba(0, 180, 0, 0.12)'
+cursorBoxEl.style.border = '2px solid var(--cursor-box)'
+cursorBoxEl.style.background = 'var(--cursor-fill)'
 cursorBoxEl.style.pointerEvents = 'none'
 cursorBoxEl.style.display = 'none'
 
@@ -394,16 +427,19 @@ async function activateTab(tab: TabState): Promise<void> {
   activeHash = tab.fileHash
   pageContainerEl.innerHTML = ''
   pageContainerEl.appendChild(tab.pageContainer)
+  emptyStateEl.style.display = 'none'
 
   statusEl.textContent = tab.title
   calibrationStatusEl.textContent = ''
-  pdfControlsEl.style.display = tab.kind === 'pdf' ? 'block' : 'none'
+  pdfControlsEl.style.display = tab.kind === 'pdf' ? 'flex' : 'none'
+  transportEl.style.display = 'flex'
+  zoomGroupEl.style.display = 'flex'
 
   if (tab.kind === 'mscz') {
     pageContainerEl.appendChild(cursorBoxEl)
     cursorBoxEl.style.display = 'none'
 
-    navEl.style.display = tab.pageView.pages > 1 ? 'block' : 'none'
+    navEl.style.display = tab.pageView.pages > 1 ? 'flex' : 'none'
     pageIndicatorEl.textContent = `Page ${tab.pageView.page + 1} / ${tab.pageView.pages}`
     prevBtn.disabled = tab.pageView.page <= 0
     nextBtn.disabled = tab.pageView.page >= tab.pageView.pages - 1
@@ -411,6 +447,9 @@ async function activateTab(tab: TabState): Promise<void> {
       ? `Selected measures (elid ${tab.selection.startElid}-${tab.selection.endElid}) — press L to loop`
       : ''
     loopStatusEl.textContent = tab.loopRegion ? 'Looping selected measures' : ''
+    zoomIndicatorEl.textContent = `${Math.round(tab.pageView.getZoom() * 100)}%`
+    zoomOutBtn.disabled = tab.pageView.getZoom() <= MIN_ZOOM
+    zoomInBtn.disabled = tab.pageView.getZoom() >= MAX_ZOOM
 
     msczCursor.setItems(tab.timeline?.events ?? null)
     pdfCursor.setItems(null)
@@ -449,7 +488,7 @@ async function activateTab(tab: TabState): Promise<void> {
     await markerPanel.setFileHash(null)
     await piecesIndex.setScoreBytes(null)
 
-    navEl.style.display = tab.pageCount > 1 ? 'block' : 'none'
+    navEl.style.display = tab.pageCount > 1 ? 'flex' : 'none'
     pageIndicatorEl.textContent = `Page ${tab.currentPage + 1} / ${tab.pageCount}`
     prevBtn.disabled = tab.currentPage <= 0
     nextBtn.disabled = tab.currentPage >= tab.pageCount - 1
@@ -531,14 +570,30 @@ function setPdfZoom(tab: PdfTabState, zoom: number): void {
   void showPdfPage(tab, tab.currentPage)
 }
 
-zoomOutBtn.addEventListener('click', () => {
+/** Zooms the active tab (either kind) by `delta` (positive = in, negative = out) — shared by the +/- buttons and ctrl+wheel. */
+function zoomActiveTab(delta: number): void {
   const active = activeTab()
-  if (active?.kind === 'pdf') setPdfZoom(active, active.zoom - PDF_ZOOM_STEP)
-})
-zoomInBtn.addEventListener('click', () => {
-  const active = activeTab()
-  if (active?.kind === 'pdf') setPdfZoom(active, active.zoom + PDF_ZOOM_STEP)
-})
+  if (!active) return
+  if (active.kind === 'mscz') {
+    active.pageView.setZoom(active.pageView.getZoom() + delta)
+  } else {
+    setPdfZoom(active, active.zoom + delta * (PDF_ZOOM_STEP / ZOOM_STEP))
+  }
+}
+
+zoomOutBtn.addEventListener('click', () => zoomActiveTab(-ZOOM_STEP))
+zoomInBtn.addEventListener('click', () => zoomActiveTab(ZOOM_STEP))
+
+/** Ctrl/Cmd+scroll zooms the active tab's page, like a PDF viewer or image editor — matches the gesture users expect instead of scrolling the page area. */
+pageContainerEl.addEventListener(
+  'wheel',
+  (e) => {
+    if (!e.ctrlKey && !e.metaKey) return
+    e.preventDefault()
+    zoomActiveTab(e.deltaY < 0 ? ZOOM_STEP : -ZOOM_STEP)
+  },
+  { passive: false },
+)
 
 async function switchToTab(fileHash: string): Promise<void> {
   if (fileHash === activeHash) return
@@ -567,8 +622,13 @@ function closeTab(fileHash: string): void {
     } else {
       void stopAudioForTabSwitch()
       pageContainerEl.innerHTML = ''
+      pageContainerEl.appendChild(emptyStateEl)
+      emptyStateEl.style.display = 'flex'
       pageContainerEl.appendChild(cursorBoxEl)
       navEl.style.display = 'none'
+      transportEl.style.display = 'none'
+      zoomGroupEl.style.display = 'none'
+      pdfControlsEl.style.display = 'none'
       statusEl.textContent = ''
       selectionStatusEl.textContent = ''
       loopStatusEl.textContent = ''
@@ -659,18 +719,27 @@ async function openMsczBytes(bytes: Uint8Array, filename: string, path: string |
   await stopAudioForTabSwitch()
 
   const pageContainer = document.createElement('div')
-  pageContainer.style.position = 'relative'
+  pageContainer.className = 'page-stage'
 
-  const pageView = new PageView(pageContainer, (page, pages, positions) => {
-    if (activeHash !== tabState.fileHash) return
-    pageIndicatorEl.textContent = `Page ${page + 1} / ${pages}`
-    prevBtn.disabled = page <= 0
-    nextBtn.disabled = page >= pages - 1
-    selectionStatusEl.textContent = ''
-    if (positions) {
-      selectionOverlay.setPage(positions.elements, page)
-    }
-  })
+  const pageView = new PageView(
+    pageContainer,
+    (page, pages, positions) => {
+      if (activeHash !== tabState.fileHash) return
+      pageIndicatorEl.textContent = `Page ${page + 1} / ${pages}`
+      prevBtn.disabled = page <= 0
+      nextBtn.disabled = page >= pages - 1
+      selectionStatusEl.textContent = ''
+      if (positions) {
+        selectionOverlay.setPage(positions.elements, page)
+      }
+    },
+    (zoom) => {
+      if (activeHash !== tabState.fileHash) return
+      zoomIndicatorEl.textContent = `${Math.round(zoom * 100)}%`
+      zoomOutBtn.disabled = zoom <= MIN_ZOOM
+      zoomInBtn.disabled = zoom >= MAX_ZOOM
+    },
+  )
   const selectionOverlay = new SelectionOverlay(pageContainer)
 
   const tabState: MsczTabState = {
@@ -779,6 +848,7 @@ async function openPdfBytes(bytes: Uint8Array, filename: string, path: string | 
   // dot's position silently drifts off-target.
   canvasContainer.style.position = 'relative'
   canvasContainer.style.display = 'inline-block'
+  canvasContainer.className = 'page-stage'
   pageContainer.appendChild(canvasContainer)
   const calibrationOverlay = new CalibrationOverlay(canvasContainer)
 
@@ -939,9 +1009,8 @@ if (isTauri()) {
   // when opened via this picker rather than drag-drop. The dialog plugin's
   // `open()` returns the real path, same as a dropped file's path.
   fileInput.style.display = 'none'
-  const openFileBtn = document.createElement('button')
-  openFileBtn.textContent = 'Open file...'
-  fileInput.insertAdjacentElement('afterend', openFileBtn)
+  const openFileBtn = document.querySelector<HTMLButtonElement>('#open-file-btn')!
+  openFileBtn.style.display = 'inline-block'
   openFileBtn.addEventListener('click', async () => {
     const { open } = await import('@tauri-apps/plugin-dialog')
     const { readFile } = await import('@tauri-apps/plugin-fs')

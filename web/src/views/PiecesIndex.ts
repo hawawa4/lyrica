@@ -16,12 +16,11 @@ export class PiecesIndex {
 
   constructor(container: HTMLElement) {
     this.root = document.createElement('div')
+    this.root.className = 'sidebar-section'
     this.root.style.display = 'none'
     this.root.innerHTML = `
-      <div style="margin-top: 16px; border-top: 1px solid #ddd; padding-top: 8px;">
-        <strong>Pieces</strong>
-        <ul style="list-style: none; padding: 0; margin-top: 8px;"></ul>
-      </div>
+      <span class="sidebar-section-title">Pieces</span>
+      <ul class="panel-list"></ul>
     `
     container.appendChild(this.root)
     this.listEl = this.root.querySelector('ul')!
@@ -66,9 +65,11 @@ export class PiecesIndex {
     this.root.style.display = 'block'
     for (const piece of pieces) {
       const li = document.createElement('li')
-      li.style.cursor = 'pointer'
-      li.style.padding = '2px 0'
-      li.textContent = piece.title
+      li.className = 'panel-list-item'
+      const label = document.createElement('span')
+      label.className = 'label'
+      label.textContent = piece.title
+      li.appendChild(label)
       li.addEventListener('click', () => this.onJump?.(piece.start_measure_index))
       this.listEl.appendChild(li)
     }

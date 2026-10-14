@@ -9,6 +9,7 @@ import type { Marker } from '../types'
  * it into a container and feeds it a new `fileHash` each time a score opens.
  */
 export class MarkerPanel {
+  private readonly root: HTMLDivElement
   private readonly listEl: HTMLUListElement
   private readonly addBtn: HTMLButtonElement
   private readonly textInput: HTMLInputElement
@@ -19,24 +20,23 @@ export class MarkerPanel {
   private onJump: ((measureIndex: number) => void) | null = null
 
   constructor(container: HTMLElement) {
-    const root = document.createElement('div')
-    root.innerHTML = `
-      <div style="margin-top: 16px; border-top: 1px solid #ddd; padding-top: 8px;">
-        <strong>Markers</strong>
-        <div style="margin-top: 4px;">
-          <input type="text" placeholder="Note for the selected measure..." style="width: 220px;" />
-          <button>Add marker</button>
-        </div>
-        <div class="marker-status" style="color: #888; font-size: 13px; margin-top: 4px;"></div>
-        <ul style="list-style: none; padding: 0; margin-top: 8px;"></ul>
+    this.root = document.createElement('div')
+    this.root.className = 'sidebar-section'
+    this.root.innerHTML = `
+      <span class="sidebar-section-title">Markers</span>
+      <div class="marker-add-row">
+        <input type="text" placeholder="Note for the selected measure..." />
+        <button>Add</button>
       </div>
+      <div class="marker-status panel-status"></div>
+      <ul class="panel-list"></ul>
     `
-    container.appendChild(root)
+    container.appendChild(this.root)
 
-    this.textInput = root.querySelector('input')!
-    this.addBtn = root.querySelector('button')!
-    this.statusEl = root.querySelector('.marker-status')!
-    this.listEl = root.querySelector('ul')!
+    this.textInput = this.root.querySelector('input')!
+    this.addBtn = this.root.querySelector('button')!
+    this.statusEl = this.root.querySelector('.marker-status')!
+    this.listEl = this.root.querySelector('ul')!
 
     this.addBtn.addEventListener('click', () => void this.handleAdd())
     this.textInput.addEventListener('keydown', (e) => {
@@ -112,16 +112,16 @@ export class MarkerPanel {
     this.listEl.innerHTML = ''
     for (const marker of this.markers) {
       const li = document.createElement('li')
-      li.style.cursor = 'pointer'
-      li.style.padding = '2px 0'
+      li.className = 'panel-list-item'
 
       const label = document.createElement('span')
+      label.className = 'label'
       label.textContent = `Measure ${marker.measure_index + 1}: ${marker.text}`
       label.addEventListener('click', () => this.onJump?.(marker.measure_index))
 
       const deleteBtn = document.createElement('button')
+      deleteBtn.className = 'remove-btn'
       deleteBtn.textContent = '✕'
-      deleteBtn.style.marginLeft = '8px'
       deleteBtn.addEventListener('click', (e) => {
         e.stopPropagation()
         void this.handleDelete(marker.id)

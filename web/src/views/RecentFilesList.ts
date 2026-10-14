@@ -14,12 +14,11 @@ export class RecentFilesList {
 
   constructor(container: HTMLElement) {
     this.root = document.createElement('div')
+    this.root.className = 'sidebar-section'
     this.root.style.display = 'none'
     this.root.innerHTML = `
-      <div style="margin-top: 16px;">
-        <strong>Recent files</strong>
-        <ul style="list-style: none; padding: 0; margin-top: 8px;"></ul>
-      </div>
+      <span class="sidebar-section-title">Recent files</span>
+      <ul class="panel-list"></ul>
     `
     container.appendChild(this.root)
     this.listEl = this.root.querySelector('ul')!
@@ -45,9 +44,11 @@ export class RecentFilesList {
     this.root.style.display = entries.length > 0 ? 'block' : 'none'
     for (const entry of entries) {
       const li = document.createElement('li')
-      li.style.cursor = 'pointer'
-      li.style.padding = '2px 0'
-      li.textContent = entry.title || entry.path
+      li.className = 'panel-list-item'
+      const label = document.createElement('span')
+      label.className = 'label'
+      label.textContent = entry.title || entry.path
+      li.appendChild(label)
       li.addEventListener('click', () => this.onOpenCallback?.(entry))
       this.listEl.appendChild(li)
     }
