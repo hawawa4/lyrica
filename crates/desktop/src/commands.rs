@@ -62,6 +62,21 @@ pub fn stop(audio: State<AudioState>) {
 }
 
 #[tauri::command]
+pub fn pause(audio: State<AudioState>) {
+    audio.pause()
+}
+
+#[tauri::command]
+pub fn resume(audio: State<AudioState>) -> Result<(), String> {
+    audio.resume()
+}
+
+#[tauri::command]
+pub fn seek(audio: State<AudioState>, target_ms: f64) {
+    audio.seek(target_ms)
+}
+
+#[tauri::command]
 pub fn set_speed(audio: State<AudioState>, speed: f64) {
     audio.set_speed(speed)
 }

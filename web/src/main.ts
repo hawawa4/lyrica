@@ -6,12 +6,16 @@ import { PageView, ZOOM_STEP, MIN_ZOOM, MAX_ZOOM } from './render/PageView'
 import { SelectionOverlay, type MeasureRange } from './render/SelectionOverlay'
 import { CalibrationOverlay, type PointRange } from './views/CalibrationOverlay'
 import { Cursor } from './render/Cursor'
+import { PlaybackHeadMarker } from './render/PlaybackHeadMarker'
 import {
   isTauri,
   importTimeline,
   loadMidi,
   playMidi,
   stopMidi,
+  pauseMidi,
+  resumeMidi,
+  seekMidi,
   setPlaybackSpeed,
   setLoopRegion,
   setMetronomeEnabled,
@@ -58,6 +62,9 @@ app.innerHTML = `
       <button id="zoom-out" class="icon-btn" title="Zoom out">&minus;</button>
       <span id="zoom-indicator" class="zoom-indicator">100%</span>
       <button id="zoom-in" class="icon-btn" title="Zoom in">+</button>
+      <button id="fit-width-btn" title="Fit to width">Fit width</button>
+      <button id="fit-height-btn" title="Fit to height">Fit height</button>
+      <button id="zoom-reset-btn" title="Reset zoom to 100%">100%</button>
     </div>
     <div class="toolbar-spacer"></div>
     <div class="toolbar-group">
@@ -122,6 +129,9 @@ const clearPointsBtn = document.querySelector<HTMLButtonElement>('#clear-points-
 const zoomOutBtn = document.querySelector<HTMLButtonElement>('#zoom-out')!
 const zoomInBtn = document.querySelector<HTMLButtonElement>('#zoom-in')!
 const zoomIndicatorEl = document.querySelector<HTMLSpanElement>('#zoom-indicator')!
+const fitWidthBtn = document.querySelector<HTMLButtonElement>('#fit-width-btn')!
+const fitHeightBtn = document.querySelector<HTMLButtonElement>('#fit-height-btn')!
+const zoomResetBtn = document.querySelector<HTMLButtonElement>('#zoom-reset-btn')!
 const themeSelectEl = document.querySelector<HTMLSelectElement>('#theme-select')!
 const dropOverlay = document.querySelector<HTMLDivElement>('#drop-overlay')!
 
@@ -150,6 +160,9 @@ themeSelectEl.addEventListener('change', () => applyTheme(themeSelectEl.value as
  * than one shape with optional fields, since the two kinds share almost
  * nothing beyond "a tab with a title and a page area."
  */
+/** stopped: head at rest, no audio engine activity. playing: Cursor is polling. paused: frozen mid-playback, resumable from exactly this position. */
+type TransportState = 'stopped' | 'playing' | 'paused'
+
 interface MsczTabState {
   kind: 'mscz'
   fileHash: string
@@ -163,6 +176,9 @@ interface MsczTabState {
   speed: number
   loopRegion: [number, number] | null
   originalBytes: Uint8Array
+  transportState: TransportState
+  /** Where the playback-head marker currently sits, in the timeline's 1.0x-speed milliseconds — independent of whether audio is actually running. */
+  headMs: number
 }
 
 interface PdfTabState {
@@ -182,6 +198,8 @@ interface PdfTabState {
   numerator: number
   speed: number
   loopRegion: [number, number] | null
+  transportState: TransportState
+  headMs: number
 }
 
 type TabState = MsczTabState | PdfTabState
@@ -217,6 +235,7 @@ const msczCursor = new Cursor<TimelineEvent>((event) => {
   cursorBoxEl.style.top = `${(event.bbox.y / currentPageHeight()) * 100}%`
   cursorBoxEl.style.width = `${(event.bbox.sx / currentPageWidth()) * 100}%`
   cursorBoxEl.style.height = `${(event.bbox.sy / currentPageHeight()) * 100}%`
+  headMarker.setPosition((event.bbox.x / currentPageWidth()) * 100, (event.bbox.y / currentPageHeight()) * 100)
 })
 
 /**
@@ -237,6 +256,8 @@ const pdfCursor = new Cursor<CalibrationPoint>((_point, itemIndex) => {
     void showPdfPage(active, target.page)
   }
   active.calibrationOverlay.setPlayingIndex(itemIndex)
+  const canvas = active.canvasContainer.querySelector('canvas')
+  if (canvas) headMarker.setPosition((target.x / canvas.width) * 100, (target.y / canvas.height) * 100)
 })
 
 const markerPanelEl = document.querySelector<HTMLDivElement>('#marker-panel')!
@@ -361,17 +382,6 @@ async function setPdfLoop(range: PointRange | null): Promise<void> {
   await setLoopRegion(active.loopRegion)
 }
 
-window.addEventListener('keydown', (e) => {
-  const active = activeTab()
-  if (e.key.toLowerCase() !== 'l' || !isTauri() || !active) return
-  const target = e.target as HTMLElement | null
-  if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) return
-  if (active.kind === 'mscz' && active.timeline) {
-    void setLoop(active.selection)
-  } else if (active.kind === 'pdf' && !active.markingMode) {
-    void setPdfLoop(active.selectedRange)
-  }
-})
 
 function setSpeed(speed: number): void {
   const active = activeTab()
@@ -398,6 +408,13 @@ cursorBoxEl.style.background = 'var(--cursor-fill)'
 cursorBoxEl.style.pointerEvents = 'none'
 cursorBoxEl.style.display = 'none'
 
+/**
+ * Always-visible playback-head indicator (unlike cursorBoxEl, which only
+ * shows while actively playing) — one shared instance, re-mounted onto
+ * whichever tab's page-stage is active, same lifecycle as cursorBoxEl.
+ */
+const headMarker = new PlaybackHeadMarker()
+
 function currentPageWidth(): number {
   const svg = activeTab()?.pageContainer.querySelector('svg')
   return svg ? parseFloat(svg.getAttribute('viewBox')?.split(' ')[2] ?? '0') : 1
@@ -414,10 +431,20 @@ function renderTabBar(): void {
 }
 
 /** Stops shared audio playback — the backend owns one synth/stream for the whole app, not one per tab. */
-async function stopAudioForTabSwitch(): Promise<void> {
+/**
+ * Stops the shared Rust player for every tab switch — the backend has no
+ * per-tab state (one global `Player`), so a tab that was mid-play or paused
+ * loses that backend state the moment another tab's audio needs the engine.
+ * `departing`'s transportState is forced back to 'stopped' (but its `headMs`
+ * is left untouched — it's purely a frontend position, not something
+ * stopMidi() can meaningfully preserve) so reactivating it later starts
+ * fresh rather than claiming to still be paused.
+ */
+async function stopAudioForTabSwitch(departing?: TabState): Promise<void> {
   await stopMidi()
   msczCursor.stop()
   pdfCursor.stop()
+  if (departing) departing.transportState = 'stopped'
   playBtn.disabled = true
   stopBtn.disabled = true
 }
@@ -438,13 +465,15 @@ async function activateTab(tab: TabState): Promise<void> {
   if (tab.kind === 'mscz') {
     tab.pageContainer.appendChild(cursorBoxEl)
     cursorBoxEl.style.display = 'none'
+    tab.pageContainer.appendChild(headMarker.el)
+    tab.transportState = 'stopped'
 
     navEl.style.display = tab.pageView.pages > 1 ? 'flex' : 'none'
     pageIndicatorEl.textContent = `Page ${tab.pageView.page + 1} / ${tab.pageView.pages}`
     prevBtn.disabled = tab.pageView.page <= 0
     nextBtn.disabled = tab.pageView.page >= tab.pageView.pages - 1
     selectionStatusEl.textContent = tab.selection
-      ? `Selected measures (elid ${tab.selection.startElid}-${tab.selection.endElid}) — press L to loop`
+      ? `Selected measures (elid ${tab.selection.startElid}-${tab.selection.endElid})`
       : ''
     loopStatusEl.textContent = tab.loopRegion ? 'Looping selected measures' : ''
     zoomIndicatorEl.textContent = `${Math.round(tab.pageView.getZoom() * 100)}%`
@@ -457,8 +486,7 @@ async function activateTab(tab: TabState): Promise<void> {
     await piecesIndex.setScoreBytes(tab.originalBytes)
 
     const hasAudio = tab.timeline !== null
-    playBtn.disabled = !hasAudio
-    stopBtn.disabled = true
+    renderTransportButtons(tab.transportState, hasAudio)
     for (const btn of Object.values(speedButtons)) btn.disabled = !hasAudio
     metronomeCheckbox.disabled = !hasAudio
 
@@ -468,10 +496,13 @@ async function activateTab(tab: TabState): Promise<void> {
       await loadMidi(midiBytes)
       await setLoopRegion(tab.loopRegion)
       await setMetronomeEnabled(metronomeCheckbox.checked)
+      updateMsczHeadMarker(tab)
     }
   } else {
+    tab.canvasContainer.appendChild(headMarker.el)
+    tab.transportState = 'stopped'
     selectionStatusEl.textContent = tab.selectedRange
-      ? `Selected calibration points ${tab.selectedRange.startIndex}-${tab.selectedRange.endIndex} — press L to loop`
+      ? `Selected calibration points ${tab.selectedRange.startIndex}-${tab.selectedRange.endIndex}`
       : ''
     loopStatusEl.textContent = tab.loopRegion ? 'Looping between calibration points' : ''
     calibrationStatusEl.textContent = markingModeStatusText(tab)
@@ -492,10 +523,18 @@ async function activateTab(tab: TabState): Promise<void> {
     pageIndicatorEl.textContent = `Page ${tab.currentPage + 1} / ${tab.pageCount}`
     prevBtn.disabled = tab.currentPage <= 0
     nextBtn.disabled = tab.currentPage >= tab.pageCount - 1
+    // Re-render on every reactivation rather than trusting the previously
+    // mounted canvas: pdf.js's PDFPageProxy caches per-page render state
+    // internally, and a concurrent render from autoScanBarlines (which runs
+    // in the background across every page right after a PDF is opened) can
+    // land mid-flight while this tab is inactive, leaving the visible canvas
+    // blank on the next switch-back. Cheap enough to always redo — a single
+    // page re-render, not the whole document.
+    await showPdfPage(tab, tab.currentPage)
+    updatePdfHeadMarker(tab)
 
     const hasAudio = tab.points.length >= 2
-    playBtn.disabled = !hasAudio
-    stopBtn.disabled = true
+    renderTransportButtons(tab.transportState, hasAudio)
     for (const btn of Object.values(speedButtons)) btn.disabled = !hasAudio
     metronomeCheckbox.disabled = !hasAudio
 
@@ -584,6 +623,67 @@ function zoomActiveTab(delta: number): void {
 zoomOutBtn.addEventListener('click', () => zoomActiveTab(-ZOOM_STEP))
 zoomInBtn.addEventListener('click', () => zoomActiveTab(ZOOM_STEP))
 
+/** `.page-area`'s content box, minus its own padding — the space a fit-to-width/height zoom should fill. */
+function pageAreaAvailableSize(): { width: number; height: number } {
+  const style = getComputedStyle(pageContainerEl)
+  const paddingX = parseFloat(style.paddingLeft) + parseFloat(style.paddingRight)
+  const paddingY = parseFloat(style.paddingTop) + parseFloat(style.paddingBottom)
+  return {
+    width: pageContainerEl.clientWidth - paddingX,
+    height: pageContainerEl.clientHeight - paddingY,
+  }
+}
+
+/**
+ * PDF zoom isn't a pure CSS scale (unlike .mscz's SVG) — every zoom change
+ * re-renders the canvas at a new resolution via showPdfPage, so there's no
+ * live viewBox to read a native aspect ratio from the way PageView does.
+ * Backs it out instead from the *currently mounted* canvas's own pixel size
+ * together with the zoom it was rendered at (canvas.width/height already
+ * bakes in devicePixelRatio too, which cancels out of the ratio).
+ */
+function pdfNativeAspectRatio(tab: PdfTabState): number | null {
+  const canvas = tab.canvasContainer.querySelector('canvas')
+  if (!canvas || canvas.width <= 0 || canvas.height <= 0) return null
+  return canvas.width / canvas.height
+}
+
+function fitActiveTabToWidth(): void {
+  const active = activeTab()
+  if (!active) return
+  const { width } = pageAreaAvailableSize()
+  if (active.kind === 'mscz') {
+    active.pageView.setZoomToWidth(width)
+  } else {
+    setPdfZoom(active, width / PDF_BASE_WIDTH)
+  }
+}
+
+function fitActiveTabToHeight(): void {
+  const active = activeTab()
+  if (!active) return
+  const { height } = pageAreaAvailableSize()
+  if (active.kind === 'mscz') {
+    active.pageView.setZoomToHeight(height)
+  } else {
+    const aspect = pdfNativeAspectRatio(active)
+    if (!aspect) return
+    const renderedHeightAtZoom1 = PDF_BASE_WIDTH / aspect
+    setPdfZoom(active, height / renderedHeightAtZoom1)
+  }
+}
+
+function resetActiveTabZoom(): void {
+  const active = activeTab()
+  if (!active) return
+  if (active.kind === 'mscz') active.pageView.setZoom(1)
+  else setPdfZoom(active, 1)
+}
+
+fitWidthBtn.addEventListener('click', fitActiveTabToWidth)
+fitHeightBtn.addEventListener('click', fitActiveTabToHeight)
+zoomResetBtn.addEventListener('click', resetActiveTabZoom)
+
 /** Ctrl/Cmd+scroll zooms the active tab's page, like a PDF viewer or image editor — matches the gesture users expect instead of scrolling the page area. */
 pageContainerEl.addEventListener(
   'wheel',
@@ -599,7 +699,7 @@ async function switchToTab(fileHash: string): Promise<void> {
   if (fileHash === activeHash) return
   const tab = tabs.get(fileHash)
   if (!tab) return
-  await stopAudioForTabSwitch()
+  await stopAudioForTabSwitch(activeTab() ?? undefined)
   await activateTab(tab)
 }
 
@@ -715,7 +815,7 @@ async function openMsczBytes(bytes: Uint8Array, filename: string, path: string |
     return
   }
 
-  await stopAudioForTabSwitch()
+  await stopAudioForTabSwitch(activeTab() ?? undefined)
 
   const pageContainer = document.createElement('div')
   pageContainer.className = 'page-stage'
@@ -754,14 +854,26 @@ async function openMsczBytes(bytes: Uint8Array, filename: string, path: string |
     speed: 1.0,
     loopRegion: null,
     originalBytes,
+    transportState: 'stopped',
+    headMs: 0,
   }
 
   selectionOverlay.onSelect((range) => {
     tabState.selection = range
+    void setLoop(range)
+    if (range && tabState.timeline) {
+      const loopRegion = loopRegionForSelection(tabState.timeline, range)
+      if (loopRegion) void seekActive(tabState, loopRegion[0])
+    }
     if (activeHash !== tabState.fileHash) return
     selectionStatusEl.textContent = range
-      ? `Selected measures (elid ${range.startElid}-${range.endElid}) — press L to loop`
+      ? `Selected measures (elid ${range.startElid}-${range.endElid})`
       : ''
+  })
+
+  selectionOverlay.onSeek((elid) => {
+    const event = tabState.timeline?.events.find((e) => e.source_elid === elid)
+    if (event) void seekActive(tabState, event.time_ms)
   })
 
   await pageView.setScore(score, metadata.pages)
@@ -833,7 +945,7 @@ async function openPdfBytes(bytes: Uint8Array, filename: string, path: string | 
     return
   }
 
-  await stopAudioForTabSwitch()
+  await stopAudioForTabSwitch(activeTab() ?? undefined)
 
   const pageContainer = document.createElement('div')
   pageContainer.style.position = 'relative'
@@ -875,14 +987,26 @@ async function openPdfBytes(bytes: Uint8Array, filename: string, path: string | 
     numerator: PDF_DEFAULT_NUMERATOR,
     speed: 1.0,
     loopRegion: null,
+    transportState: 'stopped',
+    headMs: 0,
   }
 
   calibrationOverlay.onSelect((range) => {
     tabState.selectedRange = range
+    void setPdfLoop(range)
+    if (range) {
+      const loopRegion = loopRegionForPointRange(calibrationOverlay.getPoints(), range)
+      if (loopRegion) void seekActive(tabState, loopRegion[0])
+    }
     if (activeHash !== tabState.fileHash) return
     selectionStatusEl.textContent = range
-      ? `Selected calibration points ${range.startIndex}-${range.endIndex} — press L to loop`
+      ? `Selected calibration points ${range.startIndex}-${range.endIndex}`
       : ''
+  })
+
+  calibrationOverlay.onSeek((pointIndex) => {
+    const point = calibrationOverlay.getPoints()[pointIndex]
+    if (point) void seekActive(tabState, point.time_ms)
   })
 
   calibrationOverlay.onChange((points) => {
@@ -980,9 +1104,72 @@ async function showPdfPage(tab: PdfTabState, pageNumber: number): Promise<void> 
   }
 }
 
+/** Updates the Play button's icon/title and both buttons' disabled state to match `state` — called every time a tab's transportState changes, including on tab (re)activation. */
+function renderTransportButtons(state: TransportState, hasAudio: boolean): void {
+  playBtn.disabled = !hasAudio
+  playBtn.innerHTML = state === 'playing' ? '&#9208;' : '&#9654;'
+  playBtn.title = state === 'playing' ? 'Pause' : state === 'paused' ? 'Resume' : 'Play'
+  stopBtn.disabled = !hasAudio || state === 'stopped'
+}
+
+/** Moves the always-visible head marker to `headMs` for the active `.mscz` tab, by finding the timeline event whose window contains it (same "last event at or before this time" rule Cursor's own poll lookup uses) — also flips to that event's page if needed, since the marker only makes sense on the currently-displayed page. */
+function updateMsczHeadMarker(tab: MsczTabState): void {
+  if (!tab.timeline || tab.timeline.events.length === 0) return
+  let event = tab.timeline.events[0]
+  for (const e of tab.timeline.events) {
+    if (e.time_ms > tab.headMs) break
+    event = e
+  }
+  if (event.page !== tab.pageView.page) void tab.pageView.showPage(event.page)
+  if (activeHash !== tab.fileHash) return
+  headMarker.setPosition((event.bbox.x / currentPageWidth()) * 100, (event.bbox.y / currentPageHeight()) * 100)
+}
+
+/** Same idea as updateMsczHeadMarker, but over calibration points — nearest point at or before `headMs`. */
+function updatePdfHeadMarker(tab: PdfTabState): void {
+  const points = tab.calibrationOverlay.getPoints()
+  if (points.length === 0) return
+  let point = points[0]
+  for (const p of points) {
+    if (p.time_ms > tab.headMs) break
+    point = p
+  }
+  if (point.page !== tab.currentPage) void showPdfPage(tab, point.page)
+  if (activeHash !== tab.fileHash) return
+  const canvas = tab.canvasContainer.querySelector('canvas')
+  if (canvas) headMarker.setPosition((point.x / canvas.width) * 100, (point.y / canvas.height) * 100)
+}
+
+function updateHeadMarker(tab: TabState): void {
+  if (tab.kind === 'mscz') updateMsczHeadMarker(tab)
+  else updatePdfHeadMarker(tab)
+}
+
+/** Moves `tab`'s playback head to `targetMs` and updates the marker immediately — safe in any transport state (seeking while stopped/paused just repositions the marker; seeking while playing also repositions the live audio engine via seekMidi). Clears the active loop if `targetMs` falls outside it, per "an explicit seek always wins over a standing loop." */
+async function seekActive(tab: TabState, targetMs: number): Promise<void> {
+  tab.headMs = targetMs
+  const [loopStart, loopEnd] = tab.loopRegion ?? [null, null]
+  if (loopStart !== null && loopEnd !== null && (targetMs < loopStart || targetMs > loopEnd)) {
+    if (tab.kind === 'mscz') await setLoop(null)
+    else await setPdfLoop(null)
+  }
+  if (activeHash === tab.fileHash) await seekMidi(targetMs)
+  updateHeadMarker(tab)
+}
+
 async function playActive(): Promise<void> {
   const active = activeTab()
-  if (!active || playBtn.disabled) return
+  if (!active || active.transportState === 'playing') return
+
+  if (active.transportState === 'paused') {
+    await resumeMidi()
+    active.transportState = 'playing'
+    if (active.kind === 'mscz') msczCursor.start()
+    else pdfCursor.start()
+    renderTransportButtons('playing', true)
+    return
+  }
+
   if (active.kind === 'pdf') {
     await loadPdfTabTempoMap(active)
     pdfCursor.setItems(active.calibrationOverlay.getPoints())
@@ -990,34 +1177,67 @@ async function playActive(): Promise<void> {
   await playMidi(false)
   await setPlaybackSpeed(active.speed)
   await setLoopRegion(active.loopRegion)
+  // play() (Rust) always resets to position 0 — follow up with a seek so
+  // playback actually starts from wherever the head marker currently sits
+  // (e.g. after a prior seek/selection while stopped), not always the
+  // piece's absolute start.
+  if (active.headMs > 0) await seekMidi(active.headMs)
+  active.transportState = 'playing'
   if (active.kind === 'mscz') msczCursor.start()
   else pdfCursor.start()
-  playBtn.disabled = true
-  stopBtn.disabled = false
+  renderTransportButtons('playing', true)
+}
+
+async function pauseActive(): Promise<void> {
+  const active = activeTab()
+  if (!active || active.transportState !== 'playing') return
+  await pauseMidi()
+  msczCursor.stop()
+  pdfCursor.stop()
+  active.transportState = 'paused'
+  renderTransportButtons('paused', true)
 }
 
 async function stopActive(): Promise<void> {
-  if (stopBtn.disabled) return
+  const active = activeTab()
+  if (!active || active.transportState === 'stopped') return
   await stopMidi()
   msczCursor.stop()
   pdfCursor.stop()
-  const active = activeTab()
-  if (active?.kind === 'pdf') active.calibrationOverlay.setPlayingIndex(null)
-  playBtn.disabled = false
-  stopBtn.disabled = true
+  if (active.kind === 'pdf') active.calibrationOverlay.setPlayingIndex(null)
+  active.transportState = 'stopped'
+  // Head resets to the active loop's start if one is set (loop stays
+  // armed across Stop, see setLoop/setPdfLoop), else all the way to 0.
+  active.headMs = active.loopRegion?.[0] ?? 0
+  updateHeadMarker(active)
+  renderTransportButtons('stopped', true)
 }
 
-playBtn.addEventListener('click', () => void playActive())
+function togglePlayPause(): void {
+  const active = activeTab()
+  if (!active) return
+  if (active.transportState === 'playing') void pauseActive()
+  else void playActive()
+}
+
+playBtn.addEventListener('click', togglePlayPause)
 stopBtn.addEventListener('click', () => void stopActive())
 
-/** Spacebar toggles play/pause for the active tab, like a standard media player — mirrored by the play/stop buttons' own disabled state so both stay in sync. */
+/** Spacebar toggles play/pause for the active tab, like a standard media player — same logic as the Play button's own click handler. */
 window.addEventListener('keydown', (e) => {
   if (e.key !== ' ' && e.code !== 'Space') return
   const target = e.target as HTMLElement | null
   if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'BUTTON' || target.tagName === 'SELECT')) return
   e.preventDefault()
-  if (stopBtn.disabled) void playActive()
-  else void stopActive()
+  togglePlayPause()
+})
+
+/** Escape stops playback outright, like the Stop button — a distinct action from Space's play/pause toggle. */
+window.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') return
+  const target = e.target as HTMLElement | null
+  if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) return
+  void stopActive()
 })
 
 if (isTauri()) {
@@ -1052,17 +1272,31 @@ if (isTauri()) {
   })
 }
 
-prevBtn.addEventListener('click', () => {
+function goToPrevPage(): void {
   const active = activeTab()
   if (!active) return
   if (active.kind === 'mscz') void active.pageView.prev()
   else void showPdfPage(active, active.currentPage - 1)
-})
-nextBtn.addEventListener('click', () => {
+}
+
+function goToNextPage(): void {
   const active = activeTab()
   if (!active) return
   if (active.kind === 'mscz') void active.pageView.next()
   else void showPdfPage(active, active.currentPage + 1)
+}
+
+prevBtn.addEventListener('click', goToPrevPage)
+nextBtn.addEventListener('click', goToNextPage)
+
+/** Left/Right arrow keys navigate pages, like a standard document viewer — ignored while a text input/button/select has focus (arrow keys have native meaning there: caret movement, button/option navigation). */
+window.addEventListener('keydown', (e) => {
+  if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return
+  const target = e.target as HTMLElement | null
+  if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'BUTTON' || target.tagName === 'SELECT')) return
+  e.preventDefault()
+  if (e.key === 'ArrowLeft') goToPrevPage()
+  else goToNextPage()
 })
 
 function isOpenableFile(name: string): boolean {

@@ -108,6 +108,26 @@ impl AudioState {
         self.player.lock().unwrap().stop();
     }
 
+    pub fn pause(&self) {
+        self.player.lock().unwrap().pause();
+    }
+
+    /// Mirrors `play`'s "no midi loaded" error case — resuming before
+    /// anything has ever been loaded/played is a caller bug, not a silent
+    /// no-op, same as `play` without a loaded file would be.
+    pub fn resume(&self) -> Result<(), String> {
+        let mut player = self.player.lock().unwrap();
+        if self.current_midi.lock().unwrap().is_none() {
+            return Err("no midi file loaded".to_string());
+        }
+        player.resume();
+        Ok(())
+    }
+
+    pub fn seek(&self, target_ms: f64) {
+        self.player.lock().unwrap().seek(target_ms);
+    }
+
     pub fn set_speed(&self, speed: f64) {
         self.player.lock().unwrap().set_speed(speed);
     }

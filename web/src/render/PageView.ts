@@ -50,6 +50,31 @@ export class PageView {
     this.onZoomChange?.(this.zoom)
   }
 
+  /** Native page width/height (from the SVG's own viewBox, print-resolution px) — the basis for computing a fit-to-width/height zoom level. `null` if no page is rendered yet. */
+  private nativeSize(): { width: number; height: number } | null {
+    const svgEl = this.svgLayer.querySelector('svg')
+    const viewBox = svgEl?.getAttribute('viewBox')?.split(' ')
+    if (!viewBox || viewBox.length < 4) return null
+    return { width: parseFloat(viewBox[2]), height: parseFloat(viewBox[3]) }
+  }
+
+  /** Sets zoom so the rendered page's width exactly fills `availableWidthPx`. */
+  setZoomToWidth(availableWidthPx: number): void {
+    if (!this.nativeSize()) return
+    // Rendered width at zoom=1 is exactly BASE_WIDTH_PX regardless of the
+    // page's native pixel size (see setZoom), so this is just a ratio —
+    // unlike setZoomToHeight, which needs the native aspect ratio.
+    this.setZoom(availableWidthPx / BASE_WIDTH_PX)
+  }
+
+  /** Sets zoom so the rendered page's height exactly fills `availableHeightPx`, preserving the page's native aspect ratio. */
+  setZoomToHeight(availableHeightPx: number): void {
+    const native = this.nativeSize()
+    if (!native || native.height <= 0) return
+    const renderedHeightAtZoom1 = BASE_WIDTH_PX * (native.height / native.width)
+    this.setZoom(availableHeightPx / renderedHeightAtZoom1)
+  }
+
   /**
    * Attach a newly-opened score. Clears any previously cached pages and
    * fetches `measurePositions()` once (cached here for the lifetime of this

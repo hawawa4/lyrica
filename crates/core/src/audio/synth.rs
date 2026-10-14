@@ -125,10 +125,52 @@ impl Player {
         self.synthesizer.reset();
     }
 
+    /// Resumes playback after `pause()` from exactly where it left off — no
+    /// position/event-index reset, no `synthesizer.reset()` (which would cut
+    /// any ringing notes abruptly rather than just the explicitly stopped
+    /// ones `pause()` already silenced). The loaded midi/loop region/clicks
+    /// are untouched by `pause()`, so there's nothing else to restore here.
+    pub fn resume(&mut self) {
+        if self.midi.is_some() {
+            self.playing = true;
+        }
+    }
+
+    /// Stops advancing the clock without discarding playback state (unlike
+    /// `stop()`, which clears `self.midi` entirely) — `render()`'s
+    /// dispatch/position-advance/click-mixing are all gated on `self.playing`,
+    /// so this alone is enough to freeze playback in place. Silences
+    /// currently-sounding notes so pausing doesn't leave them ringing.
+    pub fn pause(&mut self) {
+        self.playing = false;
+        self.synthesizer.note_off_all(false);
+    }
+
     pub fn stop(&mut self) {
         self.playing = false;
         self.midi = None;
         self.synthesizer.reset();
+    }
+
+    /// Jumps the playback clock to an arbitrary point, in milliseconds
+    /// within the MIDI file's own (1.0x) timeline — clamped to
+    /// `[0, duration_ms]`, a no-op if no midi is loaded. Safe to call
+    /// whether currently playing, paused, or stopped-with-midi-still-loaded
+    /// (e.g. moving the always-visible playback-head marker before the user
+    /// has pressed play at all). Silences any currently-sounding notes and
+    /// resyncs `next_event_index`/`next_click_index` to the new position —
+    /// the same snap-forward-or-backward logic `handle_loop_wrap` uses when
+    /// wrapping a loop, factored out into `resync_indices_to` since both
+    /// need exactly the same "find where this timestamp falls in the
+    /// time-sorted event/click lists" step.
+    pub fn seek(&mut self, target_ms: f64) {
+        let Some(midi) = self.midi.clone() else {
+            return;
+        };
+        let target_ms = target_ms.clamp(0.0, midi.duration_ms);
+        self.position_ms = target_ms;
+        self.synthesizer.note_off_all(false);
+        self.resync_indices_to(target_ms);
     }
 
     /// Sets (or clears, with `None`) the arbitrary A/B loop region, in
@@ -228,12 +270,22 @@ impl Player {
             if self.position_ms >= loop_end_ms {
                 self.position_ms = loop_start_ms;
                 self.synthesizer.note_off_all(false);
-                if let Some(midi) = &self.midi {
-                    self.next_event_index = midi.events.partition_point(|e| e.time_ms < loop_start_ms);
-                }
-                self.next_click_index = self.clicks.partition_point(|c| c.time_ms < loop_start_ms);
+                self.resync_indices_to(loop_start_ms);
             }
         }
+    }
+
+    /// Finds where `target_ms` falls in the time-sorted event/click lists
+    /// and points `next_event_index`/`next_click_index` there — the shared
+    /// step behind both jumping to an arbitrary position (`seek`) and
+    /// wrapping back to a loop's start (`handle_loop_wrap`). Does not touch
+    /// `position_ms` or silence notes itself; callers already did both
+    /// before calling this.
+    fn resync_indices_to(&mut self, target_ms: f64) {
+        if let Some(midi) = &self.midi {
+            self.next_event_index = midi.events.partition_point(|e| e.time_ms < target_ms);
+        }
+        self.next_click_index = self.clicks.partition_point(|c| c.time_ms < target_ms);
     }
 
     fn rebuild_clicks(&mut self) {

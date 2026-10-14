@@ -52,6 +52,27 @@ export async function stopMidi(): Promise<void> {
   await invoke('stop')
 }
 
+/** Freezes playback in place (unlike stopMidi, the loaded midi/position/loop region are untouched) — pair with resumeMidi to continue from exactly where it paused. */
+export async function pauseMidi(): Promise<void> {
+  if (!isTauri()) throw new Error('pauseMidi: desktop-only for now')
+  const { invoke } = await import('@tauri-apps/api/core')
+  await invoke('pause')
+}
+
+/** Resumes after pauseMidi from exactly where it left off. Errors if nothing was ever loaded/played. */
+export async function resumeMidi(): Promise<void> {
+  if (!isTauri()) throw new Error('resumeMidi: desktop-only for now')
+  const { invoke } = await import('@tauri-apps/api/core')
+  await invoke('resume')
+}
+
+/** Jumps the playback clock to `targetMs` (within the MIDI file's own 1.0x timeline) — safe to call whether currently playing, paused, or stopped-with-something-loaded. */
+export async function seekMidi(targetMs: number): Promise<void> {
+  if (!isTauri()) throw new Error('seekMidi: desktop-only for now')
+  const { invoke } = await import('@tauri-apps/api/core')
+  await invoke('seek', { targetMs })
+}
+
 export async function setPlaybackSpeed(speed: number): Promise<void> {
   if (!isTauri()) throw new Error('setPlaybackSpeed: desktop-only for now')
   const { invoke } = await import('@tauri-apps/api/core')

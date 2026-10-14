@@ -25,6 +25,7 @@ export class SelectionOverlay {
   private elements: PositionElement[] = []
   private dragStart: { x: number; y: number } | null = null
   private onSelectionChange: ((range: MeasureRange | null) => void) | null = null
+  private onSeekCallback: ((elid: number) => void) | null = null
 
   constructor(private readonly stage: HTMLElement) {
     // `stage` must be position:relative (or similar) so these absolutely
@@ -47,6 +48,7 @@ export class SelectionOverlay {
     this.stage.addEventListener('mousedown', this.handleMouseDown)
     window.addEventListener('mousemove', this.handleMouseMove)
     window.addEventListener('mouseup', this.handleMouseUp)
+    this.stage.addEventListener('dblclick', this.handleDoubleClick)
   }
 
   /** Call once per page shown: all measure elements plus which page is visible. */
@@ -59,10 +61,16 @@ export class SelectionOverlay {
     this.onSelectionChange = callback
   }
 
+  /** Called with the elid of the measure double-clicked, for seeking the playback head there. */
+  onSeek(callback: (elid: number) => void): void {
+    this.onSeekCallback = callback
+  }
+
   destroy(): void {
     this.stage.removeEventListener('mousedown', this.handleMouseDown)
     window.removeEventListener('mousemove', this.handleMouseMove)
     window.removeEventListener('mouseup', this.handleMouseUp)
+    this.stage.removeEventListener('dblclick', this.handleDoubleClick)
     this.boxesLayer.remove()
     this.dragRectEl.remove()
   }
@@ -154,5 +162,22 @@ export class SelectionOverlay {
       startElid: Math.min(...selectedIds),
       endElid: Math.max(...selectedIds),
     })
+  }
+
+  private handleDoubleClick = (e: MouseEvent): void => {
+    const stageRect = this.stage.getBoundingClientRect()
+    const x = e.clientX - stageRect.left
+    const y = e.clientY - stageRect.top
+    for (const box of Array.from(this.boxesLayer.children) as HTMLElement[]) {
+      const boxRect = box.getBoundingClientRect()
+      const bl = boxRect.left - stageRect.left
+      const bt = boxRect.top - stageRect.top
+      const br = bl + boxRect.width
+      const bb = bt + boxRect.height
+      if (x >= bl && x <= br && y >= bt && y <= bb) {
+        this.onSeekCallback?.(Number(box.dataset.elid))
+        return
+      }
+    }
   }
 }

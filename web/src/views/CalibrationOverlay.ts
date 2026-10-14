@@ -52,6 +52,7 @@ export class CalibrationOverlay {
   private playingIndex: number | null = null
   private onChangeCallback: ((points: CalibrationPoint[]) => void) | null = null
   private onSelectCallback: ((range: PointRange | null) => void) | null = null
+  private onSeekCallback: ((pointIndex: number) => void) | null = null
 
   constructor(private readonly stage: HTMLElement) {
     this.dotsLayer = document.createElement('div')
@@ -95,6 +96,7 @@ export class CalibrationOverlay {
     this.stage.addEventListener('mousedown', this.handleMouseDown)
     window.addEventListener('mousemove', this.handleMouseMove)
     window.addEventListener('mouseup', this.handleMouseUp)
+    this.stage.addEventListener('dblclick', this.handleDoubleClick)
   }
 
   onChange(callback: (points: CalibrationPoint[]) => void): void {
@@ -218,14 +220,46 @@ export class CalibrationOverlay {
     this.onChangeCallback?.(this.points)
   }
 
+  /** Called with the index (time-sorted, matches getPoints()) of the calibration point nearest a double-click, for seeking the playback head there. */
+  onSeek(callback: (pointIndex: number) => void): void {
+    this.onSeekCallback = callback
+  }
+
   destroy(): void {
     this.stage.removeEventListener('click', this.handleStageClick)
     this.stage.removeEventListener('mousedown', this.handleMouseDown)
     window.removeEventListener('mousemove', this.handleMouseMove)
     window.removeEventListener('mouseup', this.handleMouseUp)
+    this.stage.removeEventListener('dblclick', this.handleDoubleClick)
     this.dotsLayer.remove()
     this.dragRectEl.remove()
     this.formEl.remove()
+  }
+
+  /** Nearest calibration point on the current page, by on-screen pixel distance from a double-click — ignored in marking mode, where a click already means "place a point." */
+  private handleDoubleClick = (e: MouseEvent): void => {
+    if (this.markingMode) return
+    const canvas = this.stage.querySelector('canvas')
+    if (!canvas) return
+    const rect = this.stage.getBoundingClientRect()
+    const clickX = e.clientX - rect.left
+    const clickY = e.clientY - rect.top
+    const scaleX = canvas.width / rect.width
+    const scaleY = canvas.height / rect.height
+
+    let nearestIndex = -1
+    let nearestDistSq = Infinity
+    this.points.forEach((p, index) => {
+      if (p.page !== this.currentPage) return
+      const dx = clickX - p.x / scaleX
+      const dy = clickY - p.y / scaleY
+      const distSq = dx * dx + dy * dy
+      if (distSq < nearestDistSq) {
+        nearestDistSq = distSq
+        nearestIndex = index
+      }
+    })
+    if (nearestIndex !== -1) this.onSeekCallback?.(nearestIndex)
   }
 
   private handleStageClick = (e: MouseEvent): void => {
