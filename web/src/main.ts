@@ -468,6 +468,17 @@ async function activateTab(tab: TabState): Promise<void> {
     tab.pageContainer.appendChild(headMarker.el)
     tab.transportState = 'stopped'
 
+    // PageView's onPageChange callback (which normally drives this) is
+    // gated on `activeHash === tabState.fileHash` — but openMsczBytes's
+    // initial `showPage(0)` runs *before* activateTab ever sets activeHash,
+    // so that first call is silently skipped and SelectionOverlay never
+    // gets its measure boxes for the page shown on open. Syncing it
+    // directly here (now that activeHash is correctly set, line 1 of this
+    // function) guarantees it's populated every time the tab becomes
+    // active, independent of that callback's timing.
+    const positions = tab.pageView.getPositions()
+    if (positions) tab.selectionOverlay.setPage(positions.elements, tab.pageView.page)
+
     navEl.style.display = tab.pageView.pages > 1 ? 'flex' : 'none'
     pageIndicatorEl.textContent = `Page ${tab.pageView.page + 1} / ${tab.pageView.pages}`
     prevBtn.disabled = tab.pageView.page <= 0
@@ -1230,14 +1241,6 @@ window.addEventListener('keydown', (e) => {
   if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'BUTTON' || target.tagName === 'SELECT')) return
   e.preventDefault()
   togglePlayPause()
-})
-
-/** Escape stops playback outright, like the Stop button — a distinct action from Space's play/pause toggle. */
-window.addEventListener('keydown', (e) => {
-  if (e.key !== 'Escape') return
-  const target = e.target as HTMLElement | null
-  if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) return
-  void stopActive()
 })
 
 if (isTauri()) {

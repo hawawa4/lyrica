@@ -43,6 +43,11 @@ export class PageView {
     return this.zoom
   }
 
+  /** Current score's measure positions, for callers that need to (re)sync overlay state (e.g. SelectionOverlay) independent of the onPageChange callback's timing — see activateTab's own call for why that callback alone isn't reliable right after a fresh open. */
+  getPositions(): Positions | null {
+    return this.positions
+  }
+
   setZoom(zoom: number): void {
     this.zoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, zoom))
     const svgEl = this.svgLayer.querySelector('svg')
