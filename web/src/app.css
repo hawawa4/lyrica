@@ -101,7 +101,6 @@
   overflow: auto;
   position: relative;
   background: var(--bg-page-area);
-  background-image: var(--page-texture);
   display: flex;
   justify-content: center;
   padding: 24px;
@@ -111,6 +110,7 @@
   position: relative;
   height: fit-content;
   background: var(--bg-page);
+  background-image: var(--page-texture);
   box-shadow: var(--shadow);
   border-radius: 2px;
   flex-shrink: 0;
@@ -314,6 +314,34 @@
   background: var(--accent);
   border-color: var(--accent);
   color: var(--accent-text);
+}
+
+.context-menu {
+  position: fixed;
+  z-index: 1000;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  box-shadow: var(--shadow);
+  padding: 4px;
+  min-width: 160px;
+}
+
+.context-menu-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 6px 10px;
+  border: none;
+  background: transparent;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.context-menu-item:hover {
+  background: var(--bg-hover);
 }
 
 @media (max-width: 760px) {

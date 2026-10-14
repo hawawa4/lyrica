@@ -143,8 +143,9 @@
    * Layered fibrous/mottled paper texture: two radial-gradient grain layers
    * at different scales plus a faint linear fiber streak, all low-contrast
    * tints of the paper base color — not a flat yellow. Applied as a
-   * background on `.page-area` (the scrollable canvas around the page),
-   * tiled via background-repeat.
+   * background on `.page-stage` (the page box itself, underneath the
+   * notation/PDF canvas), so it reads as the page's own surface rather than
+   * just the margin around it.
    */
   --page-texture:
     radial-gradient(circle at 20% 30%, rgba(120, 100, 60, 0.05) 0%, transparent 45%),
@@ -159,6 +160,16 @@
       transparent 3px
     );
   --score-filter: none;
+  /*
+   * PDF pages are an opaque raster (pdf.js canvas), not vector notation, so
+   * `--page-texture` behind it can't show through the way it does for a
+   * .mscz SVG with no baked-in background. Instead main.ts inserts a real
+   * `.raster-overlay` sibling element right after the <canvas>, blended onto
+   * it with `mix-blend-mode: multiply` (see the `.raster-overlay` rule
+   * below) — a sepia/tan tint plus the same grain texture, so a scanned
+   * white-paper PDF page reads as aged paper instead of staying stark white.
+   */
+  --score-overlay-color: rgba(190, 160, 110, 0.22);
   color-scheme: light;
 }
 
@@ -168,6 +179,29 @@
 
 .score-svg-layer svg {
   filter: var(--score-filter);
+}
+
+.pdf-canvas {
+  filter: var(--score-filter);
+}
+
+/*
+ * Raster (PDF) page tint/texture overlay — see --score-overlay-color's
+ * comment in the paper theme block. A real element (inserted by main.ts
+ * right after the canvas, before CalibrationOverlay's dots/drag-rect/form
+ * layers), not a ::after pseudo-element — ::after always paints last among
+ * an element's children regardless of DOM order, which would sit this
+ * multiply-blend tint visually on top of the calibration dots and mute
+ * them. Transparent/no-op for light + dark (--score-overlay-color is unset
+ * there, falling back to `transparent` here).
+ */
+.raster-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: var(--score-overlay-color, transparent);
+  background-image: var(--page-texture);
+  mix-blend-mode: multiply;
 }
 
 html,

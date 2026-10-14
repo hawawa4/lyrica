@@ -40,6 +40,7 @@ export async function renderPdfPage(doc: PdfDocument, pageNumber: number, cssWid
   const viewport = page.getViewport({ scale })
 
   const canvas = document.createElement('canvas')
+  canvas.className = 'pdf-canvas'
   canvas.width = viewport.width
   canvas.height = viewport.height
   canvas.style.width = `${cssWidth}px`

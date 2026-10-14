@@ -849,6 +849,13 @@ async function openPdfBytes(bytes: Uint8Array, filename: string, path: string | 
   canvasContainer.style.display = 'inline-block'
   canvasContainer.className = 'page-stage'
   pageContainer.appendChild(canvasContainer)
+  // Theme tint/texture for the PDF canvas (see theme.css's .raster-overlay
+  // comment) — a real element kept immediately after the <canvas> so it
+  // paints above the page but below CalibrationOverlay's dots/drag-rect/form
+  // layers, appended next.
+  const rasterOverlay = document.createElement('div')
+  rasterOverlay.className = 'raster-overlay'
+  canvasContainer.appendChild(rasterOverlay)
   const calibrationOverlay = new CalibrationOverlay(canvasContainer)
 
   const tabState: PdfTabState = {

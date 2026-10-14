@@ -10,6 +10,8 @@
     {
       "identifier": "fs:scope",
       "allow": [{ "path": "**" }]
-    }
+    },
+    "opener:default",
+    "opener:allow-reveal-item-in-dir"
   ]
 }
