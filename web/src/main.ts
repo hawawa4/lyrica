@@ -1243,6 +1243,14 @@ window.addEventListener('keydown', (e) => {
   togglePlayPause()
 })
 
+/** Escape stops playback outright, like the Stop button — a distinct action from Space's play/pause toggle. */
+window.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') return
+  const target = e.target as HTMLElement | null
+  if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) return
+  void stopActive()
+})
+
 if (isTauri()) {
   // Desktop: use the native file dialog instead of the plain HTML file
   // input. `<input type="file">` never exposes the real filesystem path
