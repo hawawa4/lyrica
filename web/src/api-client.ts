@@ -1,5 +1,15 @@
 import type { Positions } from './score-engine'
-import type { CalibrationPoint, ImportTimelineResponse, Marker, Piece, RecentFile, StaffSystem } from './types'
+import type {
+  CalibrationPoint,
+  ImportTimelineResponse,
+  LibraryEntry,
+  LibrarySettings,
+  Marker,
+  PinnedFile,
+  Piece,
+  RecentFile,
+  StaffSystem,
+} from './types'
 
 /** True when running inside the Tauri desktop webview, false in a plain browser tab. */
 export function isTauri(): boolean {
@@ -180,6 +190,54 @@ export async function recordRecentFile(path: string, fileHash: string, title: st
   if (!isTauri()) throw new Error('recordRecentFile: desktop-only for now')
   const { invoke } = await import('@tauri-apps/api/core')
   return invoke<RecentFile[]>('record_recent_file', { path, fileHash, title })
+}
+
+/**
+ * Library view: a user-chosen root folder to browse for scores, plus a
+ * pinned-files list (always shown, independent of recency). Desktop-only,
+ * same transport gap as the rest of this file.
+ */
+export async function getLibrarySettings(): Promise<LibrarySettings> {
+  if (!isTauri()) throw new Error('getLibrarySettings: desktop-only for now')
+  const { invoke } = await import('@tauri-apps/api/core')
+  return invoke<LibrarySettings>('get_library_settings')
+}
+
+export async function setRootFolder(rootFolder: string | null): Promise<LibrarySettings> {
+  if (!isTauri()) throw new Error('setRootFolder: desktop-only for now')
+  const { invoke } = await import('@tauri-apps/api/core')
+  return invoke<LibrarySettings>('set_root_folder', { rootFolder })
+}
+
+/**
+ * Recursive on-demand scan of `root` for `.mscz`/`.mscx`/`.pdf` files — no
+ * indexing yet, so callers should cache the result themselves (keyed by
+ * `root`) rather than calling this on every render; see `LibraryView`'s own
+ * scan-result cache. Never fails outright — an unreadable subdirectory is
+ * skipped on the Rust side rather than aborting the whole scan.
+ */
+export async function scanLibrary(root: string): Promise<LibraryEntry[]> {
+  if (!isTauri()) throw new Error('scanLibrary: desktop-only for now')
+  const { invoke } = await import('@tauri-apps/api/core')
+  return invoke<LibraryEntry[]>('scan_library', { root })
+}
+
+export async function listPinnedFiles(): Promise<PinnedFile[]> {
+  if (!isTauri()) throw new Error('listPinnedFiles: desktop-only for now')
+  const { invoke } = await import('@tauri-apps/api/core')
+  return invoke<PinnedFile[]>('list_pinned_files')
+}
+
+export async function pinFile(path: string, fileHash: string, title: string): Promise<PinnedFile[]> {
+  if (!isTauri()) throw new Error('pinFile: desktop-only for now')
+  const { invoke } = await import('@tauri-apps/api/core')
+  return invoke<PinnedFile[]>('pin_file', { path, fileHash, title })
+}
+
+export async function unpinFile(fileHash: string): Promise<PinnedFile[]> {
+  if (!isTauri()) throw new Error('unpinFile: desktop-only for now')
+  const { invoke } = await import('@tauri-apps/api/core')
+  return invoke<PinnedFile[]>('unpin_file', { fileHash })
 }
 
 /**

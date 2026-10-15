@@ -1,5 +1,6 @@
 use mp_core::api::{self, ImportTimelineResponse, OpenFileRequest, OpenFileResponse, StaffSystem};
 use mp_core::audio::midi_events::TempoMapEntry;
+use mp_core::library::{LibraryEntry, LibrarySettings, PinnedFile};
 use mp_core::markers::Marker;
 use mp_core::pdf_calibration::CalibrationPoint;
 use mp_core::pieces::Piece;
@@ -141,6 +142,46 @@ pub fn record_recent_file(
 ) -> Result<Vec<RecentFile>, String> {
     let base_dir = markers_base_dir(&app)?;
     api::record_recent_file(&base_dir, path, file_hash, title).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn get_library_settings(app: AppHandle) -> Result<LibrarySettings, String> {
+    let base_dir = markers_base_dir(&app)?;
+    api::get_library_settings(&base_dir).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn set_root_folder(app: AppHandle, root_folder: Option<String>) -> Result<LibrarySettings, String> {
+    let base_dir = markers_base_dir(&app)?;
+    api::set_root_folder(&base_dir, root_folder).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn scan_library(root: String) -> Vec<LibraryEntry> {
+    api::scan_library(std::path::Path::new(&root))
+}
+
+#[tauri::command]
+pub fn list_pinned_files(app: AppHandle) -> Result<Vec<PinnedFile>, String> {
+    let base_dir = markers_base_dir(&app)?;
+    api::list_pinned_files(&base_dir).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn pin_file(
+    app: AppHandle,
+    path: String,
+    file_hash: String,
+    title: String,
+) -> Result<Vec<PinnedFile>, String> {
+    let base_dir = markers_base_dir(&app)?;
+    api::pin_file(&base_dir, path, file_hash, title).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn unpin_file(app: AppHandle, file_hash: String) -> Result<Vec<PinnedFile>, String> {
+    let base_dir = markers_base_dir(&app)?;
+    api::unpin_file(&base_dir, &file_hash).map_err(|e| e.to_string())
 }
 
 /// PDF mode (Phase 9): stable content-hash key for a PDF's bytes, same blake3

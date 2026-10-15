@@ -45,6 +45,22 @@ export interface RecentFile {
   title: string
 }
 
+export interface LibrarySettings {
+  root_folder: string | null
+}
+
+export interface PinnedFile {
+  path: string
+  file_hash: string
+  title: string
+}
+
+export interface LibraryEntry {
+  path: string
+  title: string
+  is_dir: boolean
+}
+
 export interface CalibrationPoint {
   page: number
   x: number

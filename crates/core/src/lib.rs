@@ -1,5 +1,6 @@
 pub mod api;
 pub mod audio;
+pub mod library;
 pub mod markers;
 pub mod mscz;
 pub mod pdf_calibration;

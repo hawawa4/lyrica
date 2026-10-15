@@ -86,7 +86,12 @@ pub fn save_item<T: Serialize>(
     save_json(&path, value)
 }
 
-fn load_json<T: DeserializeOwned + Default>(path: &Path) -> Result<T, SidecarError> {
+/// Reads and deserializes `path`, returning `T`'s `Default` if it doesn't
+/// exist yet. `pub(crate)` so other flat-JSON-backed modules in this crate
+/// (`library`, `recent_files`) can reuse this instead of re-implementing the
+/// same "load or default" logic — `load_meta`/`load_item` above are just this
+/// plus a fixed path shape.
+pub(crate) fn load_json<T: DeserializeOwned + Default>(path: &Path) -> Result<T, SidecarError> {
     if !path.exists() {
         return Ok(T::default());
     }
@@ -94,10 +99,18 @@ fn load_json<T: DeserializeOwned + Default>(path: &Path) -> Result<T, SidecarErr
     Ok(serde_json::from_str(&contents)?)
 }
 
-fn save_json<T: Serialize>(path: &Path, value: &T) -> Result<(), SidecarError> {
+pub(crate) fn save_json<T: Serialize>(path: &Path, value: &T) -> Result<(), SidecarError> {
     let contents = serde_json::to_string_pretty(value)?;
     std::fs::write(path, contents)?;
     Ok(())
+}
+
+/// `{base_dir}/{filename}` for a flat (non-hash-keyed) JSON file, creating
+/// `base_dir` if needed — the shape `library.rs`/`recent_files.rs` both want
+/// for app-wide (not per-score) settings/lists.
+pub(crate) fn flat_json_path(base_dir: &Path, filename: &str) -> io::Result<PathBuf> {
+    std::fs::create_dir_all(base_dir)?;
+    Ok(base_dir.join(filename))
 }
 
 #[cfg(test)]

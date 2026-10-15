@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::audio::midi_events::TempoMapEntry;
+use crate::library::{self, LibraryEntry, LibraryError, LibrarySettings, PinnedFile};
 use crate::markers::{self, Marker};
 pub use cv_barline::{CvBarlineError, StaffSystem};
 use crate::mscz::{self, MsczError};
@@ -153,6 +154,42 @@ pub fn record_recent_file(
     title: String,
 ) -> Result<Vec<RecentFile>, RecentFilesError> {
     recent_files::record_opened(base_dir, path, file_hash, title)
+}
+
+/// Library view: a user-chosen root folder to browse for scores (plain
+/// on-demand filesystem scan, no indexing yet), plus a pinned-files list
+/// (always shown, independent of recency — like pinned browser tabs). Both
+/// persisted as flat JSON under `base_dir`, same scheme as `recent_files`.
+pub fn get_library_settings(base_dir: &Path) -> Result<LibrarySettings, LibraryError> {
+    library::get_library_settings(base_dir)
+}
+
+pub fn set_root_folder(
+    base_dir: &Path,
+    root_folder: Option<String>,
+) -> Result<LibrarySettings, LibraryError> {
+    library::set_root_folder(base_dir, root_folder)
+}
+
+pub fn scan_library(root: &Path) -> Vec<LibraryEntry> {
+    library::scan_library(root)
+}
+
+pub fn list_pinned_files(base_dir: &Path) -> Result<Vec<PinnedFile>, LibraryError> {
+    library::list_pinned_files(base_dir)
+}
+
+pub fn pin_file(
+    base_dir: &Path,
+    path: String,
+    file_hash: String,
+    title: String,
+) -> Result<Vec<PinnedFile>, LibraryError> {
+    library::pin_file(base_dir, path, file_hash, title)
+}
+
+pub fn unpin_file(base_dir: &Path, file_hash: &str) -> Result<Vec<PinnedFile>, LibraryError> {
+    library::unpin_file(base_dir, file_hash)
 }
 
 /// PDF mode (Phase 9) calibration CRUD, keyed by the PDF's own content hash
