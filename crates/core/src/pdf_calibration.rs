@@ -27,9 +27,12 @@ const FILENAME: &str = "calibration.json";
 pub struct CalibrationPoint {
     /// 0-based page index.
     pub page: u32,
-    /// Position on the page, in PDF points (same unit pdf.js's viewport uses
-    /// at scale 1) — not pixels at whatever zoom the UI happens to render
-    /// at, so calibration stays valid across window resizes.
+    /// Position on the page as a fraction (0-1) of the page's own
+    /// width/height — not pixels at whatever zoom the UI happens to render
+    /// at, so calibration stays valid across zoom changes and window
+    /// resizes. See `web/src/views/CalibrationOverlay.ts`'s module docs for
+    /// the full reasoning (storing raw canvas pixels here used to silently
+    /// break point/marker placement after any zoom change).
     pub x: f64,
     pub y: f64,
     /// Milliseconds since calibration started (tapping along with a

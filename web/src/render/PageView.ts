@@ -150,4 +150,9 @@ export class PageView {
   get pages(): number {
     return this.pageCount
   }
+
+  /** `container` if it's currently showing `page`, else `null` — lets a caller mount a single shared overlay element (cursor box, head marker) into whichever concrete page-stage actually holds a given page, rather than assuming there's only ever one. See `BookPageView.stageFor` for why this needs to exist at all. */
+  stageFor(page: number): HTMLElement | null {
+    return this.currentPage === page ? this.container : null
+  }
 }

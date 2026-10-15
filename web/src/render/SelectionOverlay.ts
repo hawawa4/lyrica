@@ -57,6 +57,11 @@ export class SelectionOverlay {
     this.renderBoxes()
   }
 
+  /** Alias for `setPage` — satisfies `PracticeView`'s shared `SelectionSource` interface, which also covers `BookPageView`'s own differently-behaved `resync` (see that file's docs). */
+  resync(allElements: PositionElement[], page: number): void {
+    this.setPage(allElements, page)
+  }
+
   onSelect(callback: (range: MeasureRange | null) => void): void {
     this.onSelectionChange = callback
   }

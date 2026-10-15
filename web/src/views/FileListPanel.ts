@@ -1,5 +1,6 @@
 import { isTauri } from '../api-client'
 import type { KnowledgeLevel } from '../types'
+import { CollapsibleSection } from './CollapsibleSection'
 import { RatingStars } from './RatingStars'
 
 /**
@@ -25,7 +26,7 @@ export interface FileListEntry {
  * duplicating the DOM/list logic twice over.
  */
 export class FileListPanel<T extends FileListEntry> {
-  private readonly root: HTMLDivElement
+  private readonly section: CollapsibleSection
   private readonly listEl: HTMLUListElement
   private readonly contextMenuEl: HTMLDivElement
   private onOpenCallback: ((entry: T) => void) | null = null
@@ -35,15 +36,11 @@ export class FileListPanel<T extends FileListEntry> {
   private ratingFn: (entry: T) => KnowledgeLevel | null = () => null
 
   constructor(container: HTMLElement, title: string) {
-    this.root = document.createElement('div')
-    this.root.className = 'sidebar-section'
-    this.root.style.display = 'none'
-    this.root.innerHTML = `
-      <span class="sidebar-section-title">${title}</span>
-      <ul class="panel-list"></ul>
-    `
-    container.appendChild(this.root)
-    this.listEl = this.root.querySelector('ul')!
+    this.section = new CollapsibleSection(container, title)
+    this.section.setVisible(false)
+    this.listEl = document.createElement('ul')
+    this.listEl.className = 'panel-list'
+    this.section.bodyEl.appendChild(this.listEl)
 
     this.contextMenuEl = document.createElement('div')
     this.contextMenuEl.className = 'context-menu'
@@ -79,7 +76,7 @@ export class FileListPanel<T extends FileListEntry> {
 
   render(entries: T[]): void {
     this.listEl.innerHTML = ''
-    this.root.style.display = entries.length > 0 ? 'block' : 'none'
+    this.section.setVisible(entries.length > 0)
     for (const entry of entries) {
       const li = document.createElement('li')
       li.className = 'panel-list-item'

@@ -1,7 +1,8 @@
-import { openScore, upgradeScore, getMeasurePositions, getMidi, type OpenScoreResult, type WebMscore } from '../score-engine'
+import { openScore, upgradeScore, getMeasurePositions, getMidi, type OpenScoreResult, type WebMscore, type Positions } from '../score-engine'
 import { loadPdf, renderPdfPage, canvasToPngBytes, type PdfDocument } from '../pdf-engine'
 import { PageView, ZOOM_STEP, MIN_ZOOM, MAX_ZOOM } from '../render/PageView'
 import { SelectionOverlay, type MeasureRange } from '../render/SelectionOverlay'
+import { BookPageView } from '../render/BookPageView'
 import { CalibrationOverlay, type PointRange } from './CalibrationOverlay'
 import { Cursor } from '../render/Cursor'
 import { PlaybackHeadMarker } from '../render/PlaybackHeadMarker'
@@ -53,13 +54,49 @@ import { initTheme, applyTheme, THEME_LABELS, type Theme } from '../theme'
 /** stopped: head at rest, no audio engine activity. playing: Cursor is polling. paused: frozen mid-playback, resumable from exactly this position. */
 type TransportState = 'stopped' | 'playing' | 'paused'
 
+/** "Page display" mode: a single rendered page (today's default), or a two-page "book" spread (`BookPageView`). Both expose this exact shape — see `BookPageView`'s module docs for why that's the chosen integration point rather than threading a mode flag through every call site. */
+interface PageDisplay {
+  setScore(score: WebMscore, pageCount: number): Promise<void>
+  showPage(index: number): Promise<void>
+  next(): Promise<void>
+  prev(): Promise<void>
+  readonly page: number
+  readonly pages: number
+  getZoom(): number
+  setZoom(zoom: number): void
+  setZoomToWidth(availableWidthPx: number): void
+  setZoomToHeight(availableHeightPx: number): void
+  getPositions(): Positions | null
+  /** The concrete page-stage element currently showing `page`, or `null` — needed because book mode has two independent stages, only one of which holds any given page at a time. See `PageView.stageFor`'s docs. */
+  stageFor(page: number): HTMLElement | null
+}
+
+/** Shared shape of `SelectionOverlay` and `BookPageView`'s own onSelect/onSeek facade (see that file's docs). */
+interface SelectionSource {
+  onSelect(callback: (range: MeasureRange | null) => void): void
+  onSeek(callback: (elid: number) => void): void
+  destroy(): void
+  /**
+   * Re-pushes the given page's measure-box positions into whichever
+   * overlay(s) actually need them. For a plain `SelectionOverlay` this is
+   * exactly `setPage`; `BookPageView` ignores the arguments and instead
+   * re-derives each side's own correct page from its own `left`/`right`
+   * state, since its two sides are never on the same page as each other.
+   * Exists because `activateTab` needs to force this sync on every
+   * (re)activation (see its own comment for why `PageView`'s onPageChange
+   * callback alone isn't reliable there) without needing to branch on
+   * which display mode is active.
+   */
+  resync(allElements: Positions['elements'], page: number): void
+}
+
 interface MsczTabState {
   kind: 'mscz'
   fileHash: string
   title: string
   score: WebMscore
-  pageView: PageView
-  selectionOverlay: SelectionOverlay
+  pageView: PageDisplay
+  selectionOverlay: SelectionSource
   pageContainer: HTMLDivElement
   timeline: Timeline | null
   selection: MeasureRange | null
@@ -69,6 +106,8 @@ interface MsczTabState {
   transportState: TransportState
   /** Where the playback-head marker currently sits, in the timeline's 1.0x-speed milliseconds — independent of whether audio is actually running. */
   headMs: number
+  /** Whether this tab is currently showing a single page or a two-page "book" spread — toggled by the book-mode button, persisted per tab (not globally) since different open scores may suit different modes. */
+  bookMode: boolean
 }
 
 interface PdfTabState {
@@ -139,6 +178,7 @@ export class PracticeView {
   private readonly fitWidthBtn: HTMLButtonElement
   private readonly fitHeightBtn: HTMLButtonElement
   private readonly zoomResetBtn: HTMLButtonElement
+  private readonly bookModeBtn: HTMLButtonElement
   private readonly themeSelectEl: HTMLSelectElement
   private readonly dropOverlay: HTMLDivElement
   private readonly openFileBtn: HTMLButtonElement
@@ -189,6 +229,7 @@ export class PracticeView {
           <button id="fit-width-btn" title="Fit to width">Fit width</button>
           <button id="fit-height-btn" title="Fit to height">Fit height</button>
           <button id="zoom-reset-btn" title="Reset zoom to 100%">100%</button>
+          <button id="book-mode-btn" title="Book mode: show two pages side by side">&#128214; Book</button>
         </div>
         <div class="toolbar-spacer"></div>
         <div class="toolbar-group">
@@ -265,6 +306,7 @@ export class PracticeView {
     this.fitWidthBtn = this.root.querySelector('#fit-width-btn')!
     this.fitHeightBtn = this.root.querySelector('#fit-height-btn')!
     this.zoomResetBtn = this.root.querySelector('#zoom-reset-btn')!
+    this.bookModeBtn = this.root.querySelector('#book-mode-btn')!
     this.themeSelectEl = this.root.querySelector('#theme-select')!
     this.dropOverlay = this.root.querySelector('#drop-overlay')!
     this.openFileBtn = this.root.querySelector('#open-file-btn')!
@@ -291,18 +333,17 @@ export class PracticeView {
     this.msczCursor = new Cursor<TimelineEvent>((event) => {
       const active = this.activeTab()
       if (!active || active.kind !== 'mscz') return
-      if (event.page !== active.pageView.page) {
-        active.pageView.showPage(event.page)
+      if (!active.pageView.stageFor(event.page)) {
+        void active.pageView.showPage(event.page)
       }
+      this.mountOverlaysOnPage(active, event.page)
+      const { width, height } = this.pageSize(active, event.page)
       this.cursorBoxEl.style.display = 'block'
-      this.cursorBoxEl.style.left = `${(event.bbox.x / this.currentPageWidth()) * 100}%`
-      this.cursorBoxEl.style.top = `${(event.bbox.y / this.currentPageHeight()) * 100}%`
-      this.cursorBoxEl.style.width = `${(event.bbox.sx / this.currentPageWidth()) * 100}%`
-      this.cursorBoxEl.style.height = `${(event.bbox.sy / this.currentPageHeight()) * 100}%`
-      this.headMarker.setPosition(
-        (event.bbox.x / this.currentPageWidth()) * 100,
-        (event.bbox.y / this.currentPageHeight()) * 100,
-      )
+      this.cursorBoxEl.style.left = `${(event.bbox.x / width) * 100}%`
+      this.cursorBoxEl.style.top = `${(event.bbox.y / height) * 100}%`
+      this.cursorBoxEl.style.width = `${(event.bbox.sx / width) * 100}%`
+      this.cursorBoxEl.style.height = `${(event.bbox.sy / height) * 100}%`
+      this.headMarker.setPosition((event.bbox.x / width) * 100, (event.bbox.y / height) * 100)
     })
 
     /**
@@ -323,8 +364,9 @@ export class PracticeView {
         void this.showPdfPage(active, target.page)
       }
       active.calibrationOverlay.setPlayingIndex(itemIndex)
-      const canvas = active.canvasContainer.querySelector('canvas')
-      if (canvas) this.headMarker.setPosition((target.x / canvas.width) * 100, (target.y / canvas.height) * 100)
+      // target.x/y are already a 0-1 fraction of the page (see
+      // CalibrationOverlay's module docs) — no canvas-size division needed.
+      this.headMarker.setPosition(target.x * 100, target.y * 100)
     })
 
     const markerPanelEl = this.root.querySelector<HTMLDivElement>('#marker-panel')!
@@ -416,6 +458,7 @@ export class PracticeView {
     this.fitWidthBtn.addEventListener('click', () => this.fitActiveTabToWidth())
     this.fitHeightBtn.addEventListener('click', () => this.fitActiveTabToHeight())
     this.zoomResetBtn.addEventListener('click', () => this.resetActiveTabZoom())
+    this.bookModeBtn.addEventListener('click', () => void this.toggleBookModeForActiveTab())
 
     /** Ctrl/Cmd+scroll zooms the active tab's page, like a PDF viewer or image editor — matches the gesture users expect instead of scrolling the page area. */
     this.pageContainerEl.addEventListener(
@@ -448,6 +491,16 @@ export class PracticeView {
       if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) return
       if (!this.isVisible()) return
       void this.stopActive()
+    })
+
+    /** F toggles zen mode (hide toolbar/sidebar/tab-bar, sheet only) — every other shortcut keeps working since they're all window-level listeners gated on isVisible(), never on whether the now-hidden controls are present in the DOM. */
+    window.addEventListener('keydown', (e) => {
+      if (e.key !== 'f' && e.key !== 'F') return
+      const target = e.target as HTMLElement | null
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) return
+      if (!this.isVisible()) return
+      e.preventDefault()
+      this.toggleZenMode()
     })
 
     if (isTauri()) {
@@ -546,7 +599,7 @@ export class PracticeView {
       bytes: Uint8Array,
       filename: string,
     ) => this.openBytes(bytes, filename, null)
-    ;(window as unknown as { __musepracticePageView: () => PageView | null }).__musepracticePageView = () => {
+    ;(window as unknown as { __musepracticePageView: () => PageDisplay | null }).__musepracticePageView = () => {
       const active = this.activeTab()
       return active?.kind === 'mscz' ? active.pageView : null
     }
@@ -573,14 +626,28 @@ export class PracticeView {
     return this.activeHash ? this.tabs.get(this.activeHash) ?? null : null
   }
 
-  private currentPageWidth(): number {
-    const svg = this.activeTab()?.pageContainer.querySelector('svg')
-    return svg ? parseFloat(svg.getAttribute('viewBox')?.split(' ')[2] ?? '0') : 1
+  /**
+   * Mounts `cursorBoxEl`/`headMarker.el` onto whichever concrete page-stage
+   * is currently showing `page` for `tab` — a no-op if that stage isn't
+   * found (shouldn't happen for an mscz tab whose pageView already contains
+   * `page`, but `stageFor` returning `null` is treated as "nothing to mount
+   * onto" rather than throwing). In single-page mode this is always the same
+   * one stage; in book mode it's whichever of the two sides actually holds
+   * `page`, since the two sides are never on the same page as each other.
+   */
+  private mountOverlaysOnPage(tab: MsczTabState, page: number): void {
+    const stage = tab.pageView.stageFor(page)
+    if (!stage) return
+    if (this.cursorBoxEl.parentElement !== stage) stage.appendChild(this.cursorBoxEl)
+    if (this.headMarker.el.parentElement !== stage) stage.appendChild(this.headMarker.el)
   }
 
-  private currentPageHeight(): number {
-    const svg = this.activeTab()?.pageContainer.querySelector('svg')
-    return svg ? parseFloat(svg.getAttribute('viewBox')?.split(' ')[3] ?? '0') : 1
+  /** Native page width/height (from the given page's own rendered SVG viewBox) for `tab` — the basis for the cursor box/head marker's percentage-of-page positioning. Falls back to 1 (avoids a divide-by-zero NaN) if that page isn't currently rendered anywhere. */
+  private pageSize(tab: MsczTabState, page: number): { width: number; height: number } {
+    const svg = tab.pageView.stageFor(page)?.querySelector('svg')
+    const viewBox = svg?.getAttribute('viewBox')?.split(' ')
+    if (!viewBox || viewBox.length < 4) return { width: 1, height: 1 }
+    return { width: parseFloat(viewBox[2]) || 1, height: parseFloat(viewBox[3]) || 1 }
   }
 
   private renderTabBar(): void {
@@ -659,7 +726,7 @@ export class PracticeView {
     if (!active || active.kind !== 'mscz' || !active.timeline) return
     const event = active.timeline.events.find((e) => e.measure_index === measureIndex)
     if (!event) return
-    if (event.page !== active.pageView.page) {
+    if (!active.pageView.stageFor(event.page)) {
       void active.pageView.showPage(event.page)
     }
   }
@@ -679,7 +746,7 @@ export class PracticeView {
     if (!active || active.kind !== 'mscz' || !active.timeline) return
     const event = active.timeline.events.find((e) => e.source_elid === elid)
     if (!event) return
-    if (event.page !== active.pageView.page) {
+    if (!active.pageView.stageFor(event.page)) {
       void active.pageView.showPage(event.page)
     }
   }
@@ -714,12 +781,17 @@ export class PracticeView {
     this.pdfControlsEl.style.display = tab.kind === 'pdf' ? 'flex' : 'none'
     this.transportEl.style.display = 'flex'
     this.zoomGroupEl.style.display = 'flex'
+    // Book mode needs SelectionOverlay's measure-box model, which PDF
+    // mode's CalibrationOverlay doesn't share an interface with — see
+    // BookPageView's module docs. Hidden rather than disabled for PDF tabs,
+    // same treatment the .mscz-only transport controls already get.
+    this.bookModeBtn.style.display = tab.kind === 'mscz' ? 'inline-block' : 'none'
+    if (tab.kind === 'mscz') this.bookModeBtn.classList.toggle('active', tab.bookMode)
     void this.loadRatingForTab(tab)
 
     if (tab.kind === 'mscz') {
-      tab.pageContainer.appendChild(this.cursorBoxEl)
       this.cursorBoxEl.style.display = 'none'
-      tab.pageContainer.appendChild(this.headMarker.el)
+      this.mountOverlaysOnPage(tab, tab.pageView.page)
       tab.transportState = 'stopped'
 
       // PageView's onPageChange callback (which normally drives this) is
@@ -731,7 +803,7 @@ export class PracticeView {
       // function) guarantees it's populated every time the tab becomes
       // active, independent of that callback's timing.
       const positions = tab.pageView.getPositions()
-      if (positions) tab.selectionOverlay.setPage(positions.elements, tab.pageView.page)
+      if (positions) tab.selectionOverlay.resync(positions.elements, tab.pageView.page)
 
       this.navEl.style.display = tab.pageView.pages > 1 ? 'flex' : 'none'
       this.pageIndicatorEl.textContent = `Page ${tab.pageView.page + 1} / ${tab.pageView.pages}`
@@ -987,6 +1059,80 @@ export class PracticeView {
     }
   }
 
+  /**
+   * Builds the `pageView`/`selectionOverlay` pair for an `.mscz` tab, in
+   * either single-page (`PageView`+`SelectionOverlay`) or book/two-page
+   * (`BookPageView`, which owns an equivalent pair internally — see its
+   * module docs) mode. `getTabState` is a lazy accessor rather than the
+   * `MsczTabState` object itself because the callbacks wired up here need to
+   * close over it before it exists yet (it's constructed from this method's
+   * own return value) — by the time any of these callbacks actually fire,
+   * the caller has long since finished constructing the real tab state.
+   */
+  private createMsczPageDisplay(
+    pageContainer: HTMLDivElement,
+    bookMode: boolean,
+    getTabState: () => MsczTabState,
+  ): { pageView: PageDisplay; selectionOverlay: SelectionSource } {
+    const onPageChange = (page: number, pages: number): void => {
+      const tabState = getTabState()
+      if (this.activeHash !== tabState.fileHash) return
+      this.pageIndicatorEl.textContent = `Page ${page + 1} / ${pages}`
+      this.prevBtn.disabled = page <= 0
+      this.nextBtn.disabled = page >= pages - 1
+      this.selectionStatusEl.textContent = ''
+    }
+    const onZoomChange = (zoom: number): void => {
+      const tabState = getTabState()
+      if (this.activeHash !== tabState.fileHash) return
+      this.zoomIndicatorEl.textContent = `${Math.round(zoom * 100)}%`
+      this.zoomOutBtn.disabled = zoom <= MIN_ZOOM
+      this.zoomInBtn.disabled = zoom >= MAX_ZOOM
+    }
+
+    let pageView: PageDisplay
+    let selectionOverlay: SelectionSource
+    if (bookMode) {
+      const book = new BookPageView(pageContainer, onPageChange, onZoomChange)
+      pageView = book
+      selectionOverlay = book
+    } else {
+      const singlePageView = new PageView(
+        pageContainer,
+        (page, pages, positions) => {
+          onPageChange(page, pages)
+          if (positions) singleSelectionOverlay.setPage(positions.elements, page)
+        },
+        onZoomChange,
+      )
+      const singleSelectionOverlay = new SelectionOverlay(pageContainer)
+      pageView = singlePageView
+      selectionOverlay = singleSelectionOverlay
+    }
+
+    selectionOverlay.onSelect((range) => {
+      const tabState = getTabState()
+      tabState.selection = range
+      void this.setLoop(range)
+      if (range && tabState.timeline) {
+        const loopRegion = this.loopRegionForSelection(tabState.timeline, range)
+        if (loopRegion) void this.seekActive(tabState, loopRegion[0])
+      }
+      if (this.activeHash !== tabState.fileHash) return
+      this.selectionStatusEl.textContent = range
+        ? `Selected measures (elid ${range.startElid}-${range.endElid})`
+        : ''
+    })
+
+    selectionOverlay.onSeek((elid) => {
+      const tabState = getTabState()
+      const event = tabState.timeline?.events.find((e) => e.source_elid === elid)
+      if (event) void this.seekActive(tabState, event.time_ms)
+    })
+
+    return { pageView, selectionOverlay }
+  }
+
   private async openMsczBytes(bytes: Uint8Array, filename: string, path: string | null): Promise<void> {
     this.statusEl.textContent = `Loading ${filename}...`
 
@@ -1054,26 +1200,7 @@ export class PracticeView {
     const pageContainer = document.createElement('div')
     pageContainer.className = 'page-stage'
 
-    const pageView = new PageView(
-      pageContainer,
-      (page, pages, positions) => {
-        if (this.activeHash !== tabState.fileHash) return
-        this.pageIndicatorEl.textContent = `Page ${page + 1} / ${pages}`
-        this.prevBtn.disabled = page <= 0
-        this.nextBtn.disabled = page >= pages - 1
-        this.selectionStatusEl.textContent = ''
-        if (positions) {
-          selectionOverlay.setPage(positions.elements, page)
-        }
-      },
-      (zoom) => {
-        if (this.activeHash !== tabState.fileHash) return
-        this.zoomIndicatorEl.textContent = `${Math.round(zoom * 100)}%`
-        this.zoomOutBtn.disabled = zoom <= MIN_ZOOM
-        this.zoomInBtn.disabled = zoom >= MAX_ZOOM
-      },
-    )
-    const selectionOverlay = new SelectionOverlay(pageContainer)
+    const { pageView, selectionOverlay } = this.createMsczPageDisplay(pageContainer, false, () => tabState)
 
     const tabState: MsczTabState = {
       kind: 'mscz',
@@ -1090,25 +1217,8 @@ export class PracticeView {
       originalBytes,
       transportState: 'stopped',
       headMs: 0,
+      bookMode: false,
     }
-
-    selectionOverlay.onSelect((range) => {
-      tabState.selection = range
-      void this.setLoop(range)
-      if (range && tabState.timeline) {
-        const loopRegion = this.loopRegionForSelection(tabState.timeline, range)
-        if (loopRegion) void this.seekActive(tabState, loopRegion[0])
-      }
-      if (this.activeHash !== tabState.fileHash) return
-      this.selectionStatusEl.textContent = range
-        ? `Selected measures (elid ${range.startElid}-${range.endElid})`
-        : ''
-    })
-
-    selectionOverlay.onSeek((elid) => {
-      const event = tabState.timeline?.events.find((e) => e.source_elid === elid)
-      if (event) void this.seekActive(tabState, event.time_ms)
-    })
 
     await pageView.setScore(score, metadata.pages)
     await pageView.showPage(0)
@@ -1293,7 +1403,7 @@ export class PracticeView {
   }
 
   private async autoScanBarlines(tab: PdfTabState): Promise<void> {
-    const pageResults: { page: number; systems: StaffSystem[] }[] = []
+    const pageResults: { page: number; systems: StaffSystem[]; canvasWidth: number; canvasHeight: number }[] = []
     for (let pageNumber = 0; pageNumber < tab.pageCount; pageNumber++) {
       if (!this.tabs.has(tab.fileHash)) return // tab closed mid-scan
       if (this.activeHash === tab.fileHash) {
@@ -1303,7 +1413,7 @@ export class PracticeView {
         const canvas = await renderPdfPage(tab.doc, pageNumber + 1, PDF_BASE_WIDTH * tab.zoom)
         const pngBytes = await canvasToPngBytes(canvas)
         const systems = await detectBarlines(pngBytes)
-        pageResults.push({ page: pageNumber, systems })
+        pageResults.push({ page: pageNumber, systems, canvasWidth: canvas.width, canvasHeight: canvas.height })
       } catch (e) {
         console.error(`Failed to scan page ${pageNumber + 1} for barlines:`, e)
       }
@@ -1355,12 +1465,11 @@ export class PracticeView {
       if (e.time_ms > tab.headMs) break
       event = e
     }
-    if (event.page !== tab.pageView.page) void tab.pageView.showPage(event.page)
+    if (!tab.pageView.stageFor(event.page)) void tab.pageView.showPage(event.page)
     if (this.activeHash !== tab.fileHash) return
-    this.headMarker.setPosition(
-      (event.bbox.x / this.currentPageWidth()) * 100,
-      (event.bbox.y / this.currentPageHeight()) * 100,
-    )
+    this.mountOverlaysOnPage(tab, event.page)
+    const { width, height } = this.pageSize(tab, event.page)
+    this.headMarker.setPosition((event.bbox.x / width) * 100, (event.bbox.y / height) * 100)
   }
 
   /** Same idea as updateMsczHeadMarker, but over calibration points — nearest point at or before `headMs`. */
@@ -1374,8 +1483,8 @@ export class PracticeView {
     }
     if (point.page !== tab.currentPage) void this.showPdfPage(tab, point.page)
     if (this.activeHash !== tab.fileHash) return
-    const canvas = tab.canvasContainer.querySelector('canvas')
-    if (canvas) this.headMarker.setPosition((point.x / canvas.width) * 100, (point.y / canvas.height) * 100)
+    // point.x/y are already a 0-1 fraction of the page — no canvas-size division needed.
+    this.headMarker.setPosition(point.x * 100, point.y * 100)
   }
 
   private updateHeadMarker(tab: TabState): void {
@@ -1456,6 +1565,49 @@ export class PracticeView {
     if (!active) return
     if (active.transportState === 'playing') void this.pauseActive()
     else void this.playActive()
+  }
+
+  private toggleZenMode(): void {
+    this.root.classList.toggle('zen-mode')
+  }
+
+  /**
+   * Rebuilds the active `.mscz` tab's `pageView`/`selectionOverlay` in the
+   * other display mode, preserving the current page and zoom. A full
+   * tear-down/rebuild rather than mutating in place — `PageView` and
+   * `BookPageView` each own their own DOM subtree
+   * (`score-svg-layer`/measure boxes), so swapping modes cleanly means
+   * destroying the old subtree and constructing the new one fresh, the same
+   * way opening a brand-new tab already does.
+   */
+  private async toggleBookModeForActiveTab(): Promise<void> {
+    const active = this.activeTab()
+    if (!active || active.kind !== 'mscz') return
+
+    const currentPage = active.pageView.page
+    const currentZoom = active.pageView.getZoom()
+    const pageCount = active.pageView.pages
+    const nextBookMode = !active.bookMode
+
+    active.selectionOverlay.destroy()
+    active.pageContainer.innerHTML = ''
+    active.pageContainer.classList.toggle('book-spread', nextBookMode)
+
+    const { pageView, selectionOverlay } = this.createMsczPageDisplay(active.pageContainer, nextBookMode, () => active)
+    active.pageView = pageView
+    active.selectionOverlay = selectionOverlay
+    active.bookMode = nextBookMode
+
+    this.cursorBoxEl.style.display = 'none'
+
+    await pageView.setScore(active.score, pageCount)
+    // setScore resets to page 0 / zoom 1 internally (see PageView.setScore) —
+    // restore what the user actually had showing before the mode switch.
+    await pageView.showPage(currentPage)
+    pageView.setZoom(currentZoom)
+    this.mountOverlaysOnPage(active, pageView.page)
+
+    this.bookModeBtn.classList.toggle('active', nextBookMode)
   }
 
   private goToPrevPage(): void {

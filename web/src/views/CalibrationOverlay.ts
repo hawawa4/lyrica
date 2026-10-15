@@ -27,16 +27,17 @@ export interface PointRange {
  *   existing points (like `SelectionOverlay`'s drag-to-select-measures for
  *   `.mscz`) for `main.ts`'s L-to-loop, instead of adding/removing anything.
  *
- * Positions are stored in the rendered canvas's own native pixel space
- * (`canvas.width`/`canvas.height`, i.e. `cssWidth * devicePixelRatio` per
- * `pdf-engine.ts`'s `renderPdfPage`), not raw *displayed* pixel offsets —
- * `render()`/`handleStageClick()` both convert through `canvas.width`/
- * `canvas.height` as percentages, so dots stay correctly placed regardless
- * of the page's current CSS display size. This does mean a point's stored
- * `x`/`y` is tied to whatever zoom level was active when it was placed; at
- * a different zoom the *percentage* position is still correct (dots are
- * positioned by `% of canvas size`, not absolute pixels), so this isn't a
- * bug in practice, just worth knowing if ever debugging point placement.
+ * Positions are stored as a **fraction (0-1) of the page's own width/height**
+ * — zoom-independent, matching `CalibrationPoint.x`/`y`'s documented contract
+ * ("PDF points at scale 1... stays valid across window resizes"). Every
+ * place a point is created (click-to-place, CV barline detection) divides by
+ * *that moment's* canvas width/height to get this fraction; every place a
+ * point is displayed or hit-tested (`render()`, `handleStageClick`,
+ * `handleDoubleClick`) multiplies by the *current* canvas's width/height.
+ * Storing raw canvas-native pixels instead (an earlier version of this file
+ * did) silently broke after any zoom change made since a point was placed —
+ * the stored pixel offset no longer corresponded to the same place on the
+ * page once the canvas was re-rendered at a different resolution.
  */
 export class CalibrationOverlay {
   private readonly dotsLayer: HTMLDivElement
@@ -152,7 +153,16 @@ export class CalibrationOverlay {
    * guaranteed-correct.
    */
   addPointsFromBarlines(systems: StaffSystem[]): void {
-    const newPoints = this.pointsFromBarlines(this.currentPage, systems, nextMeasure(this.points), nextTimeMs(this.points))
+    const canvas = this.stage.querySelector('canvas')
+    if (!canvas) return
+    const newPoints = this.pointsFromBarlines(
+      this.currentPage,
+      systems,
+      nextMeasure(this.points),
+      nextTimeMs(this.points),
+      canvas.width,
+      canvas.height,
+    )
     if (newPoints.length === 0) return
     this.points = [...this.points, ...newPoints].sort((a, b) => a.time_ms - b.time_ms)
     this.render()
@@ -169,13 +179,15 @@ export class CalibrationOverlay {
    * `onChange` exactly once at the end (not once per page) — a 45-page scan
    * would otherwise trigger 45 redundant saves of a growing array.
    */
-  addPointsFromBarlinesAcrossPages(pageResults: { page: number; systems: StaffSystem[] }[]): void {
+  addPointsFromBarlinesAcrossPages(
+    pageResults: { page: number; systems: StaffSystem[]; canvasWidth: number; canvasHeight: number }[],
+  ): void {
     let measure = nextMeasure(this.points)
     let nextTime = nextTimeMs(this.points)
     const allNewPoints: CalibrationPoint[] = []
 
-    for (const { page, systems } of pageResults) {
-      const newPoints = this.pointsFromBarlines(page, systems, measure, nextTime)
+    for (const { page, systems, canvasWidth, canvasHeight } of pageResults) {
+      const newPoints = this.pointsFromBarlines(page, systems, measure, nextTime, canvasWidth, canvasHeight)
       allNewPoints.push(...newPoints)
       measure += newPoints.length
       nextTime += newPoints.length * 1000
@@ -187,11 +199,21 @@ export class CalibrationOverlay {
     this.onChangeCallback?.(this.points)
   }
 
+  /**
+   * `canvasWidth`/`canvasHeight` are the pixel dimensions of the canvas the
+   * CV detector's `systems` were measured against (the same canvas
+   * `canvasToPngBytes` read from) — `barline_xs`/`top`/`bottom` are raw
+   * pixel coordinates in that canvas's space, so dividing by these converts
+   * them to the zoom-independent 0-1 fraction this class stores everywhere
+   * else (see module docs).
+   */
   private pointsFromBarlines(
     page: number,
     systems: StaffSystem[],
     startMeasure: number,
     startTimeMs: number,
+    canvasWidth: number,
+    canvasHeight: number,
   ): CalibrationPoint[] {
     const sorted = [...systems].sort((a, b) => a.top - b.top)
     let measure = startMeasure
@@ -200,9 +222,9 @@ export class CalibrationOverlay {
 
     for (const system of sorted) {
       const xs = [...system.barline_xs].sort((a, b) => a - b)
-      const y = (system.top + system.bottom) / 2
+      const y = (system.top + system.bottom) / 2 / canvasHeight
       for (const x of xs) {
-        points.push({ page, x, y, time_ms, measure })
+        points.push({ page, x: x / canvasWidth, y, time_ms, measure })
         measure += 1
         time_ms += 1000
       }
@@ -244,15 +266,16 @@ export class CalibrationOverlay {
     const rect = this.stage.getBoundingClientRect()
     const clickX = e.clientX - rect.left
     const clickY = e.clientY - rect.top
-    const scaleX = canvas.width / rect.width
-    const scaleY = canvas.height / rect.height
 
     let nearestIndex = -1
     let nearestDistSq = Infinity
     this.points.forEach((p, index) => {
       if (p.page !== this.currentPage) return
-      const dx = clickX - p.x / scaleX
-      const dy = clickY - p.y / scaleY
+      // p.x/p.y are fractions (0-1) of the page — scale by the *displayed*
+      // size (rect.width/height), not canvas.width/height, since clickX/Y
+      // are already in displayed-pixel space.
+      const dx = clickX - p.x * rect.width
+      const dy = clickY - p.y * rect.height
       const distSq = dx * dx + dy * dy
       if (distSq < nearestDistSq) {
         nearestDistSq = distSq
@@ -273,19 +296,17 @@ export class CalibrationOverlay {
 
     const canvas = this.stage.querySelector('canvas')
     if (!canvas) return
-    // Canvas is rendered at native PDF-point resolution (pdf-engine.ts's
-    // renderPdfPage uses the container's CSS width as its target render
-    // width) but may be CSS-scaled to fit — convert click position from
-    // displayed pixels back to the canvas's own native coordinate space.
-    const scaleX = canvas.width / rect.width
-    const scaleY = canvas.height / rect.height
 
-    this.openPendingForm(pixelX * scaleX, pixelY * scaleY, pixelX, pixelY)
+    // Store as a fraction (0-1) of the displayed page size — zoom-independent,
+    // see this file's module docs. `pixelX`/`pixelY` (displayed pixels) are
+    // also what the form's own CSS position uses, so no canvas-native
+    // conversion is needed at all here anymore.
+    this.openPendingForm(pixelX / rect.width, pixelY / rect.height, pixelX, pixelY)
   }
 
-  /** Opens the measure confirmation form, positioned at `pixelX`/`pixelY` (displayed pixels, for the form's own CSS position) for a pending point at `canvasX`/`canvasY` (canvas-native pixel space, what actually gets stored). */
-  private openPendingForm(canvasX: number, canvasY: number, pixelX: number, pixelY: number): void {
-    this.pendingClick = { x: canvasX, y: canvasY }
+  /** Opens the measure confirmation form, positioned at `pixelX`/`pixelY` (displayed pixels, for the form's own CSS position) for a pending point at `fracX`/`fracY` (0-1 of the page, what actually gets stored). */
+  private openPendingForm(fracX: number, fracY: number, pixelX: number, pixelY: number): void {
+    this.pendingClick = { x: fracX, y: fracY }
     this.measureInput.value = String(nextMeasure(this.points))
     this.formEl.style.left = `${pixelX}px`
     this.formEl.style.top = `${pixelY}px`
@@ -392,8 +413,11 @@ export class CalibrationOverlay {
       const dot = document.createElement('div')
       dot.dataset.pointIndex = String(index)
       dot.style.position = 'absolute'
-      dot.style.left = `${(p.x / canvas.width) * 100}%`
-      dot.style.top = `${(p.y / canvas.height) * 100}%`
+      // p.x/p.y are already a 0-1 fraction of the page — no canvas-size
+      // division needed, which is exactly why this representation survives
+      // a zoom change: the fraction means the same thing at every zoom.
+      dot.style.left = `${p.x * 100}%`
+      dot.style.top = `${p.y * 100}%`
       dot.style.transform = 'translate(-50%, -50%)'
       dot.style.width = isPlaying ? '22px' : '16px'
       dot.style.height = isPlaying ? '22px' : '16px'

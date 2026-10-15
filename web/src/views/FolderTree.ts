@@ -1,4 +1,5 @@
 import type { KnowledgeLevel, LibraryEntry } from '../types'
+import { CollapsibleSection } from './CollapsibleSection'
 import { RatingStars } from './RatingStars'
 
 interface TreeNode {
@@ -64,7 +65,7 @@ function matchesSearch(node: TreeNode, query: string): boolean {
  * via `setRequestHash`'s callback, then pins/rates it.
  */
 export class FolderTree {
-  private readonly root: HTMLDivElement
+  private readonly section: CollapsibleSection
   private readonly treeEl: HTMLDivElement
   private readonly emptyEl: HTMLDivElement
   private entries: LibraryEntry[] = []
@@ -83,16 +84,14 @@ export class FolderTree {
   private pendingHashPaths = new Set<string>()
 
   constructor(container: HTMLElement) {
-    this.root = document.createElement('div')
-    this.root.className = 'sidebar-section folder-tree-section'
-    this.root.innerHTML = `
-      <span class="sidebar-section-title">Library</span>
+    this.section = new CollapsibleSection(container, 'Library')
+    this.section.root.classList.add('folder-tree-section')
+    this.section.bodyEl.innerHTML = `
       <div class="folder-tree"></div>
       <div class="folder-tree-empty" style="display:none;">No folder selected</div>
     `
-    container.appendChild(this.root)
-    this.treeEl = this.root.querySelector('.folder-tree')!
-    this.emptyEl = this.root.querySelector('.folder-tree-empty')!
+    this.treeEl = this.section.bodyEl.querySelector('.folder-tree')!
+    this.emptyEl = this.section.bodyEl.querySelector('.folder-tree-empty')!
   }
 
   onOpen(callback: (path: string) => void): void {
