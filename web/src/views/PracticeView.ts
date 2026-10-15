@@ -181,8 +181,7 @@ export class PracticeView {
   private readonly ratingMountEl: HTMLSpanElement
   private readonly ratingStars: RatingStars
   private readonly pdfControlsEl: HTMLDivElement
-  private readonly suggestBarlinesBtn: HTMLButtonElement
-  private readonly clearPointsBtn: HTMLButtonElement
+  private readonly rescanMeasuresBtn: HTMLButtonElement
   private readonly zoomOutBtn: HTMLButtonElement
   private readonly zoomInBtn: HTMLButtonElement
   private readonly zoomIndicatorEl: HTMLSpanElement
@@ -260,8 +259,7 @@ export class PracticeView {
 
       <div class="main-area">
         <div id="pdf-controls" class="pdf-toolbar">
-          <button id="suggest-barlines-btn">Auto-detect measures</button>
-          <button id="clear-points-btn">Clear all measures</button>
+          <button id="rescan-measures-btn">Rescan measures</button>
         </div>
         <div class="status-bar">
           <span id="status"></span>
@@ -311,8 +309,7 @@ export class PracticeView {
     this.ratingMountEl.appendChild(this.ratingStars.el)
     this.ratingStars.onChange((level) => void this.handleRatingChange(level))
     this.pdfControlsEl = this.root.querySelector('#pdf-controls')!
-    this.suggestBarlinesBtn = this.root.querySelector('#suggest-barlines-btn')!
-    this.clearPointsBtn = this.root.querySelector('#clear-points-btn')!
+    this.rescanMeasuresBtn = this.root.querySelector('#rescan-measures-btn')!
     this.zoomOutBtn = this.root.querySelector('#zoom-out')!
     this.zoomInBtn = this.root.querySelector('#zoom-in')!
     this.zoomIndicatorEl = this.root.querySelector('#zoom-indicator')!
@@ -438,36 +435,19 @@ export class PracticeView {
       void setMetronomeEnabled(this.metronomeCheckbox.checked)
     })
 
-    this.suggestBarlinesBtn.addEventListener('click', async () => {
-      const active = this.activeTab()
-      if (!active || active.kind !== 'pdf') return
-      const canvas = active.canvasContainer.querySelector('canvas')
-      if (!canvas) return
-      this.suggestBarlinesBtn.disabled = true
-      try {
-        const pngBytes = await canvasToPngBytes(canvas)
-        const systems = await detectBarlines(pngBytes)
-        const count = systems.reduce((n, s) => n + s.barline_xs.length, 0)
-        active.calibrationOverlay.addPointsFromBarlines(systems)
-        this.syncRightPanePoints(active)
-        this.calibrationStatusEl.textContent = `Added ${count} measure(s) from detected barlines — double-check them, the detector isn't always right.`
-      } catch (e) {
-        console.error('Failed to detect barlines:', e)
-        this.calibrationStatusEl.textContent = `Barline suggestion failed: ${e instanceof Error ? e.message : String(e)}`
-      } finally {
-        this.suggestBarlinesBtn.disabled = false
-      }
-    })
-
-    this.clearPointsBtn.addEventListener('click', () => {
+    this.rescanMeasuresBtn.addEventListener('click', async () => {
       const active = this.activeTab()
       if (!active || active.kind !== 'pdf') return
       const count = active.calibrationOverlay.getPoints().length
-      if (count === 0) return
-      if (!window.confirm(`Remove all ${count} marked measure(s) for this file? This can't be undone.`)) return
+      if (count > 0 && !window.confirm(`Clear and rescan all ${count} marked measure(s) for this file? This can't be undone.`)) return
       active.calibrationOverlay.clearAllPoints()
       this.syncRightPanePoints(active)
-      this.calibrationStatusEl.textContent = this.measureStatusText(active)
+      this.rescanMeasuresBtn.disabled = true
+      try {
+        await this.autoScanBarlines(active)
+      } finally {
+        this.rescanMeasuresBtn.disabled = false
+      }
     })
 
     this.zoomOutBtn.addEventListener('click', () => this.zoomActiveTab(-ZOOM_STEP))
