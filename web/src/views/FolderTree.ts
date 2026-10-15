@@ -1,4 +1,5 @@
-import type { LibraryEntry } from '../types'
+import type { KnowledgeLevel, LibraryEntry } from '../types'
+import { RatingStars } from './RatingStars'
 
 interface TreeNode {
   name: string
@@ -41,11 +42,11 @@ function buildTree(entries: LibraryEntry[], rootFolder: string): TreeNode {
 }
 
 /** True if `node` or anything beneath it matches `query` (case-insensitive substring on file/folder name). */
-function matches(node: TreeNode, query: string): boolean {
+function matchesSearch(node: TreeNode, query: string): boolean {
   if (!query) return true
   if (node.name.toLowerCase().includes(query)) return true
   for (const child of node.children.values()) {
-    if (matches(child, query)) return true
+    if (matchesSearch(child, query)) return true
   }
   return false
 }
@@ -56,10 +57,11 @@ function matches(node: TreeNode, query: string): boolean {
  * recursive walk — grouping into a tree is cheap, pure DOM/data-shape work
  * better done here than by widening the Tauri command's response shape).
  *
- * Every file row has an always-visible pin toggle (a star button) — pinning
- * requires a content hash the row doesn't have yet (it's only computed once
- * a file is opened), so clicking the star on an unopened file first reads
- * and hashes it on demand via `onRequestHash`, then pins.
+ * Every file row has an always-visible pin toggle and a 1-5 knowledge-level
+ * rating control. Both are keyed by content hash, which an unopened scan
+ * result doesn't have yet (only computed once a file is opened) — so
+ * clicking either on a never-opened file first reads and hashes it on demand
+ * via `setRequestHash`'s callback, then pins/rates it.
  */
 export class FolderTree {
   private readonly root: HTMLDivElement
@@ -68,11 +70,15 @@ export class FolderTree {
   private entries: LibraryEntry[] = []
   private rootFolder = ''
   private searchQuery = ''
+  /** Empty set means "no level filter active" (show everything) — otherwise only files whose rating is in this set, or files with no rating at all if `null` is a member, are shown. */
+  private levelFilter = new Set<KnowledgeLevel | null>()
   private readonly expanded = new Set<string>()
   private onOpenCallback: ((path: string) => void) | null = null
   private onTogglePinCallback: ((path: string, title: string, pin: boolean) => void) | null = null
+  private onRatingChangeCallback: ((path: string, title: string, level: KnowledgeLevel | null) => void) | null = null
   private isPinnedFn: (path: string) => boolean = () => false
-  /** Resolves a path to its content hash, computing it (reading + hashing the file) on first use if necessary — pinning needs this, opening doesn't. */
+  private ratingFn: (path: string) => KnowledgeLevel | null = () => null
+  /** Resolves a path to its content hash, computing it (reading + hashing the file) on first use if necessary — pinning/rating needs this, opening doesn't. */
   private requestHashFn: ((path: string) => Promise<string | null>) | null = null
   private pendingHashPaths = new Set<string>()
 
@@ -97,8 +103,16 @@ export class FolderTree {
     this.onTogglePinCallback = callback
   }
 
+  onRatingChange(callback: (path: string, title: string, level: KnowledgeLevel | null) => void): void {
+    this.onRatingChangeCallback = callback
+  }
+
   setIsPinned(fn: (path: string) => boolean): void {
     this.isPinnedFn = fn
+  }
+
+  setRating(fn: (path: string) => KnowledgeLevel | null): void {
+    this.ratingFn = fn
   }
 
   setRequestHash(fn: (path: string) => Promise<string | null>): void {
@@ -110,14 +124,20 @@ export class FolderTree {
     this.render()
   }
 
+  /** `levels` empty means "no filter" (show everything); otherwise only files whose rating (or `null` for unrated) is in the set are shown. Folders with no matching descendant are hidden too. */
+  setLevelFilter(levels: Set<KnowledgeLevel | null>): void {
+    this.levelFilter = levels
+    this.render()
+  }
+
   setData(entries: LibraryEntry[], rootFolder: string): void {
     this.entries = entries
     this.rootFolder = rootFolder
     this.render()
   }
 
-  /** Re-renders without re-fetching — call after a pin-state change elsewhere so star icons stay in sync. */
-  refreshPinState(): void {
+  /** Re-renders without re-fetching — call after a pin or rating change elsewhere so each row's controls stay in sync. */
+  refreshRowState(): void {
     this.render()
   }
 
@@ -140,8 +160,18 @@ export class FolderTree {
     this.emptyEl.style.display = 'none'
     this.treeEl.style.display = 'block'
 
-    const autoExpand = this.searchQuery.length > 0
+    const autoExpand = this.searchQuery.length > 0 || this.levelFilter.size > 0
     this.renderChildren(tree, this.treeEl, 0, autoExpand)
+  }
+
+  /** True if `node` is a file matching the active level filter, or a folder containing at least one such file (recursively). Mirrors `matchesSearch`'s "any descendant matches" rule. */
+  private matchesFilter(node: TreeNode): boolean {
+    if (this.levelFilter.size === 0) return true
+    if (node.entry) return this.levelFilter.has(this.ratingFn(node.entry.path))
+    for (const child of node.children.values()) {
+      if (this.matchesFilter(child)) return true
+    }
+    return false
   }
 
   private renderChildren(node: TreeNode, container: HTMLElement, depth: number, autoExpand: boolean): void {
@@ -153,7 +183,8 @@ export class FolderTree {
     })
 
     for (const child of sortedChildren) {
-      if (!matches(child, this.searchQuery)) continue
+      if (!matchesSearch(child, this.searchQuery)) continue
+      if (!this.matchesFilter(child)) continue
 
       if (child.entry) {
         container.appendChild(this.renderFileRow(child, depth))
@@ -202,10 +233,15 @@ export class FolderTree {
     label.textContent = entry.title
     row.appendChild(label)
 
+    const stars = new RatingStars()
+    stars.setLevel(this.ratingFn(entry.path))
+    stars.onChange((level) => void this.handleRatingChange(entry, level))
+    row.appendChild(stars.el)
+
     const pinBtn = document.createElement('button')
     pinBtn.className = 'pin-btn'
     pinBtn.title = this.isPinnedFn(entry.path) ? 'Unpin' : 'Pin to top'
-    pinBtn.innerHTML = this.isPinnedFn(entry.path) ? '&#9733;' : '&#9734;'
+    pinBtn.innerHTML = '&#128204;' // pushpin — distinct from the rating stars sitting right next to it
     pinBtn.classList.toggle('pinned', this.isPinnedFn(entry.path))
     pinBtn.addEventListener('click', (e) => {
       e.stopPropagation()
@@ -231,13 +267,24 @@ export class FolderTree {
       this.onTogglePinCallback?.(entry.path, entry.title, false)
       return
     }
-    if (this.pendingHashPaths.has(entry.path)) return // hash already in flight for this row
-    this.pendingHashPaths.add(entry.path)
+    const hash = await this.resolveHash(entry.path)
+    if (hash) this.onTogglePinCallback?.(entry.path, entry.title, true)
+  }
+
+  /** Setting a rating on a never-opened file needs the same on-demand hashing pinning does — rating is keyed by content hash, same as pinning. */
+  private async handleRatingChange(entry: LibraryEntry, level: KnowledgeLevel | null): Promise<void> {
+    const hash = await this.resolveHash(entry.path)
+    if (hash) this.onRatingChangeCallback?.(entry.path, entry.title, level)
+  }
+
+  /** Resolves `path`'s content hash via `requestHashFn`, de-duplicating concurrent calls for the same path (e.g. a fast double-click on the star/rating row before the first hash resolves). */
+  private async resolveHash(path: string): Promise<string | null> {
+    if (this.pendingHashPaths.has(path)) return null
+    this.pendingHashPaths.add(path)
     try {
-      const hash = await this.requestHashFn?.(entry.path)
-      if (hash) this.onTogglePinCallback?.(entry.path, entry.title, true)
+      return (await this.requestHashFn?.(path)) ?? null
     } finally {
-      this.pendingHashPaths.delete(entry.path)
+      this.pendingHashPaths.delete(path)
     }
   }
 

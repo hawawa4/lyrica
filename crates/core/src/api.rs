@@ -15,6 +15,7 @@ pub use cv_barline::{CvBarlineError, StaffSystem};
 use crate::mscz::{self, MsczError};
 use crate::pdf_calibration::{self, CalibrationPoint};
 use crate::pieces::{self, Piece, PiecesError};
+use crate::rating::{self, KnowledgeLevel};
 use crate::recent_files::{self, RecentFile, RecentFilesError};
 use crate::sidecar::SidecarError;
 use crate::timeline::{self, Positions, Timeline, TimelineError};
@@ -145,6 +146,31 @@ pub fn delete_marker(
 /// shell-agnostic: desktop calls this explicitly once it has the real path.
 pub fn list_recent_files(base_dir: &Path) -> Result<Vec<RecentFile>, RecentFilesError> {
     recent_files::list_recent_files(base_dir)
+}
+
+/// Per-piece "knowledge level" (1-5), keyed by `file_hash` like markers.
+pub fn get_knowledge_level(
+    base_dir: &Path,
+    file_hash: &str,
+) -> Result<Option<KnowledgeLevel>, SidecarError> {
+    rating::get_knowledge_level(base_dir, file_hash)
+}
+
+pub fn set_knowledge_level(
+    base_dir: &Path,
+    file_hash: &str,
+    level: Option<KnowledgeLevel>,
+) -> Result<Option<KnowledgeLevel>, SidecarError> {
+    rating::set_knowledge_level(base_dir, file_hash, level)
+}
+
+/// Bulk lookup for the library view's pinned/recent lists and filter chips —
+/// one IPC round-trip for every row's rating rather than one per row.
+pub fn get_knowledge_levels(
+    base_dir: &Path,
+    file_hashes: &[String],
+) -> Result<std::collections::HashMap<String, KnowledgeLevel>, SidecarError> {
+    rating::get_knowledge_levels(base_dir, file_hashes)
 }
 
 pub fn record_recent_file(

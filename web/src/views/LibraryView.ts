@@ -1,4 +1,5 @@
 import {
+  getKnowledgeLevels,
   getLibrarySettings,
   hashBytes,
   isTauri,
@@ -6,12 +7,14 @@ import {
   listRecentFiles,
   pinFile,
   scanLibrary,
+  setKnowledgeLevel,
   setRootFolder,
   unpinFile,
 } from '../api-client'
-import type { PinnedFile, RecentFile } from '../types'
+import type { KnowledgeLevel, PinnedFile, RecentFile } from '../types'
 import { FileListPanel } from './FileListPanel'
 import { FolderTree } from './FolderTree'
+import { LevelFilterBar } from './LevelFilterBar'
 
 /**
  * Landing screen: pick a root folder to browse for scores, see what's
@@ -30,6 +33,7 @@ export class LibraryView {
   private readonly pinnedPanel: FileListPanel<PinnedFile>
   private readonly recentPanel: FileListPanel<RecentFile>
   private readonly folderTree: FolderTree
+  private readonly levelFilterBar: LevelFilterBar
   private onOpenCallback: ((path: string) => void) | null = null
   private pinnedFiles: PinnedFile[] = []
   private recentFiles: RecentFile[] = []
@@ -38,6 +42,10 @@ export class LibraryView {
   private scannedRootFolder: string | null = null
   /** Guards against two overlapping `refresh()` calls (e.g. one triggered by `onFileOpened` right before navigating back to `#/library`, racing with the route-change's own `refresh()`) clobbering each other's results — only the call that's still current when it resolves is allowed to render. */
   private refreshToken = 0
+  /** Every content hash this view currently knows a rating for, by hash — bulk-loaded for pinned/recent (both already carry a hash) and filled in on demand for tree rows as they're rated/pinned (see `resolveHashForPath`). */
+  private ratings = new Map<string, KnowledgeLevel>()
+  /** `path -> file_hash`, built from pinned/recent entries and anything resolved on demand — lets the folder tree (which only has paths) look up a rating without re-hashing a file it's already seen. */
+  private pathToHash = new Map<string, string>()
 
   constructor(container: HTMLElement) {
     this.root = document.createElement('div')
@@ -54,6 +62,7 @@ export class LibraryView {
         </div>
       </div>
       <div class="library-lists">
+        <div id="level-filter-bar"></div>
         <div id="pinned-list"></div>
         <div id="recent-list"></div>
         <div id="tree-list"></div>
@@ -68,10 +77,15 @@ export class LibraryView {
     this.pinnedPanel = new FileListPanel<PinnedFile>(this.root.querySelector('#pinned-list')!, 'Pinned')
     this.recentPanel = new FileListPanel<RecentFile>(this.root.querySelector('#recent-list')!, 'Recent files')
     this.folderTree = new FolderTree(this.root.querySelector('#tree-list')!)
+    this.levelFilterBar = new LevelFilterBar(this.root.querySelector('#level-filter-bar')!)
 
     this.pinnedPanel.setIsPinned(() => true)
     this.recentPanel.setIsPinned((e) => this.isPinned(e.file_hash))
     this.folderTree.setIsPinned((path) => this.isPinnedByPath(path))
+
+    this.pinnedPanel.setRating((e) => this.ratings.get(e.file_hash) ?? null)
+    this.recentPanel.setRating((e) => this.ratings.get(e.file_hash) ?? null)
+    this.folderTree.setRating((path) => this.ratingForPath(path))
 
     this.pinnedPanel.onOpen((entry) => this.onOpenCallback?.(entry.path))
     this.recentPanel.onOpen((entry) => this.onOpenCallback?.(entry.path))
@@ -80,7 +94,13 @@ export class LibraryView {
     this.pinnedPanel.onTogglePin((entry, pin) => void this.togglePin(entry.path, entry.title, entry.file_hash, pin))
     this.recentPanel.onTogglePin((entry, pin) => void this.togglePin(entry.path, entry.title, entry.file_hash, pin))
     this.folderTree.onTogglePin((path, title, pin) => void this.togglePinByPath(path, title, pin))
-    this.folderTree.setRequestHash((path) => this.hashForPath(path))
+    this.folderTree.setRequestHash((path) => this.resolveHashForPath(path))
+
+    this.pinnedPanel.onRatingChange((entry, level) => void this.setRating(entry.file_hash, level))
+    this.recentPanel.onRatingChange((entry, level) => void this.setRating(entry.file_hash, level))
+    this.folderTree.onRatingChange((path, _title, level) => void this.setRatingByPath(path, level))
+
+    this.levelFilterBar.onChange((levels) => this.folderTree.setLevelFilter(levels))
 
     this.searchInput.addEventListener('input', () => {
       this.folderTree.setSearchQuery(this.searchInput.value)
@@ -111,24 +131,60 @@ export class LibraryView {
     return this.pinnedFiles.some((p) => p.path === path)
   }
 
-  /** Reads and hashes the file at `path` on demand — used only when the folder tree's pin star is clicked on a file that's never been opened (and so has no known content hash yet). Not needed for recent/pinned rows, which already carry a hash. */
-  private async hashForPath(path: string): Promise<string | null> {
+  private ratingForPath(path: string): KnowledgeLevel | null {
+    const hash = this.pathToHash.get(path)
+    return hash ? this.ratings.get(hash) ?? null : null
+  }
+
+  /**
+   * Resolves `path`'s content hash: an already-known one from `pathToHash`
+   * (built from pinned/recent entries, or a prior call to this same method)
+   * if available, otherwise reads and hashes the file on demand — used when
+   * the folder tree's pin star or rating stars are clicked on a file that's
+   * never been opened. Caches the result so a second pin/rate on the same
+   * tree row doesn't re-read the file from disk.
+   */
+  private async resolveHashForPath(path: string): Promise<string | null> {
+    const known = this.pathToHash.get(path)
+    if (known) return known
     if (!isTauri()) return null
     try {
       const { readFile } = await import('@tauri-apps/plugin-fs')
       const bytes = await readFile(path)
-      return await hashBytes(bytes)
+      const hash = await hashBytes(bytes)
+      this.pathToHash.set(path, hash)
+      return hash
     } catch (e) {
-      console.error(`Failed to hash ${path} for pinning:`, e)
+      console.error(`Failed to hash ${path}:`, e)
       return null
     }
   }
 
   private async togglePinByPath(path: string, title: string, pin: boolean): Promise<void> {
-    const existing = this.pinnedFiles.find((p) => p.path === path)
-    const fileHash = existing?.file_hash ?? (pin ? await this.hashForPath(path) : null)
+    const fileHash = pin ? await this.resolveHashForPath(path) : this.pathToHash.get(path)
     if (!fileHash) return
     await this.togglePin(path, title, fileHash, pin)
+  }
+
+  private async setRatingByPath(path: string, level: KnowledgeLevel | null): Promise<void> {
+    const fileHash = await this.resolveHashForPath(path)
+    if (!fileHash) return
+    await this.setRating(fileHash, level)
+  }
+
+  private async setRating(fileHash: string | undefined, level: KnowledgeLevel | null): Promise<void> {
+    if (!fileHash) return
+    try {
+      const applied = await setKnowledgeLevel(fileHash, level)
+      if (applied === null) this.ratings.delete(fileHash)
+      else this.ratings.set(fileHash, applied)
+    } catch (e) {
+      console.error('Failed to set knowledge level:', e)
+      return
+    }
+    this.renderPinned()
+    this.recentPanel.render(this.recentFiles)
+    this.folderTree.refreshRowState()
   }
 
   private async togglePin(path: string, title: string, fileHash: string | undefined, pin: boolean): Promise<void> {
@@ -143,11 +199,12 @@ export class LibraryView {
       console.error('Failed to toggle pin:', e)
       return
     }
+    this.pathToHash.set(path, fileHash)
     this.renderPinned()
     // Re-render the already-held recent-files list and the tree client-side
     // (no refetch) so their pin stars immediately reflect the new state.
     this.recentPanel.render(this.recentFiles)
-    this.folderTree.refreshPinState()
+    this.folderTree.refreshRowState()
   }
 
   private renderPinned(): void {
@@ -162,7 +219,20 @@ export class LibraryView {
       console.error('Failed to load recent files:', e)
       this.recentFiles = []
     }
+    for (const f of this.recentFiles) this.pathToHash.set(f.path, f.file_hash)
+    await this.refreshRatingsFor(this.recentFiles.map((f) => f.file_hash))
     this.recentPanel.render(this.recentFiles)
+  }
+
+  /** Bulk-loads ratings for `fileHashes` into `this.ratings` — one IPC round-trip for every pinned/recent row rather than one per row (see `getKnowledgeLevels`'s docs). */
+  private async refreshRatingsFor(fileHashes: string[]): Promise<void> {
+    if (!isTauri() || fileHashes.length === 0) return
+    try {
+      const levels = await getKnowledgeLevels(fileHashes)
+      for (const [hash, level] of Object.entries(levels)) this.ratings.set(hash, level)
+    } catch (e) {
+      console.error('Failed to load knowledge levels:', e)
+    }
   }
 
   /** Re-walks `this.rootFolder` and updates the folder tree, unless `force` is false and the folder hasn't changed since the last scan. */
@@ -229,6 +299,9 @@ export class LibraryView {
     if (isStale()) return
 
     this.pinnedFiles = pinned
+    for (const f of this.pinnedFiles) this.pathToHash.set(f.path, f.file_hash)
+    await this.refreshRatingsFor(this.pinnedFiles.map((f) => f.file_hash))
+    if (isStale()) return
     this.renderPinned()
     this.applyRootFolder(settings?.root_folder ?? null)
 

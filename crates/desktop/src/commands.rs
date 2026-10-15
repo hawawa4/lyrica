@@ -4,6 +4,7 @@ use mp_core::library::{LibraryEntry, LibrarySettings, PinnedFile};
 use mp_core::markers::Marker;
 use mp_core::pdf_calibration::CalibrationPoint;
 use mp_core::pieces::Piece;
+use mp_core::rating::KnowledgeLevel;
 use mp_core::recent_files::RecentFile;
 use mp_core::timeline::Positions;
 use tauri::{AppHandle, Manager, State};
@@ -125,6 +126,31 @@ pub fn delete_marker(app: AppHandle, file_hash: String, marker_id: String) -> Re
 #[tauri::command]
 pub fn detect_pieces(bytes: Vec<u8>) -> Result<Vec<Piece>, String> {
     api::detect_pieces(&bytes).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn get_knowledge_level(app: AppHandle, file_hash: String) -> Result<Option<KnowledgeLevel>, String> {
+    let base_dir = markers_base_dir(&app)?;
+    api::get_knowledge_level(&base_dir, &file_hash).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn set_knowledge_level(
+    app: AppHandle,
+    file_hash: String,
+    level: Option<KnowledgeLevel>,
+) -> Result<Option<KnowledgeLevel>, String> {
+    let base_dir = markers_base_dir(&app)?;
+    api::set_knowledge_level(&base_dir, &file_hash, level).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn get_knowledge_levels(
+    app: AppHandle,
+    file_hashes: Vec<String>,
+) -> Result<std::collections::HashMap<String, KnowledgeLevel>, String> {
+    let base_dir = markers_base_dir(&app)?;
+    api::get_knowledge_levels(&base_dir, &file_hashes).map_err(|e| e.to_string())
 }
 
 #[tauri::command]

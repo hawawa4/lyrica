@@ -2,6 +2,7 @@ pub mod api;
 pub mod audio;
 pub mod library;
 pub mod markers;
+pub mod rating;
 pub mod mscz;
 pub mod pdf_calibration;
 pub mod pieces;

@@ -61,6 +61,9 @@ export interface LibraryEntry {
   is_dir: boolean
 }
 
+/** 1 = never seen it before, 5 = mastered, can play it at any time. `null`/absent means unrated. */
+export type KnowledgeLevel = 1 | 2 | 3 | 4 | 5
+
 export interface CalibrationPoint {
   page: number
   x: number

@@ -2,6 +2,7 @@ import type { Positions } from './score-engine'
 import type {
   CalibrationPoint,
   ImportTimelineResponse,
+  KnowledgeLevel,
   LibraryEntry,
   LibrarySettings,
   Marker,
@@ -238,6 +239,29 @@ export async function unpinFile(fileHash: string): Promise<PinnedFile[]> {
   if (!isTauri()) throw new Error('unpinFile: desktop-only for now')
   const { invoke } = await import('@tauri-apps/api/core')
   return invoke<PinnedFile[]>('unpin_file', { fileHash })
+}
+
+/**
+ * Per-piece "knowledge level" (1-5), keyed by `file_hash` like markers.
+ * `null` clears the rating back to unrated.
+ */
+export async function getKnowledgeLevel(fileHash: string): Promise<KnowledgeLevel | null> {
+  if (!isTauri()) throw new Error('getKnowledgeLevel: desktop-only for now')
+  const { invoke } = await import('@tauri-apps/api/core')
+  return invoke<KnowledgeLevel | null>('get_knowledge_level', { fileHash })
+}
+
+export async function setKnowledgeLevel(fileHash: string, level: KnowledgeLevel | null): Promise<KnowledgeLevel | null> {
+  if (!isTauri()) throw new Error('setKnowledgeLevel: desktop-only for now')
+  const { invoke } = await import('@tauri-apps/api/core')
+  return invoke<KnowledgeLevel | null>('set_knowledge_level', { fileHash, level })
+}
+
+/** Bulk lookup for the library view's lists and filter chips — one IPC round-trip rather than one per row. Hashes with no rating are simply absent from the returned record. */
+export async function getKnowledgeLevels(fileHashes: string[]): Promise<Record<string, KnowledgeLevel>> {
+  if (!isTauri()) throw new Error('getKnowledgeLevels: desktop-only for now')
+  const { invoke } = await import('@tauri-apps/api/core')
+  return invoke<Record<string, KnowledgeLevel>>('get_knowledge_levels', { fileHashes })
 }
 
 /**

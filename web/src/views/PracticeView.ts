@@ -24,11 +24,14 @@ import {
   saveCalibrationPoints,
   loadPdfTempoMap,
   detectBarlines,
+  getKnowledgeLevel,
+  setKnowledgeLevel,
 } from '../api-client'
 import { MarkerPanel } from './MarkerPanel'
 import { PiecesIndex } from './PiecesIndex'
+import { RatingStars } from './RatingStars'
 import { TabBar, type TabInfo } from './TabBar'
-import type { CalibrationPoint, StaffSystem, Timeline, TimelineEvent } from '../types'
+import type { CalibrationPoint, KnowledgeLevel, StaffSystem, Timeline, TimelineEvent } from '../types'
 import { initTheme, applyTheme, THEME_LABELS, type Theme } from '../theme'
 
 /**
@@ -124,6 +127,8 @@ export class PracticeView {
   private readonly selectionStatusEl: HTMLSpanElement
   private readonly loopStatusEl: HTMLSpanElement
   private readonly calibrationStatusEl: HTMLSpanElement
+  private readonly ratingMountEl: HTMLSpanElement
+  private readonly ratingStars: RatingStars
   private readonly pdfControlsEl: HTMLDivElement
   private readonly markingModeCheckbox: HTMLInputElement
   private readonly suggestBarlinesBtn: HTMLButtonElement
@@ -210,6 +215,7 @@ export class PracticeView {
           <span id="selection-status"></span>
           <span id="loop-status" class="loop-status"></span>
           <span id="calibration-status" class="calibration-status"></span>
+          <span id="rating-mount" class="rating-mount" style="display:none;"></span>
         </div>
         <div id="page" class="page-area">
           <div class="empty-state" id="empty-state">
@@ -245,6 +251,10 @@ export class PracticeView {
     this.selectionStatusEl = this.root.querySelector('#selection-status')!
     this.loopStatusEl = this.root.querySelector('#loop-status')!
     this.calibrationStatusEl = this.root.querySelector('#calibration-status')!
+    this.ratingMountEl = this.root.querySelector('#rating-mount')!
+    this.ratingStars = new RatingStars()
+    this.ratingMountEl.appendChild(this.ratingStars.el)
+    this.ratingStars.onChange((level) => void this.handleRatingChange(level))
     this.pdfControlsEl = this.root.querySelector('#pdf-controls')!
     this.markingModeCheckbox = this.root.querySelector('#marking-mode-checkbox')!
     this.suggestBarlinesBtn = this.root.querySelector('#suggest-barlines-btn')!
@@ -704,6 +714,7 @@ export class PracticeView {
     this.pdfControlsEl.style.display = tab.kind === 'pdf' ? 'flex' : 'none'
     this.transportEl.style.display = 'flex'
     this.zoomGroupEl.style.display = 'flex'
+    void this.loadRatingForTab(tab)
 
     if (tab.kind === 'mscz') {
       tab.pageContainer.appendChild(this.cursorBoxEl)
@@ -813,6 +824,34 @@ export class PracticeView {
     return tab.markingMode
       ? `Marking mode: click the page to add a calibration point. ${tab.points.length} point(s) so far.`
       : `${tab.points.length} calibration point(s). Turn on "Mark measures" to add or remove them.`
+  }
+
+  /** Shows/loads the current tab's "knowledge level" rating in the status bar — hidden entirely for a tab with no stable file_hash (desktop hashing failed, or running outside Tauri), since rating has nothing to key off. */
+  private async loadRatingForTab(tab: TabState): Promise<void> {
+    if (!isTauri() || tab.fileHash.startsWith('untracked-')) {
+      this.ratingMountEl.style.display = 'none'
+      return
+    }
+    this.ratingMountEl.style.display = 'inline-flex'
+    let level: KnowledgeLevel | null = null
+    try {
+      level = await getKnowledgeLevel(tab.fileHash)
+    } catch (e) {
+      console.error('Failed to load knowledge level:', e)
+    }
+    if (this.activeHash !== tab.fileHash) return // tab switched again while this was in flight
+    this.ratingStars.setLevel(level)
+  }
+
+  private async handleRatingChange(level: KnowledgeLevel | null): Promise<void> {
+    const active = this.activeTab()
+    if (!active || active.fileHash.startsWith('untracked-')) return
+    try {
+      const applied = await setKnowledgeLevel(active.fileHash, level)
+      this.ratingStars.setLevel(applied)
+    } catch (e) {
+      console.error('Failed to set knowledge level:', e)
+    }
   }
 
   private setPdfZoom(tab: PdfTabState, zoom: number): void {
@@ -928,6 +967,7 @@ export class PracticeView {
         this.selectionStatusEl.textContent = ''
         this.loopStatusEl.textContent = ''
         this.calibrationStatusEl.textContent = ''
+        this.ratingMountEl.style.display = 'none'
         void this.markerPanel.setFileHash(null)
         void this.piecesIndex.setScoreBytes(null)
         this.playBtn.disabled = true

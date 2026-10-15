@@ -96,6 +96,11 @@
   color: var(--text-muted);
 }
 
+.rating-mount {
+  display: inline-flex;
+  align-items: center;
+}
+
 .page-area {
   flex: 1;
   overflow: auto;
@@ -433,6 +438,73 @@
 
 .pin-btn.pinned:hover {
   color: var(--accent);
+}
+
+/* Click-to-set 1-5 knowledge-level stars, shared by FileListPanel rows and FolderTree file rows. */
+.rating-stars {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+}
+
+.rating-star {
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  padding: 3px 1px;
+  color: var(--text-faint);
+}
+
+.rating-star:hover {
+  color: var(--text);
+}
+
+.rating-star.filled {
+  color: var(--accent);
+}
+
+.level-filter-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 4px 0 14px;
+}
+
+.level-filter-chip {
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  color: var(--text-muted);
+  border-radius: 999px;
+  padding: 5px 12px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.level-filter-chip:hover {
+  background: var(--bg-hover);
+}
+
+.level-filter-chip.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-text);
+}
+
+.level-filter-clear {
+  border: none;
+  background: transparent;
+  color: var(--text-faint);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 5px 8px;
+  text-decoration: underline;
+}
+
+.level-filter-clear:hover {
+  color: var(--text);
 }
 
 .folder-tree-section {

@@ -1,4 +1,6 @@
 import { isTauri } from '../api-client'
+import type { KnowledgeLevel } from '../types'
+import { RatingStars } from './RatingStars'
 
 /**
  * Minimal shape every list entry needs — satisfied by `RecentFile` and
@@ -28,7 +30,9 @@ export class FileListPanel<T extends FileListEntry> {
   private readonly contextMenuEl: HTMLDivElement
   private onOpenCallback: ((entry: T) => void) | null = null
   private onTogglePinCallback: ((entry: T, pin: boolean) => void) | null = null
+  private onRatingChangeCallback: ((entry: T, level: KnowledgeLevel | null) => void) | null = null
   private isPinnedFn: (entry: T) => boolean = () => false
+  private ratingFn: (entry: T) => KnowledgeLevel | null = () => null
 
   constructor(container: HTMLElement, title: string) {
     this.root = document.createElement('div')
@@ -63,6 +67,16 @@ export class FileListPanel<T extends FileListEntry> {
     this.isPinnedFn = fn
   }
 
+  /** `level` fires whenever the user changes a row's rating via its `RatingStars` control. */
+  onRatingChange(callback: (entry: T, level: KnowledgeLevel | null) => void): void {
+    this.onRatingChangeCallback = callback
+  }
+
+  /** Lets the caller supply each entry's current rating, so rows render the right stars filled in. */
+  setRating(fn: (entry: T) => KnowledgeLevel | null): void {
+    this.ratingFn = fn
+  }
+
   render(entries: T[]): void {
     this.listEl.innerHTML = ''
     this.root.style.display = entries.length > 0 ? 'block' : 'none'
@@ -75,16 +89,21 @@ export class FileListPanel<T extends FileListEntry> {
       label.textContent = entry.title || entry.path
       li.appendChild(label)
 
-      // Always-visible pin toggle — pinning needs a stable file_hash, absent
-      // for an unopened library-scan result (see FileListEntry's docs), so
-      // the star is omitted entirely for those rather than shown disabled.
+      // Rating/pin both need a stable file_hash, absent for an unopened
+      // library-scan result (see FileListEntry's docs) — both controls are
+      // simply omitted for those rows rather than shown disabled.
       if (entry.file_hash) {
+        const stars = new RatingStars()
+        stars.setLevel(this.ratingFn(entry))
+        stars.onChange((level) => this.onRatingChangeCallback?.(entry, level))
+        li.appendChild(stars.el)
+
         const pinned = this.isPinnedFn(entry)
         const pinBtn = document.createElement('button')
         pinBtn.className = 'pin-btn'
         pinBtn.classList.toggle('pinned', pinned)
         pinBtn.title = pinned ? 'Unpin' : 'Pin to top'
-        pinBtn.innerHTML = pinned ? '&#9733;' : '&#9734;'
+        pinBtn.innerHTML = '&#128204;' // pushpin — distinct from the rating stars sitting right next to it
         pinBtn.addEventListener('click', (e) => {
           e.stopPropagation()
           this.onTogglePinCallback?.(entry, !pinned)
