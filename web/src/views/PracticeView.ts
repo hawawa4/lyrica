@@ -110,6 +110,13 @@ interface MsczTabState {
   bookMode: boolean
 }
 
+/** One rendered PDF page's own container + measure overlay — `PdfTabState`'s `canvasContainer`/`calibrationOverlay`/`currentPage` fields are exactly this shape; book mode adds a second one (`rightPane`) rather than duplicating these three fields inline. */
+interface PdfPane {
+  canvasContainer: HTMLDivElement
+  calibrationOverlay: CalibrationOverlay
+  currentPage: number
+}
+
 interface PdfTabState {
   kind: 'pdf'
   fileHash: string
@@ -118,10 +125,13 @@ interface PdfTabState {
   pageCount: number
   currentPage: number
   zoom: number
-  markingMode: boolean
   pageContainer: HTMLDivElement
   canvasContainer: HTMLDivElement
   calibrationOverlay: CalibrationOverlay
+  /** Book mode's second page-stage, alongside this tab's own primary `canvasContainer`/`calibrationOverlay`/`currentPage` (which always plays the "left" role) — `null` outside book mode. Both panes' `CalibrationOverlay`s are independently interactive (drag-select, double-click-seek) and are kept showing the same underlying `points` array; only the primary one owns persistence (`onChange` -> `saveCalibrationPoints`), since both views are always in sync on the same data, not independent copies. */
+  rightPane: PdfPane | null
+  /** Whether this tab is currently showing a single page or a two-page "book" spread — mirrors `MsczTabState.bookMode`. */
+  bookMode: boolean
   points: CalibrationPoint[]
   selectedRange: PointRange | null
   numerator: number
@@ -171,7 +181,6 @@ export class PracticeView {
   private readonly ratingMountEl: HTMLSpanElement
   private readonly ratingStars: RatingStars
   private readonly pdfControlsEl: HTMLDivElement
-  private readonly markingModeCheckbox: HTMLInputElement
   private readonly suggestBarlinesBtn: HTMLButtonElement
   private readonly clearPointsBtn: HTMLButtonElement
   private readonly zoomOutBtn: HTMLButtonElement
@@ -233,7 +242,7 @@ export class PracticeView {
           <button id="fit-width-btn" title="Fit to width">Fit width</button>
           <button id="fit-height-btn" title="Fit to height">Fit height</button>
           <button id="zoom-reset-btn" title="Reset zoom to 100%">100%</button>
-          <button id="book-mode-btn" title="Book mode: show two pages side by side">&#128214; Book</button>
+          <button id="book-mode-btn" class="book-mode-btn" title="Book mode: show two pages side by side">&#128214; Book mode</button>
         </div>
         <div class="toolbar-spacer"></div>
         <div class="toolbar-group">
@@ -251,9 +260,8 @@ export class PracticeView {
 
       <div class="main-area">
         <div id="pdf-controls" class="pdf-toolbar">
-          <label><input id="marking-mode-checkbox" type="checkbox" /> Mark measures</label>
-          <button id="suggest-barlines-btn" style="display:none;">Auto-detect measures</button>
-          <button id="clear-points-btn" style="display:none;">Clear all measures</button>
+          <button id="suggest-barlines-btn">Auto-detect measures</button>
+          <button id="clear-points-btn">Clear all measures</button>
         </div>
         <div class="status-bar">
           <span id="status"></span>
@@ -303,7 +311,6 @@ export class PracticeView {
     this.ratingMountEl.appendChild(this.ratingStars.el)
     this.ratingStars.onChange((level) => void this.handleRatingChange(level))
     this.pdfControlsEl = this.root.querySelector('#pdf-controls')!
-    this.markingModeCheckbox = this.root.querySelector('#marking-mode-checkbox')!
     this.suggestBarlinesBtn = this.root.querySelector('#suggest-barlines-btn')!
     this.clearPointsBtn = this.root.querySelector('#clear-points-btn')!
     this.zoomOutBtn = this.root.querySelector('#zoom-out')!
@@ -366,10 +373,12 @@ export class PracticeView {
       const points = active.calibrationOverlay.getPoints()
       const target = points[itemIndex]
       if (!target) return
-      if (target.page !== active.currentPage) {
+      if (!this.pdfPaneFor(active, target.page)) {
         void this.showPdfPage(active, target.page)
       }
-      active.calibrationOverlay.setPlayingIndex(itemIndex)
+      this.setPdfPlayingIndex(active, target.page, itemIndex)
+      const pane = this.pdfPaneFor(active, target.page)
+      if (pane) pane.canvasContainer.appendChild(this.headMarker.el)
       // target.x/y are already a 0-1 fraction of the page (see
       // CalibrationOverlay's module docs) — no canvas-size division needed.
       this.headMarker.setPosition(target.x * 100, target.y * 100)
@@ -429,16 +438,6 @@ export class PracticeView {
       void setMetronomeEnabled(this.metronomeCheckbox.checked)
     })
 
-    this.markingModeCheckbox.addEventListener('change', () => {
-      const active = this.activeTab()
-      if (!active || active.kind !== 'pdf') return
-      active.markingMode = this.markingModeCheckbox.checked
-      active.calibrationOverlay.setMarkingMode(active.markingMode)
-      this.suggestBarlinesBtn.style.display = active.markingMode ? 'inline-block' : 'none'
-      this.clearPointsBtn.style.display = active.markingMode ? 'inline-block' : 'none'
-      this.calibrationStatusEl.textContent = this.markingModeStatusText(active)
-    })
-
     this.suggestBarlinesBtn.addEventListener('click', async () => {
       const active = this.activeTab()
       if (!active || active.kind !== 'pdf') return
@@ -450,6 +449,7 @@ export class PracticeView {
         const systems = await detectBarlines(pngBytes)
         const count = systems.reduce((n, s) => n + s.barline_xs.length, 0)
         active.calibrationOverlay.addPointsFromBarlines(systems)
+        this.syncRightPanePoints(active)
         this.calibrationStatusEl.textContent = `Added ${count} measure(s) from detected barlines — double-check them, the detector isn't always right.`
       } catch (e) {
         console.error('Failed to detect barlines:', e)
@@ -466,7 +466,8 @@ export class PracticeView {
       if (count === 0) return
       if (!window.confirm(`Remove all ${count} marked measure(s) for this file? This can't be undone.`)) return
       active.calibrationOverlay.clearAllPoints()
-      this.calibrationStatusEl.textContent = this.markingModeStatusText(active)
+      this.syncRightPanePoints(active)
+      this.calibrationStatusEl.textContent = this.measureStatusText(active)
     })
 
     this.zoomOutBtn.addEventListener('click', () => this.zoomActiveTab(-ZOOM_STEP))
@@ -517,6 +518,18 @@ export class PracticeView {
       if (!this.isVisible()) return
       e.preventDefault()
       this.toggleZenMode()
+    })
+
+    /** M toggles the metronome — same checkbox the Metronome label already drives, just reachable without clicking it. */
+    window.addEventListener('keydown', (e) => {
+      if (e.key !== 'm' && e.key !== 'M') return
+      const target = e.target as HTMLElement | null
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) return
+      if (!this.isVisible()) return
+      if (this.metronomeCheckbox.disabled) return
+      e.preventDefault()
+      this.metronomeCheckbox.checked = !this.metronomeCheckbox.checked
+      this.metronomeCheckbox.dispatchEvent(new Event('change'))
     })
 
     if (isTauri()) {
@@ -671,6 +684,27 @@ export class PracticeView {
     return { width: parseFloat(viewBox[2]) || 1, height: parseFloat(viewBox[3]) || 1 }
   }
 
+  /** Whichever of `tab`'s panes (primary, or `rightPane` in book mode) is currently showing `page` — mirrors `.mscz`'s `PageDisplay.stageFor`, needed for exactly the same reason: book mode's two panes are never on the same page as each other. */
+  private pdfPaneFor(tab: PdfTabState, page: number): PdfPane | null {
+    if (tab.currentPage === page) return { canvasContainer: tab.canvasContainer, calibrationOverlay: tab.calibrationOverlay, currentPage: tab.currentPage }
+    if (tab.rightPane?.currentPage === page) return tab.rightPane
+    return null
+  }
+
+  /** Sets the "currently playing" highlight on whichever pane holds `page`, clearing it on the other pane if book mode has one — a point only ever plays on one page at a time. */
+  private setPdfPlayingIndex(tab: PdfTabState, page: number, itemIndex: number | null): void {
+    if (tab.currentPage === page) {
+      tab.calibrationOverlay.setPlayingIndex(itemIndex)
+      tab.rightPane?.calibrationOverlay.setPlayingIndex(null)
+    } else if (tab.rightPane?.currentPage === page) {
+      tab.rightPane.calibrationOverlay.setPlayingIndex(itemIndex)
+      tab.calibrationOverlay.setPlayingIndex(null)
+    } else {
+      tab.calibrationOverlay.setPlayingIndex(null)
+      tab.rightPane?.calibrationOverlay.setPlayingIndex(null)
+    }
+  }
+
   private renderTabBar(): void {
     const tabInfos: TabInfo[] = Array.from(this.tabs.values()).map((t) => ({ fileHash: t.fileHash, title: t.title }))
     this.tabBar.setTabs(tabInfos, this.activeHash)
@@ -756,7 +790,7 @@ export class PracticeView {
     }
     const point = active.calibrationOverlay.getPoints().find((p) => p.measure === measureIndex)
     if (!point) return
-    if (point.page !== active.currentPage) void this.showPdfPage(active, point.page)
+    if (!this.pdfPaneFor(active, point.page)) void this.showPdfPage(active, point.page)
   }
 
   /**
@@ -809,12 +843,8 @@ export class PracticeView {
     this.pdfControlsEl.style.display = tab.kind === 'pdf' ? 'flex' : 'none'
     this.transportEl.style.display = 'flex'
     this.zoomGroupEl.style.display = 'flex'
-    // Book mode needs SelectionOverlay's measure-box model, which PDF
-    // mode's CalibrationOverlay doesn't share an interface with — see
-    // BookPageView's module docs. Hidden rather than disabled for PDF tabs,
-    // same treatment the .mscz-only transport controls already get.
-    this.bookModeBtn.style.display = tab.kind === 'mscz' ? 'inline-block' : 'none'
-    if (tab.kind === 'mscz') this.bookModeBtn.classList.toggle('active', tab.bookMode)
+    this.bookModeBtn.style.display = 'inline-block'
+    this.bookModeBtn.classList.toggle('active', tab.bookMode)
     void this.loadRatingForTab(tab)
 
     if (tab.kind === 'mscz') {
@@ -870,11 +900,7 @@ export class PracticeView {
         ? `Selected measures ${tab.selectedRange.startIndex}-${tab.selectedRange.endIndex}`
         : ''
       this.loopStatusEl.textContent = tab.loopRegion ? 'Looping measures' : ''
-      this.calibrationStatusEl.textContent = this.markingModeStatusText(tab)
-      this.markingModeCheckbox.checked = tab.markingMode
-      tab.calibrationOverlay.setMarkingMode(tab.markingMode)
-      this.suggestBarlinesBtn.style.display = tab.markingMode ? 'inline-block' : 'none'
-      this.clearPointsBtn.style.display = tab.markingMode ? 'inline-block' : 'none'
+      this.calibrationStatusEl.textContent = this.measureStatusText(tab)
       this.zoomIndicatorEl.textContent = `${Math.round(tab.zoom * 100)}%`
       this.zoomOutBtn.disabled = tab.zoom <= PDF_MIN_ZOOM
       this.zoomInBtn.disabled = tab.zoom >= PDF_MAX_ZOOM
@@ -925,10 +951,9 @@ export class PracticeView {
     await loadPdfTempoMap(tab.points, tab.numerator, durationMs)
   }
 
-  private markingModeStatusText(tab: PdfTabState): string {
-    return tab.markingMode
-      ? `Marking mode: click the page to add a measure. ${tab.points.length} measure(s) marked so far.`
-      : `${tab.points.length} measure(s) marked. Turn on "Mark measures" to add or remove them.`
+  /** Measures are placed entirely by the CV auto-detector now (see `CalibrationOverlay`'s module docs) — this just reports the count, not an editable-mode status. */
+  private measureStatusText(tab: PdfTabState): string {
+    return `${tab.points.length} measure(s) detected.`
   }
 
   /** Shows/loads the current tab's "knowledge level" rating in the status bar — hidden entirely for a tab with no stable file_hash (desktop hashing failed, or running outside Tauri), since rating has nothing to key off. */
@@ -1010,7 +1035,11 @@ export class PracticeView {
     if (active.kind === 'mscz') {
       active.pageView.setZoomToWidth(width)
     } else {
-      this.setPdfZoom(active, width / PDF_BASE_WIDTH)
+      // Book mode shows two pages side by side, so each gets half the
+      // available width — same halving BookPageView.setZoomToWidth does
+      // for .mscz's own book mode.
+      const availableWidth = active.bookMode ? width / 2 : width
+      this.setPdfZoom(active, availableWidth / PDF_BASE_WIDTH)
     }
   }
 
@@ -1051,6 +1080,7 @@ export class PracticeView {
       tab.score.destroy()
     } else {
       tab.calibrationOverlay.destroy()
+      tab.rightPane?.calibrationOverlay.destroy()
     }
     this.tabs.delete(fileHash)
 
@@ -1281,6 +1311,29 @@ export class PracticeView {
     this.onFileOpenedCallback?.()
   }
 
+  /** Builds one PDF page-stage div (shrink-wraps to the canvas it'll later contain, plus the theme raster-overlay) — shared by the primary pane and, in book mode, the second `rightPane`. The caller still constructs the `CalibrationOverlay` itself, since that needs to happen after this container is placed in its final spot in the DOM. */
+  private createPdfCanvasContainer(): HTMLDivElement {
+    const canvasContainer = document.createElement('div')
+    // Shrink-wraps exactly to the canvas's own CSS size (a plain block <div>
+    // would otherwise stretch to its parent's full width, leaving blank space
+    // to the right of the canvas whenever the zoomed canvas is narrower than
+    // the available page width) — CalibrationOverlay positions its dots as
+    // percentages of `canvasContainer`'s own box (`stage`'s `inset: 0`
+    // children), so that box must exactly match the canvas's box or every
+    // dot's position silently drifts off-target.
+    canvasContainer.style.position = 'relative'
+    canvasContainer.style.display = 'inline-block'
+    canvasContainer.className = 'page-stage'
+    // Theme tint/texture for the PDF canvas (see theme.css's .raster-overlay
+    // comment) — a real element kept immediately after the <canvas> so it
+    // paints above the page but below CalibrationOverlay's dots/drag-rect/form
+    // layers, appended next.
+    const rasterOverlay = document.createElement('div')
+    rasterOverlay.className = 'raster-overlay'
+    canvasContainer.appendChild(rasterOverlay)
+    return canvasContainer
+  }
+
   private async openPdfBytes(bytes: Uint8Array, filename: string, path: string | null): Promise<void> {
     this.statusEl.textContent = `Loading ${filename}...`
 
@@ -1327,25 +1380,8 @@ export class PracticeView {
 
     const pageContainer = document.createElement('div')
     pageContainer.style.position = 'relative'
-    const canvasContainer = document.createElement('div')
-    // Shrink-wraps exactly to the canvas's own CSS size (a plain block <div>
-    // would otherwise stretch to its parent's full width, leaving blank space
-    // to the right of the canvas whenever the zoomed canvas is narrower than
-    // the available page width) — CalibrationOverlay positions its dots as
-    // percentages of `canvasContainer`'s own box (`stage`'s `inset: 0`
-    // children), so that box must exactly match the canvas's box or every
-    // dot's position silently drifts off-target.
-    canvasContainer.style.position = 'relative'
-    canvasContainer.style.display = 'inline-block'
-    canvasContainer.className = 'page-stage'
+    const canvasContainer = this.createPdfCanvasContainer()
     pageContainer.appendChild(canvasContainer)
-    // Theme tint/texture for the PDF canvas (see theme.css's .raster-overlay
-    // comment) — a real element kept immediately after the <canvas> so it
-    // paints above the page but below CalibrationOverlay's dots/drag-rect/form
-    // layers, appended next.
-    const rasterOverlay = document.createElement('div')
-    rasterOverlay.className = 'raster-overlay'
-    canvasContainer.appendChild(rasterOverlay)
     const calibrationOverlay = new CalibrationOverlay(canvasContainer)
 
     const tabState: PdfTabState = {
@@ -1356,10 +1392,11 @@ export class PracticeView {
       pageCount: doc.numPages,
       currentPage: 0,
       zoom: 1,
-      markingMode: false,
       pageContainer,
       canvasContainer,
       calibrationOverlay,
+      rightPane: null,
+      bookMode: false,
       points: [],
       selectedRange: null,
       numerator: PDF_DEFAULT_NUMERATOR,
@@ -1395,7 +1432,7 @@ export class PracticeView {
         )
       }
       if (this.activeHash !== tabState.fileHash) return
-      this.calibrationStatusEl.textContent = this.markingModeStatusText(tabState)
+      this.calibrationStatusEl.textContent = this.measureStatusText(tabState)
       const hasAudio = points.length >= 2
       const isPlaying = !this.stopBtn.disabled
       this.playBtn.disabled = !hasAudio || isPlaying
@@ -1454,32 +1491,61 @@ export class PracticeView {
 
     if (!this.tabs.has(tab.fileHash)) return
     tab.calibrationOverlay.addPointsFromBarlinesAcrossPages(pageResults)
+    this.syncRightPanePoints(tab)
     if (this.activeHash === tab.fileHash) {
       const count = pageResults.reduce((n, r) => n + r.systems.reduce((m, s) => m + s.barline_xs.length, 0), 0)
       this.calibrationStatusEl.textContent = `Auto-detected ${count} measure(s) across ${tab.pageCount} page(s) — double-check them, the detector isn't always right.`
     }
   }
 
+  /**
+   * Single-page mode: shows exactly `pageNumber`. Book mode: aligns
+   * `pageNumber` down to its even spread start (0&1, 2&3, ...) — same rule
+   * `BookPageView.showPage` uses for `.mscz` — and renders that page into
+   * the primary/left pane, `+1` into `rightPane` (left blank past the last
+   * page, for an odd-paged document's final spread).
+   */
   private async showPdfPage(tab: PdfTabState, pageNumber: number): Promise<void> {
     if (pageNumber < 0 || pageNumber >= tab.pageCount) return
-    tab.currentPage = pageNumber
+    const spreadStart = tab.bookMode ? pageNumber - (pageNumber % 2) : pageNumber
+
+    tab.currentPage = spreadStart
+    await this.renderPdfPane(tab, { canvasContainer: tab.canvasContainer, calibrationOverlay: tab.calibrationOverlay, currentPage: tab.currentPage }, spreadStart, () => tab.currentPage === spreadStart)
+    if (tab.currentPage !== spreadStart) return // stale: navigated elsewhere while this render was in flight
+
+    if (tab.bookMode && tab.rightPane) {
+      const rightPage = spreadStart + 1
+      if (rightPage >= tab.pageCount) {
+        tab.rightPane.canvasContainer.querySelector('canvas')?.remove()
+        tab.rightPane.currentPage = rightPage
+      } else {
+        tab.rightPane.currentPage = rightPage
+        await this.renderPdfPane(tab, tab.rightPane, rightPage, () => tab.rightPane?.currentPage === rightPage)
+      }
+    }
+
+    if (this.activeHash === tab.fileHash) {
+      this.pageIndicatorEl.textContent = tab.bookMode
+        ? `Pages ${spreadStart + 1}-${Math.min(spreadStart + 2, tab.pageCount)} / ${tab.pageCount}`
+        : `Page ${spreadStart + 1} / ${tab.pageCount}`
+      this.prevBtn.disabled = spreadStart <= 0
+      this.nextBtn.disabled = spreadStart >= tab.pageCount - (tab.bookMode ? 2 : 1)
+    }
+  }
+
+  /** Renders `pageNumber` into one pane (left or right), guarded by `stillCurrent` against a stale response landing after the user navigated elsewhere while this render was in flight — same race `showPdfPage` itself already guarded against before book mode gave it two panes to manage instead of one. */
+  private async renderPdfPane(tab: PdfTabState, pane: PdfPane, pageNumber: number, stillCurrent: () => boolean): Promise<void> {
     const canvas = await renderPdfPage(tab.doc, pageNumber + 1, PDF_BASE_WIDTH * tab.zoom)
-    if (tab.currentPage !== pageNumber) return // stale: navigated elsewhere while this render was in flight
+    if (!stillCurrent()) return
     // Remove only the old <canvas>, not canvasContainer's whole subtree —
-    // CalibrationOverlay's own layers (dots/drag-rect/form) are also mounted
+    // CalibrationOverlay's own layers (dots/drag-rect) are also mounted
     // inside canvasContainer (so they stay sized/positioned exactly to the
     // canvas, see that constructor call's comment), and innerHTML = '' would
     // silently detach them from the DOM on every page change/zoom, leaving
     // `render()` drawing into disconnected nodes nothing ever displays.
-    tab.canvasContainer.querySelector('canvas')?.remove()
-    tab.canvasContainer.insertBefore(canvas, tab.canvasContainer.firstChild)
-    tab.calibrationOverlay.setPage(pageNumber)
-
-    if (this.activeHash === tab.fileHash) {
-      this.pageIndicatorEl.textContent = `Page ${pageNumber + 1} / ${tab.pageCount}`
-      this.prevBtn.disabled = pageNumber <= 0
-      this.nextBtn.disabled = pageNumber >= tab.pageCount - 1
-    }
+    pane.canvasContainer.querySelector('canvas')?.remove()
+    pane.canvasContainer.insertBefore(canvas, pane.canvasContainer.firstChild)
+    pane.calibrationOverlay.setPage(pageNumber)
   }
 
   /** Updates the Play button's icon/title and both buttons' disabled state to match `state` — called every time a tab's transportState changes, including on tab (re)activation. */
@@ -1514,8 +1580,10 @@ export class PracticeView {
       if (p.time_ms > tab.headMs) break
       point = p
     }
-    if (point.page !== tab.currentPage) void this.showPdfPage(tab, point.page)
+    if (!this.pdfPaneFor(tab, point.page)) void this.showPdfPage(tab, point.page)
     if (this.activeHash !== tab.fileHash) return
+    const pane = this.pdfPaneFor(tab, point.page)
+    if (pane) pane.canvasContainer.appendChild(this.headMarker.el)
     // point.x/y are already a 0-1 fraction of the page — no canvas-size division needed.
     this.headMarker.setPosition(point.x * 100, point.y * 100)
   }
@@ -1605,18 +1673,31 @@ export class PracticeView {
   }
 
   /**
-   * Rebuilds the active `.mscz` tab's `pageView`/`selectionOverlay` in the
-   * other display mode, preserving the current page and zoom. A full
-   * tear-down/rebuild rather than mutating in place — `PageView` and
-   * `BookPageView` each own their own DOM subtree
-   * (`score-svg-layer`/measure boxes), so swapping modes cleanly means
-   * destroying the old subtree and constructing the new one fresh, the same
-   * way opening a brand-new tab already does.
+   * Rebuilds the active tab's page display in the other mode (single-page
+   * vs. two-page "book" spread), preserving the current page and zoom.
+   *
+   * `.mscz`: a full tear-down/rebuild of `pageView`/`selectionOverlay` rather
+   * than mutating in place — `PageView` and `BookPageView` each own their
+   * own DOM subtree (`score-svg-layer`/measure boxes), so swapping modes
+   * cleanly means destroying the old subtree and constructing the new one
+   * fresh, the same way opening a brand-new tab already does.
+   *
+   * PDF: toggles `rightPane` between `null` (single-page) and a second
+   * `PdfPane` (book), then re-renders via `showPdfPage` — the primary pane's
+   * `canvasContainer`/`calibrationOverlay` are reused as-is (unlike `.mscz`,
+   * nothing about them needs rebuilding for either mode).
    */
   private async toggleBookModeForActiveTab(): Promise<void> {
     const active = this.activeTab()
-    if (!active || active.kind !== 'mscz') return
+    if (!active) return
+    if (active.kind === 'mscz') {
+      await this.toggleMsczBookMode(active)
+    } else {
+      await this.togglePdfBookMode(active)
+    }
+  }
 
+  private async toggleMsczBookMode(active: MsczTabState): Promise<void> {
     const currentPage = active.pageView.page
     const currentZoom = active.pageView.getZoom()
     const pageCount = active.pageView.pages
@@ -1643,6 +1724,56 @@ export class PracticeView {
     this.bookModeBtn.classList.toggle('active', nextBookMode)
   }
 
+  private async togglePdfBookMode(active: PdfTabState): Promise<void> {
+    const currentPage = active.currentPage
+    const nextBookMode = !active.bookMode
+    active.pageContainer.classList.toggle('book-spread', nextBookMode)
+
+    if (nextBookMode) {
+      active.canvasContainer.classList.add('book-page')
+      const rightCanvasContainer = this.createPdfCanvasContainer()
+      rightCanvasContainer.classList.add('book-page', 'book-page-right')
+      active.pageContainer.appendChild(rightCanvasContainer)
+      const rightCalibrationOverlay = new CalibrationOverlay(rightCanvasContainer)
+      rightCalibrationOverlay.setPoints(active.points)
+      this.wirePdfPaneInteractions(active, rightCalibrationOverlay)
+      active.rightPane = { canvasContainer: rightCanvasContainer, calibrationOverlay: rightCalibrationOverlay, currentPage: currentPage + 1 }
+    } else if (active.rightPane) {
+      active.canvasContainer.classList.remove('book-page')
+      active.rightPane.calibrationOverlay.destroy()
+      active.rightPane.canvasContainer.remove()
+      active.rightPane = null
+    }
+    active.bookMode = nextBookMode
+
+    this.headMarker.el.remove()
+    await this.showPdfPage(active, currentPage)
+    this.bookModeBtn.classList.toggle('active', nextBookMode)
+  }
+
+  /** Wires a `CalibrationOverlay` (the right pane's — the primary/left one is already wired at tab construction) into the same selection/seek handling every pane shares, minus persistence (the primary pane alone owns `onChange` -> `saveCalibrationPoints`, since both panes always show the same underlying point list rather than independent copies — see `PdfTabState.rightPane`'s docs). */
+  private wirePdfPaneInteractions(tab: PdfTabState, overlay: CalibrationOverlay): void {
+    overlay.onSelect((range) => {
+      tab.selectedRange = range
+      void this.setPdfLoop(range)
+      if (range) {
+        const loopRegion = this.loopRegionForPointRange(overlay.getPoints(), range)
+        if (loopRegion) void this.seekActive(tab, loopRegion[0])
+      }
+      if (this.activeHash !== tab.fileHash) return
+      this.selectionStatusEl.textContent = range ? `Selected measures ${range.startIndex}-${range.endIndex}` : ''
+    })
+    overlay.onSeek((pointIndex) => {
+      const point = overlay.getPoints()[pointIndex]
+      if (point) void this.seekActive(tab, point.time_ms)
+    })
+  }
+
+  /** Re-pushes the primary pane's point list into `rightPane`'s independent `CalibrationOverlay` instance — call after any mutation (`addPointsFromBarlines*`, `clearAllPoints`) made through the primary pane, so book mode's second pane doesn't silently go stale relative to it. No-op outside book mode. */
+  private syncRightPanePoints(tab: PdfTabState): void {
+    tab.rightPane?.calibrationOverlay.setPoints(tab.calibrationOverlay.getPoints())
+  }
+
   /** Toolbar "go to measure" input — 1-based like the number a musician would actually call out ("measure 24"), converted to this app's internal 0-based `measure_index` before reusing the same jump logic markers already use. */
   private goToMeasureFromInput(): void {
     const raw = Number(this.gotoMeasureInput.value)
@@ -1653,15 +1784,23 @@ export class PracticeView {
   private goToPrevPage(): void {
     const active = this.activeTab()
     if (!active) return
-    if (active.kind === 'mscz') void active.pageView.prev()
-    else void this.showPdfPage(active, active.currentPage - 1)
+    if (active.kind === 'mscz') {
+      void active.pageView.prev()
+    } else {
+      const step = active.bookMode ? 2 : 1
+      void this.showPdfPage(active, active.currentPage - step)
+    }
   }
 
   private goToNextPage(): void {
     const active = this.activeTab()
     if (!active) return
-    if (active.kind === 'mscz') void active.pageView.next()
-    else void this.showPdfPage(active, active.currentPage + 1)
+    if (active.kind === 'mscz') {
+      void active.pageView.next()
+    } else {
+      const step = active.bookMode ? 2 : 1
+      void this.showPdfPage(active, active.currentPage + step)
+    }
   }
 }
 

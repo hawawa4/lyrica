@@ -14,18 +14,20 @@ export interface PointRange {
 }
 
 /**
- * PDF mode (Phase 9): two interaction modes on the same rendered PDF page,
- * mutually exclusive via `setMarkingMode`:
+ * PDF mode (Phase 9): measures are positioned entirely by the CV
+ * barline-detection assist (`addPointsFromBarlines`/
+ * `addPointsFromBarlinesAcrossPages`) — there is no manual click-to-place/
+ * click-to-remove UI (an earlier version had one, gated behind a
+ * "Marking mode" toggle; removed once the CV detector proved reliable
+ * enough that hand-placing/correcting individual measures stopped being
+ * worth the interaction-mode complexity). If the detector gets a page
+ * wrong, the fix is re-running auto-detect or clearing all measures for the
+ * file and re-scanning, not hand correction.
  *
- * - **Marking mode** (`setMarkingMode(true)`, off by default): click to place
- *   a calibration point (opens a small inline form to assign its measure
- *   number), click an existing point's dot to remove it. A PDF is typically reopened
- *   already calibrated from a past session, so placement/removal needs an
- *   explicit toggle — without it, an ordinary click while reading/practicing
- *   would silently add an unwanted point.
- * - **Normal mode** (default): drag-select a rectangle to select a *range* of
- *   existing points (like `SelectionOverlay`'s drag-to-select-measures for
- *   `.mscz`) for `main.ts`'s L-to-loop, instead of adding/removing anything.
+ * The page's only remaining interaction is drag-select a rectangle to
+ * select a *range* of existing measures (like `SelectionOverlay`'s
+ * drag-to-select-measures for `.mscz`) for `main.ts`'s L-to-loop, plus
+ * double-click-to-seek on the nearest measure.
  *
  * Positions are stored as a **fraction (0-1) of the page's own width/height**
  * — zoom-independent, matching `CalibrationPoint.x`/`y`'s documented contract
@@ -42,12 +44,8 @@ export interface PointRange {
 export class CalibrationOverlay {
   private readonly dotsLayer: HTMLDivElement
   private readonly dragRectEl: HTMLDivElement
-  private readonly formEl: HTMLDivElement
-  private readonly measureInput: HTMLInputElement
   private points: CalibrationPoint[] = []
   private currentPage = 0
-  private markingMode = false
-  private pendingClick: { x: number; y: number } | null = null
   private dragStart: { x: number; y: number } | null = null
   private selectedRange: PointRange | null = null
   private playingIndex: number | null = null
@@ -68,32 +66,8 @@ export class CalibrationOverlay {
     this.dragRectEl.style.pointerEvents = 'none'
     this.dragRectEl.style.display = 'none'
 
-    this.formEl = document.createElement('div')
-    this.formEl.style.position = 'absolute'
-    this.formEl.style.display = 'none'
-    this.formEl.style.background = 'var(--bg-elevated)'
-    this.formEl.style.color = 'var(--text)'
-    this.formEl.style.border = '1px solid var(--border-strong)'
-    this.formEl.style.borderRadius = '6px'
-    this.formEl.style.padding = '8px'
-    this.formEl.style.boxShadow = 'var(--shadow)'
-    this.formEl.style.zIndex = '10'
-    this.formEl.innerHTML = `
-      <div style="font-size: 12px; margin-bottom: 4px;">New measure</div>
-      <label style="font-size: 12px;">Measure <input type="number" min="0" value="0" style="width: 50px;" /></label>
-      <div style="margin-top: 4px;">
-        <button class="confirm primary" style="font-size: 12px;">Add</button>
-        <button class="cancel" style="font-size: 12px;">Cancel</button>
-      </div>
-    `
-    this.measureInput = this.formEl.querySelector('input')!
-    this.formEl.querySelector('.confirm')!.addEventListener('click', () => this.confirmPending())
-    this.formEl.querySelector('.cancel')!.addEventListener('click', () => this.cancelPending())
-
     this.stage.appendChild(this.dotsLayer)
     this.stage.appendChild(this.dragRectEl)
-    this.stage.appendChild(this.formEl)
-    this.stage.addEventListener('click', this.handleStageClick)
     this.stage.addEventListener('mousedown', this.handleMouseDown)
     window.addEventListener('mousemove', this.handleMouseMove)
     window.addEventListener('mouseup', this.handleMouseUp)
@@ -104,18 +78,9 @@ export class CalibrationOverlay {
     this.onChangeCallback = callback
   }
 
-  /** Called when the drag-selected point range changes (normal mode only). */
+  /** Called when the drag-selected measure range changes. */
   onSelect(callback: (range: PointRange | null) => void): void {
     this.onSelectCallback = callback
-  }
-
-  setMarkingMode(enabled: boolean): void {
-    if (this.markingMode === enabled) return
-    this.markingMode = enabled
-    if (!enabled) this.cancelPending()
-    this.selectedRange = null
-    this.onSelectCallback?.(null)
-    this.render()
   }
 
   /** Point indices (`pointIndex`, `PointRange`) are always in time-sorted order — matches the order `pdf_calibration::save_points`/`tempo_map` use server-side, so `main.ts`'s loop-range derivation can treat "index" and "time order" as the same thing. */
@@ -137,7 +102,6 @@ export class CalibrationOverlay {
 
   setPage(page: number): void {
     this.currentPage = page
-    this.cancelPending()
     this.render()
   }
 
@@ -148,9 +112,10 @@ export class CalibrationOverlay {
    * them in reading order (system top-to-bottom, then x left-to-right
    * within a system) — no separate "suggestion, click to confirm" step. The
    * detector can and does produce false positives (stems, chord stacks —
-   * see cv-barline's module docs), so these are meant to be spot-corrected
-   * afterward via the normal Mark-measures add/remove flow, not treated as
-   * guaranteed-correct.
+   * see cv-barline's module docs). There's no manual correction UI for
+   * individual measures (see this file's module docs) — if the detector
+   * gets a page wrong, the fix is re-running this (or `clearAllPoints` then
+   * re-scanning), not treated as guaranteed-correct on the first pass.
    */
   addPointsFromBarlines(systems: StaffSystem[]): void {
     const canvas = this.stage.querySelector('canvas')
@@ -248,19 +213,16 @@ export class CalibrationOverlay {
   }
 
   destroy(): void {
-    this.stage.removeEventListener('click', this.handleStageClick)
     this.stage.removeEventListener('mousedown', this.handleMouseDown)
     window.removeEventListener('mousemove', this.handleMouseMove)
     window.removeEventListener('mouseup', this.handleMouseUp)
     this.stage.removeEventListener('dblclick', this.handleDoubleClick)
     this.dotsLayer.remove()
     this.dragRectEl.remove()
-    this.formEl.remove()
   }
 
-  /** Nearest calibration point on the current page, by on-screen pixel distance from a double-click — ignored in marking mode, where a click already means "place a point." */
+  /** Nearest measure on the current page, by on-screen pixel distance from a double-click, for seeking the playback head there. */
   private handleDoubleClick = (e: MouseEvent): void => {
-    if (this.markingMode) return
     const canvas = this.stage.querySelector('canvas')
     if (!canvas) return
     const rect = this.stage.getBoundingClientRect()
@@ -285,36 +247,7 @@ export class CalibrationOverlay {
     if (nearestIndex !== -1) this.onSeekCallback?.(nearestIndex)
   }
 
-  private handleStageClick = (e: MouseEvent): void => {
-    if (!this.markingMode) return
-    if (this.formEl.contains(e.target as Node)) return
-    if ((e.target as HTMLElement).dataset.pointIndex !== undefined) return // handled by dot's own click
-
-    const rect = this.stage.getBoundingClientRect()
-    const pixelX = e.clientX - rect.left
-    const pixelY = e.clientY - rect.top
-
-    const canvas = this.stage.querySelector('canvas')
-    if (!canvas) return
-
-    // Store as a fraction (0-1) of the displayed page size — zoom-independent,
-    // see this file's module docs. `pixelX`/`pixelY` (displayed pixels) are
-    // also what the form's own CSS position uses, so no canvas-native
-    // conversion is needed at all here anymore.
-    this.openPendingForm(pixelX / rect.width, pixelY / rect.height, pixelX, pixelY)
-  }
-
-  /** Opens the measure confirmation form, positioned at `pixelX`/`pixelY` (displayed pixels, for the form's own CSS position) for a pending point at `fracX`/`fracY` (0-1 of the page, what actually gets stored). */
-  private openPendingForm(fracX: number, fracY: number, pixelX: number, pixelY: number): void {
-    this.pendingClick = { x: fracX, y: fracY }
-    this.measureInput.value = String(nextMeasure(this.points))
-    this.formEl.style.left = `${pixelX}px`
-    this.formEl.style.top = `${pixelY}px`
-    this.formEl.style.display = 'block'
-  }
-
   private handleMouseDown = (e: MouseEvent): void => {
-    if (this.markingMode) return
     const rect = this.stage.getBoundingClientRect()
     this.dragStart = { x: e.clientX - rect.left, y: e.clientY - rect.top }
     this.dragRectEl.style.display = 'block'
@@ -369,33 +302,6 @@ export class CalibrationOverlay {
     this.onSelectCallback?.(this.selectedRange)
   }
 
-  private confirmPending(): void {
-    if (!this.pendingClick) return
-    const measure = Number(this.measureInput.value) || 0
-    const point: CalibrationPoint = {
-      page: this.currentPage,
-      x: this.pendingClick.x,
-      y: this.pendingClick.y,
-      time_ms: nextTimeMs(this.points),
-      measure,
-    }
-    this.points = [...this.points, point].sort((a, b) => a.time_ms - b.time_ms)
-    this.cancelPending()
-    this.render()
-    this.onChangeCallback?.(this.points)
-  }
-
-  private cancelPending(): void {
-    this.pendingClick = null
-    this.formEl.style.display = 'none'
-  }
-
-  private removePoint(index: number): void {
-    this.points = this.points.filter((_, i) => i !== index)
-    this.render()
-    this.onChangeCallback?.(this.points)
-  }
-
   private render(): void {
     this.dotsLayer.innerHTML = ''
     const canvas = this.stage.querySelector('canvas')
@@ -439,17 +345,7 @@ export class CalibrationOverlay {
       dot.style.alignItems = 'center'
       dot.style.justifyContent = 'center'
       dot.textContent = String(p.measure)
-      if (this.markingMode) {
-        dot.style.pointerEvents = 'auto'
-        dot.style.cursor = 'pointer'
-        dot.title = `Measure ${p.measure} — click to remove`
-        dot.addEventListener('click', (e) => {
-          e.stopPropagation()
-          this.removePoint(index)
-        })
-      } else {
-        dot.title = `Measure ${p.measure}`
-      }
+      dot.title = `Measure ${p.measure}`
       this.dotsLayer.appendChild(dot)
     }
   }

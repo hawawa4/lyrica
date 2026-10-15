@@ -154,14 +154,20 @@
   flex-shrink: 0;
 }
 
-/* The right page of an odd-paged score's final spread has nothing to show (BookPageView.syncRight leaves its score-svg-layer empty) — collapse it rather than showing an empty page-shaped box. */
+/* The right page of an odd-paged score's final spread has nothing to show (BookPageView.syncRight leaves its score-svg-layer empty; showPdfPage removes the PDF pane's <canvas> the same way) — collapse it rather than showing an empty page-shaped box. */
 .book-page-right:empty,
-.book-page-right:has(.score-svg-layer:empty) {
+.book-page-right:has(.score-svg-layer:empty),
+.book-page-right:not(:has(canvas)) {
   box-shadow: none;
   background: none;
 }
 
-#book-mode-btn.active {
+.book-mode-btn {
+  border: 1px solid var(--border-strong);
+  font-weight: 600;
+}
+
+.book-mode-btn.active {
   background: var(--accent);
   border-color: var(--accent);
   color: var(--accent-text);
