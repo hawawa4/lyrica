@@ -79,7 +79,7 @@ export class CalibrationOverlay {
     this.formEl.style.boxShadow = 'var(--shadow)'
     this.formEl.style.zIndex = '10'
     this.formEl.innerHTML = `
-      <div style="font-size: 12px; margin-bottom: 4px;">New calibration point</div>
+      <div style="font-size: 12px; margin-bottom: 4px;">New measure</div>
       <label style="font-size: 12px;">Measure <input type="number" min="0" value="0" style="width: 50px;" /></label>
       <div style="margin-top: 4px;">
         <button class="confirm primary" style="font-size: 12px;">Add</button>

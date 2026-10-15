@@ -373,6 +373,16 @@
   color: var(--text-muted);
 }
 
+.goto-measure-input {
+  width: 64px;
+  padding: 4px 6px;
+  border-radius: 5px;
+  border: 1px solid var(--border);
+  background: var(--bg-page);
+  color: var(--text);
+  font-size: 13px;
+}
+
 .icon-btn {
   padding: 6px 9px;
   line-height: 1;

@@ -157,6 +157,8 @@ export class PracticeView {
   private readonly pageIndicatorEl: HTMLSpanElement
   private readonly prevBtn: HTMLButtonElement
   private readonly nextBtn: HTMLButtonElement
+  private readonly gotoMeasureInput: HTMLInputElement
+  private readonly gotoMeasureBtn: HTMLButtonElement
   private readonly playBtn: HTMLButtonElement
   private readonly stopBtn: HTMLButtonElement
   private readonly speedButtons: Record<number, HTMLButtonElement>
@@ -213,6 +215,8 @@ export class PracticeView {
           <button id="prev-page" class="icon-btn" title="Previous page">&larr;</button>
           <span id="page-indicator"></span>
           <button id="next-page" class="icon-btn" title="Next page">&rarr;</button>
+          <input id="goto-measure-input" type="number" min="1" placeholder="Measure" class="goto-measure-input" />
+          <button id="goto-measure-btn" title="Go to measure">Go</button>
         </div>
         <div id="transport" class="toolbar-group" style="display:none;">
           <button id="play-btn" class="icon-btn primary" disabled title="Play">&#9654;</button>
@@ -248,8 +252,8 @@ export class PracticeView {
       <div class="main-area">
         <div id="pdf-controls" class="pdf-toolbar">
           <label><input id="marking-mode-checkbox" type="checkbox" /> Mark measures</label>
-          <button id="suggest-barlines-btn" style="display:none;">Suggest barlines</button>
-          <button id="clear-points-btn" style="display:none;">Clear all points</button>
+          <button id="suggest-barlines-btn" style="display:none;">Auto-detect measures</button>
+          <button id="clear-points-btn" style="display:none;">Clear all measures</button>
         </div>
         <div class="status-bar">
           <span id="status"></span>
@@ -279,6 +283,8 @@ export class PracticeView {
     this.pageIndicatorEl = this.root.querySelector('#page-indicator')!
     this.prevBtn = this.root.querySelector('#prev-page')!
     this.nextBtn = this.root.querySelector('#next-page')!
+    this.gotoMeasureInput = this.root.querySelector('#goto-measure-input')!
+    this.gotoMeasureBtn = this.root.querySelector('#goto-measure-btn')!
     this.playBtn = this.root.querySelector('#play-btn')!
     this.stopBtn = this.root.querySelector('#stop-btn')!
     this.speedButtons = {
@@ -373,16 +379,26 @@ export class PracticeView {
     this.markerPanel = new MarkerPanel(markerPanelEl)
 
     /**
-     * A new marker attaches to the current selection's first measure (the
-     * timeline's `measure_index`, looked up via the selection's start elid)
-     * — matching the "click-drag-select" direct-manipulation style the loop
+     * A new marker attaches to the current selection's first measure — for
+     * an `.mscz` tab, the timeline's `measure_index` looked up via the
+     * selection's start elid; for a PDF tab, the `measure` field of the
+     * first selected calibration point (PDF mode's own "where is this on the
+     * page" anchor — see `CalibrationOverlay`'s module docs, which already
+     * frame these as the automatic measure positions). Either way this
+     * matches the "click-drag-select" direct-manipulation style the loop
      * feature already uses, rather than a separate "pick a measure" step.
      */
     this.markerPanel.onRequestMeasureIndex(() => {
       const active = this.activeTab()
-      if (!active || active.kind !== 'mscz' || !active.timeline || !active.selection) return null
-      const event = active.timeline.events.find((e) => e.source_elid === active.selection!.startElid)
-      return event?.measure_index ?? null
+      if (!active) return null
+      if (active.kind === 'mscz') {
+        if (!active.timeline || !active.selection) return null
+        const event = active.timeline.events.find((e) => e.source_elid === active.selection!.startElid)
+        return event?.measure_index ?? null
+      }
+      if (!active.selectedRange) return null
+      const points = active.calibrationOverlay.getPoints()
+      return points[active.selectedRange.startIndex]?.measure ?? null
     })
     this.markerPanel.onJumpToMeasure((measureIndex) => this.jumpToMeasure(measureIndex))
 
@@ -434,7 +450,7 @@ export class PracticeView {
         const systems = await detectBarlines(pngBytes)
         const count = systems.reduce((n, s) => n + s.barline_xs.length, 0)
         active.calibrationOverlay.addPointsFromBarlines(systems)
-        this.calibrationStatusEl.textContent = `Added ${count} calibration point(s) from detected barlines — double-check them, the detector isn't always right.`
+        this.calibrationStatusEl.textContent = `Added ${count} measure(s) from detected barlines — double-check them, the detector isn't always right.`
       } catch (e) {
         console.error('Failed to detect barlines:', e)
         this.calibrationStatusEl.textContent = `Barline suggestion failed: ${e instanceof Error ? e.message : String(e)}`
@@ -448,7 +464,7 @@ export class PracticeView {
       if (!active || active.kind !== 'pdf') return
       const count = active.calibrationOverlay.getPoints().length
       if (count === 0) return
-      if (!window.confirm(`Remove all ${count} calibration point(s) for this file? This can't be undone.`)) return
+      if (!window.confirm(`Remove all ${count} marked measure(s) for this file? This can't be undone.`)) return
       active.calibrationOverlay.clearAllPoints()
       this.calibrationStatusEl.textContent = this.markingModeStatusText(active)
     })
@@ -536,6 +552,11 @@ export class PracticeView {
 
     this.prevBtn.addEventListener('click', () => this.goToPrevPage())
     this.nextBtn.addEventListener('click', () => this.goToNextPage())
+
+    this.gotoMeasureBtn.addEventListener('click', () => this.goToMeasureFromInput())
+    this.gotoMeasureInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') this.goToMeasureFromInput()
+    })
 
     /** Left/Right arrow keys navigate pages, like a standard document viewer — ignored while a text input/button/select has focus (arrow keys have native meaning there: caret movement, button/option navigation). */
     window.addEventListener('keydown', (e) => {
@@ -707,7 +728,7 @@ export class PracticeView {
     const points = active.calibrationOverlay.getPoints()
     active.loopRegion = (range && this.loopRegionForPointRange(points, range)) || null
     this.loopStatusEl.textContent = active.loopRegion
-      ? `Looping between calibration points ${range!.startIndex}-${range!.endIndex}`
+      ? `Looping measures ${range!.startIndex}-${range!.endIndex}`
       : ''
     await setLoopRegion(active.loopRegion)
   }
@@ -723,12 +744,19 @@ export class PracticeView {
 
   private jumpToMeasure(measureIndex: number): void {
     const active = this.activeTab()
-    if (!active || active.kind !== 'mscz' || !active.timeline) return
-    const event = active.timeline.events.find((e) => e.measure_index === measureIndex)
-    if (!event) return
-    if (!active.pageView.stageFor(event.page)) {
-      void active.pageView.showPage(event.page)
+    if (!active) return
+    if (active.kind === 'mscz') {
+      if (!active.timeline) return
+      const event = active.timeline.events.find((e) => e.measure_index === measureIndex)
+      if (!event) return
+      if (!active.pageView.stageFor(event.page)) {
+        void active.pageView.showPage(event.page)
+      }
+      return
     }
+    const point = active.calibrationOverlay.getPoints().find((p) => p.measure === measureIndex)
+    if (!point) return
+    if (point.page !== active.currentPage) void this.showPdfPage(active, point.page)
   }
 
   /**
@@ -839,9 +867,9 @@ export class PracticeView {
       tab.canvasContainer.appendChild(this.headMarker.el)
       tab.transportState = 'stopped'
       this.selectionStatusEl.textContent = tab.selectedRange
-        ? `Selected calibration points ${tab.selectedRange.startIndex}-${tab.selectedRange.endIndex}`
+        ? `Selected measures ${tab.selectedRange.startIndex}-${tab.selectedRange.endIndex}`
         : ''
-      this.loopStatusEl.textContent = tab.loopRegion ? 'Looping between calibration points' : ''
+      this.loopStatusEl.textContent = tab.loopRegion ? 'Looping measures' : ''
       this.calibrationStatusEl.textContent = this.markingModeStatusText(tab)
       this.markingModeCheckbox.checked = tab.markingMode
       tab.calibrationOverlay.setMarkingMode(tab.markingMode)
@@ -853,8 +881,13 @@ export class PracticeView {
 
       this.msczCursor.setItems(null)
       this.pdfCursor.setItems(tab.calibrationOverlay.getPoints())
-      await this.markerPanel.setFileHash(null)
-      await this.piecesIndex.setScoreBytes(null)
+      // Markers work for PDF tabs too (anchored to a measure number, same
+      // as .mscz — see MarkerPanel's docs, which never assumed a file kind
+      // in the first place). "untracked-" tabs have no stable file_hash
+      // (desktop hashing failed, or running outside Tauri), so markers stay
+      // unavailable for those, same restriction PDF calibration itself has.
+      await this.markerPanel.setFileHash(tab.fileHash.startsWith('untracked-') ? null : tab.fileHash)
+      await this.piecesIndex.setScoreBytes(null) // pieces index is .mscz-only — no raw XML to detect boundaries from in a PDF
 
       this.navEl.style.display = tab.pageCount > 1 ? 'flex' : 'none'
       this.pageIndicatorEl.textContent = `Page ${tab.currentPage + 1} / ${tab.pageCount}`
@@ -894,8 +927,8 @@ export class PracticeView {
 
   private markingModeStatusText(tab: PdfTabState): string {
     return tab.markingMode
-      ? `Marking mode: click the page to add a calibration point. ${tab.points.length} point(s) so far.`
-      : `${tab.points.length} calibration point(s). Turn on "Mark measures" to add or remove them.`
+      ? `Marking mode: click the page to add a measure. ${tab.points.length} measure(s) marked so far.`
+      : `${tab.points.length} measure(s) marked. Turn on "Mark measures" to add or remove them.`
   }
 
   /** Shows/loads the current tab's "knowledge level" rating in the status bar — hidden entirely for a tab with no stable file_hash (desktop hashing failed, or running outside Tauri), since rating has nothing to key off. */
@@ -1345,7 +1378,7 @@ export class PracticeView {
       }
       if (this.activeHash !== tabState.fileHash) return
       this.selectionStatusEl.textContent = range
-        ? `Selected calibration points ${range.startIndex}-${range.endIndex}`
+        ? `Selected measures ${range.startIndex}-${range.endIndex}`
         : ''
     })
 
@@ -1423,7 +1456,7 @@ export class PracticeView {
     tab.calibrationOverlay.addPointsFromBarlinesAcrossPages(pageResults)
     if (this.activeHash === tab.fileHash) {
       const count = pageResults.reduce((n, r) => n + r.systems.reduce((m, s) => m + s.barline_xs.length, 0), 0)
-      this.calibrationStatusEl.textContent = `Auto-detected ${count} calibration point(s) across ${tab.pageCount} page(s) — double-check them, the detector isn't always right.`
+      this.calibrationStatusEl.textContent = `Auto-detected ${count} measure(s) across ${tab.pageCount} page(s) — double-check them, the detector isn't always right.`
     }
   }
 
@@ -1608,6 +1641,13 @@ export class PracticeView {
     this.mountOverlaysOnPage(active, pageView.page)
 
     this.bookModeBtn.classList.toggle('active', nextBookMode)
+  }
+
+  /** Toolbar "go to measure" input — 1-based like the number a musician would actually call out ("measure 24"), converted to this app's internal 0-based `measure_index` before reusing the same jump logic markers already use. */
+  private goToMeasureFromInput(): void {
+    const raw = Number(this.gotoMeasureInput.value)
+    if (!Number.isFinite(raw) || raw < 1) return
+    this.jumpToMeasure(Math.floor(raw) - 1)
   }
 
   private goToPrevPage(): void {
