@@ -30,6 +30,18 @@
   "bundle": {
     "active": true,
     "targets": "all",
-    "icon": ["icons/icon.png"]
+    "icon": ["icons/icon.png"],
+    "resources": {
+      "../../assets/FluidR3_GM.sf2": "FluidR3_GM.sf2"
+    },
+    "shortDescription": "Sheet-music practice app for MuseScore files",
+    "longDescription": "Sheet-music practice app for MuseScore files",
+    "category": "Education",
+    "publisher": "me@hawawa.org",
+    "linux": {
+      "deb": {
+        "section": "sound"
+      }
+    }
   }
 }
