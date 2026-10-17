@@ -44,7 +44,7 @@ export class Cursor<T extends TimedItem = TimedItem> {
   private async poll(): Promise<void> {
     if (this.items.length === 0) return
     const positionSecs = await getPlaybackPosition()
-    // rustysynth's MidiFileSequencer.get_position() already reports time in
+    // The Rust `Player`'s playback position already reports time in
     // the original (1.0x) MIDI timeline regardless of playback speed — its
     // internal clock advances by `speed * block_size / sample_rate` per
     // audio block, which is exactly the original-timeline rate scaled by

@@ -1,7 +1,7 @@
 use std::io::Cursor;
 use std::sync::Arc;
 
-use rustysynth::{SoundFont, Synthesizer, SynthesizerSettings};
+use oxisynth::{MidiEvent, SoundFont, Synth, SynthDescriptor};
 use thiserror::Error;
 
 use super::metronome::{self, ClickEvent, ClickSample};
@@ -10,11 +10,31 @@ use super::midi_events::{self, MidiEventsError, ScheduledEvent, TempoMapEntry};
 #[derive(Debug, Error)]
 pub enum SynthError {
     #[error("failed to load soundfont: {0}")]
-    SoundFont(#[from] rustysynth::SoundFontError),
+    SoundFont(String),
     #[error("failed to parse midi: {0}")]
     Midi(#[from] MidiEventsError),
     #[error("failed to create synthesizer: {0}")]
-    Synthesizer(#[from] rustysynth::SynthesizerError),
+    Synthesizer(#[from] oxisynth::SettingsError),
+}
+
+/// Samples per render chunk: MIDI events are dispatched at chunk starts.
+/// Matches oxisynth's internal block size (FluidSynth's `FLUID_BUFSIZE`),
+/// so an event never waits for a block that's already half-rendered.
+const BLOCK_SIZE: usize = 64;
+
+/// MIDI channels oxisynth is configured with (its default).
+const MIDI_CHANNELS: u8 = 16;
+
+/// CC 64, the sustain pedal.
+const SUSTAIN_PEDAL: u8 = 64;
+
+/// Parses a soundfont (`.sf2`, or Ogg-compressed `.sf3`). This is the slow
+/// part of startup — an `.sf3` decodes every sample up front (~2s for
+/// MuseScore_General.sf3 on a desktop CPU) — so callers that can't block
+/// should do it off-thread and hand the result to `Player::set_soundfont`.
+pub fn load_soundfont(soundfont_bytes: &[u8]) -> Result<SoundFont, SynthError> {
+    SoundFont::load(&mut Cursor::new(soundfont_bytes))
+        .map_err(|e| SynthError::SoundFont(format!("{e:?}")))
 }
 
 /// One MIDI file's worth of pre-parsed playback data: the flat, time-sorted
@@ -27,24 +47,19 @@ pub struct LoadedMidi {
     duration_ms: f64,
 }
 
-/// Drives `rustysynth::Synthesizer` directly via a custom event scheduler,
-/// instead of `rustysynth::MidiFileSequencer`. This is deliberate:
-/// `MidiFileSequencer` only supports playing once or looping the *entire*
-/// file (via embedded RPG-Maker-style loop markers), with no seek or
-/// arbitrary-region-loop API, and `MidiFile`'s internal event data is
-/// `pub(crate)` (no way to drive it externally either). The app
-/// needs an arbitrary A/B loop region (drag-selected measures -> L to
+/// Drives an `oxisynth::Synth` via its own event scheduler — oxisynth has no
+/// MIDI-file sequencer at all, and the app needs seek plus an arbitrary A/B
+/// loop region (drag-selected measures -> L to
 /// loop just that range), so `Player` parses MIDI itself (`midi_events`,
 /// reusing the same tick/tempo-map math as `crates/core/src/timeline.rs`'s
 /// tempo extraction) and advances its own clock, which can snap back to an
 /// arbitrary `loop_start_ms` instead of only time zero.
 ///
 /// Speed control (0.5x/0.75x/1.0x) scales how fast this clock advances per
-/// rendered audio block, matching `MidiFileSequencer`'s own model: never
-/// resampling audio, so pitch is untouched, and changeable mid-playback with
+/// rendered audio block, never resampling audio, so pitch is untouched, and changeable mid-playback with
 /// no restart.
 pub struct Player {
-    synthesizer: Synthesizer,
+    synthesizer: Synth,
     sample_rate: i32,
     speed: f64,
 
@@ -75,9 +90,23 @@ struct SoundingClick {
 
 impl Player {
     pub fn new(soundfont_bytes: &[u8], sample_rate: i32) -> Result<Self, SynthError> {
-        let sound_font = Arc::new(SoundFont::new(&mut Cursor::new(soundfont_bytes))?);
-        let settings = SynthesizerSettings::new(sample_rate);
-        let synthesizer = Synthesizer::new(&sound_font, &settings)?;
+        let mut player = Self::without_soundfont(sample_rate)?;
+        player.set_soundfont(load_soundfont(soundfont_bytes)?);
+        Ok(player)
+    }
+
+    /// A player that renders silence (metronome clicks aside) until
+    /// `set_soundfont` is called — lets the audio stream start immediately
+    /// while the soundfont is still being parsed off-thread.
+    pub fn without_soundfont(sample_rate: i32) -> Result<Self, SynthError> {
+        let synthesizer = Synth::new(SynthDescriptor {
+            sample_rate: sample_rate as f32,
+            // oxisynth's default (0.2, FluidSynth's) leaves a lot of
+            // headroom unused; 1.0 lands MuseScore_General.sf3 a bit
+            // louder than the old rustysynth+FluidR3 setup.
+            gain: 1.0,
+            ..Default::default()
+        })?;
         let (click_sample, accent_sample) = metronome::load_click_samples(sample_rate);
         Ok(Self {
             synthesizer,
@@ -96,6 +125,10 @@ impl Player {
             sounding_clicks: Vec::new(),
             metronome_volume: 1.0,
         })
+    }
+
+    pub fn set_soundfont(&mut self, sound_font: SoundFont) {
+        self.synthesizer.add_font(sound_font, true);
     }
 
     pub fn sample_rate(&self) -> i32 {
@@ -143,7 +176,7 @@ impl Player {
             None
         };
         self.rebuild_clicks();
-        self.synthesizer.reset();
+        self.reset_synth();
     }
 
     /// Resumes playback after `pause()` from exactly where it left off — no
@@ -164,13 +197,13 @@ impl Player {
     /// currently-sounding notes so pausing doesn't leave them ringing.
     pub fn pause(&mut self) {
         self.playing = false;
-        self.synthesizer.note_off_all(false);
+        self.release_all_notes();
     }
 
     pub fn stop(&mut self) {
         self.playing = false;
         self.midi = None;
-        self.synthesizer.reset();
+        self.reset_synth();
     }
 
     /// Jumps the playback clock to an arbitrary point, in milliseconds
@@ -190,7 +223,7 @@ impl Player {
         };
         let target_ms = target_ms.clamp(0.0, midi.duration_ms);
         self.position_ms = target_ms;
-        self.synthesizer.note_off_all(false);
+        self.release_all_notes();
         self.resync_indices_to(target_ms);
     }
 
@@ -238,10 +271,9 @@ impl Player {
 
     /// Renders the next block of audio into the given stereo buffers (equal
     /// length; called repeatedly by the output stream as it needs more
-    /// samples). Internally chunked by the synthesizer's own `block_size`,
-    /// dispatching every scheduled MIDI event due at the *start* of each
-    /// chunk before rendering it — the same process-then-render ordering
-    /// `rustysynth::MidiFileSequencer` itself uses, which matters here: doing
+    /// samples). Internally chunked into `BLOCK_SIZE` frames, dispatching
+    /// every scheduled MIDI event due at the *start* of each chunk before
+    /// rendering it. The process-then-render ordering matters: doing
     /// it the other way (render the whole buffer, then dispatch events)
     /// would apply every event one buffer late, or never within short
     /// buffers at all. Mixes in metronome clicks per chunk, and wraps back to
@@ -251,7 +283,7 @@ impl Player {
             panic!("left and right output buffers must be the same length");
         }
 
-        let block_size = self.synthesizer.get_block_size();
+        let block_size = BLOCK_SIZE;
         let total_len = left.len();
         let mut written = 0;
         while written < total_len {
@@ -263,7 +295,8 @@ impl Player {
 
             let left_chunk = &mut left[written..written + chunk_len];
             let right_chunk = &mut right[written..written + chunk_len];
-            self.synthesizer.render(left_chunk, right_chunk);
+            self.synthesizer
+                .write_f32(chunk_len, left_chunk, 0, 1, right_chunk, 0, 1);
             if self.playing {
                 self.mix_clicks(left_chunk, right_chunk, chunk_len);
             }
@@ -286,8 +319,11 @@ impl Player {
                 && midi.events[self.next_event_index].time_ms <= self.position_ms
             {
                 let e = midi.events[self.next_event_index];
-                self.synthesizer
-                    .process_midi_message(e.channel, e.command, e.data1, e.data2);
+                if let Some(event) = to_oxisynth_event(&e) {
+                    // Only fails on out-of-range values, which a parsed MIDI
+                    // file can't produce; nothing useful to do mid-render.
+                    let _ = self.synthesizer.send_event(event);
+                }
                 self.next_event_index += 1;
             }
             // Also wait for the clock to reach the end: tempo-map-only
@@ -302,11 +338,46 @@ impl Player {
         }
     }
 
+    /// Clears every voice and channel (programs, controllers) — playback
+    /// starting over from the top re-sends whatever the MIDI sets up.
+    fn reset_synth(&mut self) {
+        let _ = self.synthesizer.send_event(MidiEvent::SystemReset);
+    }
+
+    /// Releases every sounding note (with its natural release tail, not a
+    /// hard cut) — for pause/seek/loop-wrap. oxisynth's AllNotesOff alone
+    /// leaves pedal-held notes ringing, so the pedal is briefly lifted to
+    /// release those too, then restored so notes played after a seek still
+    /// sustain if the pedal was down.
+    fn release_all_notes(&mut self) {
+        for channel in 0..MIDI_CHANNELS {
+            let pedal = self
+                .synthesizer
+                .cc(channel, SUSTAIN_PEDAL as u16)
+                .unwrap_or(0);
+            let _ = self.synthesizer.send_event(MidiEvent::ControlChange {
+                channel,
+                ctrl: SUSTAIN_PEDAL,
+                value: 0,
+            });
+            let _ = self
+                .synthesizer
+                .send_event(MidiEvent::AllNotesOff { channel });
+            if pedal != 0 {
+                let _ = self.synthesizer.send_event(MidiEvent::ControlChange {
+                    channel,
+                    ctrl: SUSTAIN_PEDAL,
+                    value: pedal,
+                });
+            }
+        }
+    }
+
     fn handle_loop_wrap(&mut self) {
         if let Some((loop_start_ms, loop_end_ms)) = self.loop_region {
             if self.position_ms >= loop_end_ms {
                 self.position_ms = loop_start_ms;
-                self.synthesizer.note_off_all(false);
+                self.release_all_notes();
                 self.resync_indices_to(loop_start_ms);
             }
         }
@@ -410,4 +481,50 @@ impl Player {
         }
         count
     }
+}
+
+/// Converts a raw channel-voice message (as `midi_events` stores it) to
+/// oxisynth's event type. A NoteOn with velocity 0 is a NoteOff by MIDI
+/// convention — oxisynth doesn't apply that rule itself.
+fn to_oxisynth_event(e: &ScheduledEvent) -> Option<MidiEvent> {
+    let channel = e.channel as u8;
+    let (data1, data2) = (e.data1 as u8, e.data2 as u8);
+    Some(match e.command {
+        0x80 => MidiEvent::NoteOff {
+            channel,
+            key: data1,
+        },
+        0x90 if data2 == 0 => MidiEvent::NoteOff {
+            channel,
+            key: data1,
+        },
+        0x90 => MidiEvent::NoteOn {
+            channel,
+            key: data1,
+            vel: data2,
+        },
+        0xA0 => MidiEvent::PolyphonicKeyPressure {
+            channel,
+            key: data1,
+            value: data2,
+        },
+        0xB0 => MidiEvent::ControlChange {
+            channel,
+            ctrl: data1,
+            value: data2,
+        },
+        0xC0 => MidiEvent::ProgramChange {
+            channel,
+            program_id: data1,
+        },
+        0xD0 => MidiEvent::ChannelPressure {
+            channel,
+            value: data1,
+        },
+        0xE0 => MidiEvent::PitchBend {
+            channel,
+            value: data1 as u16 | (data2 as u16) << 7,
+        },
+        _ => return None,
+    })
 }

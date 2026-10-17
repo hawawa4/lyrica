@@ -298,3 +298,54 @@ fn metronome_clicks_play_their_whole_sample_scaled_by_volume() {
         );
     }
 }
+
+/// One piano note held by the sustain pedal: pedal down + note on at 0,
+/// note off at 1s (pedal still down), end of track.
+fn pedalled_note_midi() -> Vec<u8> {
+    let track: &[u8] = &[
+        0x00, 0xB0, 0x40, 0x7F, // pedal down
+        0x00, 0x90, 0x3C, 0x64, // middle C on
+        0x87, 0x40, 0x80, 0x3C, 0x40, // off at tick 960 (1s at 120qpm)
+        0x00, 0xFF, 0x2F, 0x00, // end of track
+    ];
+    let mut midi = b"MThd\x00\x00\x00\x06\x00\x00\x00\x01\x01\xE0MTrk".to_vec();
+    midi.extend_from_slice(&(track.len() as u32).to_be_bytes());
+    midi.extend_from_slice(track);
+    midi
+}
+
+/// Pausing must silence notes the sustain pedal is holding, not just
+/// un-pedalled ones — oxisynth's AllNotesOff alone leaves them ringing.
+#[test]
+fn pause_releases_pedal_held_notes() {
+    let soundfont_path = soundfont_path();
+    if !soundfont_path.exists() {
+        eprintln!("skipping: soundfont not present in this environment");
+        return;
+    }
+    let soundfont_bytes = fs::read(&soundfont_path).unwrap();
+    let sample_rate = 44100;
+    let mut player = Player::new(&soundfont_bytes, sample_rate).unwrap();
+    let midi = player.load_midi(&pedalled_note_midi()).unwrap();
+    player.play(&midi, false);
+
+    let peak = |s: &[f32]| s.iter().fold(0.0f32, |m, v| m.max(v.abs()));
+    let mut left = vec![0.0f32; sample_rate as usize / 2];
+    let mut right = left.clone();
+    player.render(&mut left, &mut right);
+    let playing_peak = peak(&left);
+    assert!(
+        playing_peak > 0.01,
+        "note never sounded (peak {playing_peak})"
+    );
+
+    player.pause();
+    let mut left = vec![0.0f32; sample_rate as usize * 3];
+    let mut right = left.clone();
+    player.render(&mut left, &mut right);
+    let tail_peak = peak(&left[sample_rate as usize * 5 / 2..]);
+    assert!(
+        tail_peak < playing_peak * 0.01,
+        "note still ringing 2.5s after pause (peak {tail_peak} vs {playing_peak} while playing)"
+    );
+}

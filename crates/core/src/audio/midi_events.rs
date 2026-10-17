@@ -9,7 +9,7 @@ pub enum MidiEventsError {
 
 /// A channel-voice MIDI event (note on/off, controller, program change, pitch
 /// bend, ...) at an absolute time in the flattened (1.0x speed) timeline,
-/// ready to feed straight into `rustysynth::Synthesizer::process_midi_message`.
+/// as raw status/data bytes (`Player` converts them to oxisynth events).
 #[derive(Debug, Clone, Copy)]
 pub struct ScheduledEvent {
     pub time_ms: f64,
@@ -31,10 +31,8 @@ pub struct TempoMapEntry {
 /// Parses raw MIDI bytes (as produced by webmscore's `saveMidi(true, false)`,
 /// i.e. already repeats-unrolled) into a flat, time-sorted list of
 /// channel-voice events plus a combined tempo/time-signature map — the data
-/// `Player`'s custom scheduler needs to drive `Synthesizer` directly instead
-/// of `rustysynth::MidiFileSequencer` (which has no arbitrary-region-loop or
-/// seek API; see Player's module docs for why this
-/// project doesn't use it for playback).
+/// `Player`'s custom scheduler needs to drive the synth directly (with
+/// seek and arbitrary-region looping; see `Player`'s docs).
 pub fn parse_midi_events(
     midi_bytes: &[u8],
 ) -> Result<(Vec<ScheduledEvent>, Vec<TempoMapEntry>), MidiEventsError> {

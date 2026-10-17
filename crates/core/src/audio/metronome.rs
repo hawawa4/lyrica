@@ -48,7 +48,7 @@ const ACCENT_WAV: &[u8] = include_bytes!("../../assets/metronome_accent.wav");
 
 /// A recorded click (mono, 16-bit, 24kHz — see `scripts/extract_metronome.py`),
 /// decoded to f32 and resampled to the output rate once at synth construction
-/// (`rustysynth` doesn't resample, and neither does the click path).
+/// (the synth doesn't resample, and neither does the click path).
 #[derive(Debug, Clone)]
 pub struct ClickSample {
     pub samples: Vec<f32>,

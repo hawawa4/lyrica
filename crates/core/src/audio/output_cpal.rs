@@ -18,8 +18,8 @@ pub enum OutputError {
     PlayStream(#[from] cpal::PlayStreamError),
 }
 
-/// The default output device's native sample rate. `Player`/`Synthesizer`
-/// must be constructed with this exact rate — rustysynth has no internal
+/// The default output device's native sample rate. `Player` must be
+/// constructed with this exact rate — the synth has no internal
 /// resampling, so if the synth renders at a different rate than the device
 /// actually plays back at, audio comes out at the wrong pitch/speed (or, on
 /// some backends, cpal silently accepts a mismatched rate in the stream
