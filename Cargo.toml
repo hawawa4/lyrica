@@ -8,3 +8,14 @@ edition = "2021"
 license = "GPL-3.0-only"
 homepage = "https://lyrica.hawawa.org"
 repository = "https://github.com/hawawa4/lyrica"
+
+# Decoding the .sf3 soundfont (Ogg samples, ~40MB) at startup is ~20x slower
+# unoptimized; keep the decoder and synth fast in debug builds and tests too.
+[profile.dev.package.lewton]
+opt-level = 3
+
+[profile.dev.package.oxisynth]
+opt-level = 3
+
+[profile.dev.package.soundfont]
+opt-level = 3

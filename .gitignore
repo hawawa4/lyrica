@@ -13,7 +13,7 @@ dist/
 # OS
 .DS_Store
 
-# Soundfonts — fetched on demand via `just fetch-soundfont`, not committed (~148MB)
+# Soundfonts — fetched on demand via `just fetch-soundfont`, not committed (~40MB)
 assets/*.sf2
 assets/*.sf3
 

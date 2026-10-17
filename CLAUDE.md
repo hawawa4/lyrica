@@ -19,15 +19,17 @@ Run `just` with no arguments to list all dev recipes (build, test, dev server, s
 
 ## Soundfont
 
-The app needs a GM soundfont for audio playback, fetched on demand (not committed to git — ~148MB):
+The app needs a GM soundfont for audio playback, fetched on demand (not committed to git — ~40MB):
 
 ```
 just fetch-soundfont
 ```
 
-This pulls `FluidR3_GM.sf2` into `assets/`. **Do not switch this to MuseScore's own soundfont** (`MuseScore_General.sf2`/`.sf3`) — it sounds badly wrong (quiet, bass-only) through `rustysynth`, the Rust synth crate this project uses, because `rustysynth` has zero SF2 modulator support (confirmed in its source — `pmod`/`imod` chunks are parsed and discarded) and MuseScore's soundfont depends on modulators to sound right. Not fixable by adjusting gain or player code. The proper fix is migrating to `oxisynth`, which supports modulators (not done yet).
+This pulls MuseScore's own `MuseScore_General.sf3` into `assets/` (sha256-pinned in the Justfile). It's played by `oxisynth`, which supports SF2 modulators and Ogg-compressed `.sf3`. **Don't switch back to `rustysynth`**: it discards modulators (`pmod`/`imod` chunks are parsed and thrown away), which makes MuseScore's soundfont sound quiet and bass-only, and it can't load `.sf3` at all.
 
-Separately: `rustysynth` cannot load `.sf3` (Ogg-compressed-sample soundfonts) at all — only uncompressed `.sf2`.
+The `.sf3` is decoded to raw samples at load time: ~2s on a desktop CPU, and the decoded samples take ~250MB of RAM. The desktop shell loads it on a background thread (`AudioState::load_soundfont_in_background`); playback before it finishes is silent apart from metronome clicks.
+
+oxisynth's AllNotesOff respects the sustain pedal, so `Player` lifts the pedal around it on pause/seek/loop-wrap (`release_all_notes`) — otherwise pedalled notes keep ringing.
 
 ## Known gotchas
 

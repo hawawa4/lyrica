@@ -1,9 +1,10 @@
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::thread;
 
 use mp_core::audio::midi_events::TempoMapEntry;
 use mp_core::audio::output_cpal;
-use mp_core::audio::synth::{LoadedMidi, Player};
+use mp_core::audio::synth::{self, LoadedMidi, Player};
 
 /// Holds the shared synth `Player` (behind a `Mutex`, safe to share across
 /// Tauri's command-handling threads) and the currently-loaded MIDI file (so
@@ -29,7 +30,9 @@ impl AudioState {
     /// why matching it exactly matters) — kept as a fallback for the rare
     /// case no output device is found at all, letting the synth still
     /// construct even though playback won't work until one appears.
-    pub fn new(soundfont_bytes: &[u8], fallback_sample_rate: i32) -> Result<Self, String> {
+    /// The player starts without a soundfont — see
+    /// `load_soundfont_in_background`.
+    pub fn new(fallback_sample_rate: i32) -> Result<Self, String> {
         let sample_rate = output_cpal::default_output_sample_rate().unwrap_or_else(|e| {
             eprintln!(
                 "warning: could not query output device sample rate ({e}), \
@@ -39,7 +42,7 @@ impl AudioState {
         });
 
         let player = Arc::new(Mutex::new(
-            Player::new(soundfont_bytes, sample_rate).map_err(|e| e.to_string())?,
+            Player::without_soundfont(sample_rate).map_err(|e| e.to_string())?,
         ));
 
         let player_for_stream = player.clone();
@@ -71,6 +74,22 @@ impl AudioState {
             player,
             current_midi: Mutex::new(None),
         })
+    }
+
+    /// Reads and decodes the soundfont on its own thread, then hands it to
+    /// the player. The player lock is only taken for the final hand-off, so
+    /// the audio callback never waits on the decode.
+    pub fn load_soundfont_in_background(&self, path: PathBuf) {
+        let player = self.player.clone();
+        thread::spawn(move || {
+            let loaded = std::fs::read(&path)
+                .map_err(|e| e.to_string())
+                .and_then(|bytes| synth::load_soundfont(&bytes).map_err(|e| e.to_string()));
+            match loaded {
+                Ok(font) => player.lock().unwrap().set_soundfont(font),
+                Err(e) => eprintln!("error: failed to load soundfont at {path:?}: {e}"),
+            }
+        });
     }
 
     pub fn load_midi(&self, midi_bytes: &[u8]) -> Result<(), String> {

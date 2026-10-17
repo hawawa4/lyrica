@@ -56,7 +56,7 @@ Everything is local: no account, no cloud. Markers, ratings, pieces indexes and 
 You need [Rust](https://rustup.rs), Node.js 22+, [`just`](https://github.com/casey/just), the [Tauri CLI](https://tauri.app/reference/cli/) (`cargo install tauri-cli --version '^2'`) and the [Tauri system libraries](https://tauri.app/start/prerequisites/#linux) plus ALSA headers (`libasound2-dev`).
 
 ```sh
-just fetch-soundfont     # GM soundfont for playback (~148 MB, not in git)
+just fetch-soundfont     # GM soundfont for playback (~40 MB, not in git)
 just fetch-cjk-font      # so Japanese/Chinese/Korean titles render
 (cd web && npm install)
 
@@ -72,7 +72,7 @@ Run `just` with no arguments to list every recipe.
 | Path | What |
 | --- | --- |
 | `web/` | Vite + TypeScript frontend. [webmscore](https://github.com/LibreScore/webmscore) renders scores and exports measure positions and MIDI in the webview; PDFs render via pdf.js. |
-| `crates/core` | Shared Rust logic: playback timeline, audio synthesis ([rustysynth](https://github.com/sinshu/rustysynth)), markers, library, persistence. |
+| `crates/core` | Shared Rust logic: playback timeline, audio synthesis ([oxisynth](https://github.com/PolyMeilex/oxisynth)), markers, library, persistence. |
 | `crates/desktop` | The Tauri 2 shell: thin commands over `crates/core`. |
 | `crates/cv-barline` | Classical computer-vision barline detection for PDF mode. |
 | `crates/server` | Placeholder for a future web-server shell. Not functional. |
@@ -98,7 +98,7 @@ To cut a release, bump the version in `Cargo.toml` (`[workspace.package]`), `cra
 
 ## Credits and licence
 
-Lyrica is free software under the [GNU GPL v3](LICENSE). It builds on [webmscore](https://github.com/LibreScore/webmscore) (GPL-3.0), [pdf.js](https://mozilla.github.io/pdf.js/) (Apache-2.0), [rustysynth](https://github.com/sinshu/rustysynth) (MIT), and ships the [FluidR3 GM soundfont](assets/FluidR3_GM_License.md) and Noto Sans JP (OFL).
+Lyrica is free software under the [GNU GPL v3](LICENSE). It builds on [webmscore](https://github.com/LibreScore/webmscore) (GPL-3.0), [pdf.js](https://mozilla.github.io/pdf.js/) (Apache-2.0), [oxisynth](https://github.com/PolyMeilex/oxisynth) (LGPL-2.1), and ships the [MuseScore_General soundfont](assets/MuseScore_General_License.md) (MIT) and Noto Sans JP (OFL).
 
 ## Disclaimer
 

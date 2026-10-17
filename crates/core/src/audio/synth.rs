@@ -101,9 +101,8 @@ impl Player {
     pub fn without_soundfont(sample_rate: i32) -> Result<Self, SynthError> {
         let synthesizer = Synth::new(SynthDescriptor {
             sample_rate: sample_rate as f32,
-            // oxisynth's default (0.2, FluidSynth's) leaves a lot of
-            // headroom unused; 1.0 lands MuseScore_General.sf3 a bit
-            // louder than the old rustysynth+FluidR3 setup.
+            // oxisynth's default (0.2, FluidSynth's) is very quiet;
+            // 1.0 still peaks well below clipping on dense scores.
             gain: 1.0,
             ..Default::default()
         })?;

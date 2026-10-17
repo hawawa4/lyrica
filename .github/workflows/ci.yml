@@ -47,7 +47,7 @@ jobs:
       - name: Cache soundfont
         uses: actions/cache@v4
         with:
-          path: assets/FluidR3_GM.sf2
+          path: assets/MuseScore_General.sf3
           key: soundfont-${{ hashFiles('Justfile') }}
       - run: just fetch-soundfont
       - run: just fetch-cjk-font

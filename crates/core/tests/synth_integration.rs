@@ -5,7 +5,7 @@ use mp_core::audio::midi_events::TempoMapEntry;
 use mp_core::audio::synth::Player;
 
 fn soundfont_path() -> std::path::PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/FluidR3_GM.sf2")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/MuseScore_General.sf3")
 }
 
 #[test]

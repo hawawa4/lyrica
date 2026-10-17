@@ -1,11 +1,10 @@
 # Lyrica dev tasks.
 
-# Byte-identical to the Debian fluid-soundfont-gm package's FluidR3_GM.sf2
-# (confirmed via matching content-length: 148398306). Used instead of
-# MuseScore's own MuseScore_General.sf2/.sf3 — see crates/desktop/src/main.rs
-# for why (MuseScore_General.sf2 renders at a fraction of the volume through
-# rustysynth; .sf3 isn't supported by rustysynth at all).
-soundfont_url := "https://github.com/pianobooster/fluid-soundfont/releases/download/v3.1/FluidR3_GM.sf2"
+# MuseScore_General.sf3 v0.2.0 (MIT, see assets/MuseScore_General_License.md),
+# from MuseScore's own mirror. Ogg-compressed samples (~40MB); oxisynth
+# decodes them at load time.
+soundfont_url := "https://ftp.osuosl.org/pub/musescore/soundfont/MuseScore_General/MuseScore_General.sf3"
+soundfont_sha256 := "5b85b6c2c61d10b2b91cddd41efcce7b25cd31c8271d511c73afafbef20b6fa3"
 
 # Noto Sans JP, extracted from Google/Adobe's Noto CJK release zip. webmscore's
 # bundled fonts (Edwin/FreeSerif/FreeSans/MuseJazz/mscore) have zero CJK glyph
@@ -22,18 +21,20 @@ cjk_font_url := "https://github.com/notofonts/noto-cjk/releases/download/Sans2.0
 default:
     @just --list
 
-# Fetch the GM soundfont used for audio playback (not committed to git — it's ~148MB).
+# Fetch the GM soundfont used for audio playback (not committed to git — it's ~40MB).
 fetch-soundfont:
     #!/usr/bin/env bash
     set -euo pipefail
     mkdir -p assets
-    dest="assets/FluidR3_GM.sf2"
+    dest="assets/MuseScore_General.sf3"
     if [ -f "$dest" ]; then
         echo "already present: $dest"
         exit 0
     fi
-    echo "fetching FluidR3_GM.sf2 from {{soundfont_url}}..."
-    curl -fL -o "$dest" "{{soundfont_url}}"
+    echo "fetching MuseScore_General.sf3 from {{soundfont_url}}..."
+    curl -fL -o "$dest.part" "{{soundfont_url}}"
+    echo "{{soundfont_sha256}}  $dest.part" | sha256sum -c -
+    mv "$dest.part" "$dest"
     echo "saved to $dest"
 
 # Fetch the CJK font used so webmscore can render Japanese/Chinese/Korean
