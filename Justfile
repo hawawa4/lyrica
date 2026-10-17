@@ -73,3 +73,12 @@ build-debug:
 # Build a release (production) desktop binary without packaging installers — rules out dev-server-only behavior.
 build-release:
     cargo tauri build --no-bundle
+
+# Build the release installers: a .deb and an .AppImage, in target/release/bundle/.
+# Fetches the soundfont (bundled as a resource) and CJK font (bundled into the
+# frontend) first, both no-ops when already present.
+release: fetch-soundfont fetch-cjk-font
+    cargo tauri build --bundles deb,appimage
+    @echo
+    @echo "Release bundles:"
+    @ls -1sh target/release/bundle/deb/*.deb target/release/bundle/appimage/*.AppImage
