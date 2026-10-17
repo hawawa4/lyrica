@@ -45,7 +45,7 @@ jobs:
       # The desktop crate's build script needs the built frontend and the
       # bundled soundfont to exist, even just to be linted.
       - name: Cache soundfont
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: assets/MuseScore_General.sf3
           key: soundfont-${{ hashFiles('Justfile') }}
