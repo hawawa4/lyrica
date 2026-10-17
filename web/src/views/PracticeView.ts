@@ -1,6 +1,6 @@
 import { openScore, upgradeScore, getMeasurePositions, getMidi, type OpenScoreResult, type WebMscore, type Positions } from '../score-engine'
 import { loadPdf, renderPdfPage, canvasToPngBytes, type PdfDocument } from '../pdf-engine'
-import { PageView, ZOOM_STEP, MIN_ZOOM, MAX_ZOOM } from '../render/PageView'
+import { PageView, ZOOM_STEP, MIN_ZOOM, MAX_ZOOM, PAGE_RENDERED_EVENT } from '../render/PageView'
 import { SelectionOverlay, type MeasureRange } from '../render/SelectionOverlay'
 import { BookPageView } from '../render/BookPageView'
 import { CalibrationOverlay, type PointRange } from './CalibrationOverlay'
@@ -31,7 +31,7 @@ import {
   getPlaybackPosition,
   adaptScoreForEngine,
 } from '../api-client'
-import { MarkerPanel } from './MarkerPanel'
+import { MarkerOverlay, type MarkerHost, type MarkerTool } from './MarkerOverlay'
 import { PiecesIndex } from './PiecesIndex'
 import { RatingStars } from './RatingStars'
 import { TabBar, type TabInfo } from './TabBar'
@@ -48,7 +48,7 @@ import { initTheme, applyTheme, THEME_LABELS, type Theme } from '../theme'
  * new score, so switching back to an already-open tab never re-fetches
  * already-rendered pages (the "no re-fetch lag" requirement).
  *
- * Two kinds: `.mscz` tabs (real note data, full timeline/markers/pieces) and
+ * Two kinds: `.mscz` tabs (real note data, full timeline/pieces) and
  * PDF tabs (no note data, just rendered pages + user-calibrated
  * tempo points for metronome-only playback). A discriminated union rather
  * than one shape with optional fields, since the two kinds share almost
@@ -198,6 +198,9 @@ export class PracticeView {
   private readonly fitHeightBtn: HTMLButtonElement
   private readonly zoomResetBtn: HTMLButtonElement
   private readonly bookModeBtn: HTMLButtonElement
+  private readonly markerToolsEl: HTMLDivElement
+  private readonly textToolBtn: HTMLButtonElement
+  private readonly fingeringToolBtn: HTMLButtonElement
   private readonly themeSelectEl: HTMLSelectElement
   private readonly dropOverlay: HTMLDivElement
   private readonly openFileBtn: HTMLButtonElement
@@ -213,7 +216,7 @@ export class PracticeView {
   private readonly tabBar: TabBar
   private readonly msczCursor: Cursor<TimelineEvent>
   private readonly pdfCursor: Cursor<CalibrationPoint>
-  private readonly markerPanel: MarkerPanel
+  private readonly markerOverlay: MarkerOverlay
   private readonly piecesIndex: PiecesIndex
   private readonly cursorBoxEl: HTMLDivElement
   private readonly headMarker: PlaybackHeadMarker
@@ -257,6 +260,10 @@ export class PracticeView {
           <button id="zoom-reset-btn" title="Reset zoom to 100%">100%</button>
           <button id="book-mode-btn" class="book-mode-btn" title="Book mode: show two pages side by side">&#128214; Book mode</button>
         </div>
+        <div id="marker-tools" class="toolbar-group marker-tools" style="display:none;">
+          <button id="text-tool-btn" class="marker-tool-btn" title="Text marker (T): click a measure to write a note above it">&#9998; Text</button>
+          <button id="fingering-tool-btn" class="marker-tool-btn" title="Fingering (G): click where the numbers go, type digits 1-5">Fingering</button>
+        </div>
         <div class="toolbar-spacer"></div>
         <div class="toolbar-group">
           <button id="back-to-library-btn" class="icon-btn" title="Back to library">&#128193; Library</button>
@@ -268,7 +275,6 @@ export class PracticeView {
 
       <div class="sidebar">
         <div id="pieces-index" class="sidebar-section"></div>
-        <div id="marker-panel" class="sidebar-section"></div>
       </div>
 
       <div class="main-area">
@@ -340,6 +346,9 @@ export class PracticeView {
     this.fitHeightBtn = this.root.querySelector('#fit-height-btn')!
     this.zoomResetBtn = this.root.querySelector('#zoom-reset-btn')!
     this.bookModeBtn = this.root.querySelector('#book-mode-btn')!
+    this.markerToolsEl = this.root.querySelector('#marker-tools')!
+    this.textToolBtn = this.root.querySelector('#text-tool-btn')!
+    this.fingeringToolBtn = this.root.querySelector('#fingering-tool-btn')!
     this.themeSelectEl = this.root.querySelector('#theme-select')!
     this.dropOverlay = this.root.querySelector('#drop-overlay')!
     this.openFileBtn = this.root.querySelector('#open-file-btn')!
@@ -409,32 +418,16 @@ export class PracticeView {
       active.headMs = target.time_ms
     })
 
-    const markerPanelEl = this.root.querySelector<HTMLDivElement>('#marker-panel')!
-    this.markerPanel = new MarkerPanel(markerPanelEl)
-
-    /**
-     * A new marker attaches to the current selection's first measure — for
-     * an `.mscz` tab, the timeline's `measure_index` looked up via the
-     * selection's start elid; for a PDF tab, the `measure` field of the
-     * first selected calibration point (PDF mode's own "where is this on the
-     * page" anchor — see `CalibrationOverlay`'s module docs, which already
-     * frame these as the automatic measure positions). Either way this
-     * matches the "click-drag-select" direct-manipulation style the loop
-     * feature already uses, rather than a separate "pick a measure" step.
-     */
-    this.markerPanel.onRequestMeasureIndex(() => {
-      const active = this.activeTab()
-      if (!active) return null
-      if (active.kind === 'mscz') {
-        if (!active.timeline || !active.selection) return null
-        const event = active.timeline.events.find((e) => e.source_elid === active.selection!.startElid)
-        return event?.measure_index ?? null
-      }
-      if (!active.selectedRange) return null
-      const points = active.calibrationOverlay.getPoints()
-      return points[active.selectedRange.startIndex]?.measure ?? null
+    this.markerOverlay = new MarkerOverlay()
+    this.markerOverlay.onToolChange((tool) => this.renderMarkerToolButtons(tool))
+    this.markerOverlay.onError((message) => {
+      this.statusEl.textContent = message
     })
-    this.markerPanel.onJumpToMeasure((measureIndex) => this.jumpToMeasure(measureIndex))
+    this.textToolBtn.addEventListener('click', () => this.toggleMarkerTool('text'))
+    this.fingeringToolBtn.addEventListener('click', () => this.toggleMarkerTool('fingering'))
+    // Any stage of the active tab switching page (navigation, book-mode
+    // spread, zoom re-render of a PDF) needs that page's markers drawn.
+    this.pageContainerEl.addEventListener(PAGE_RENDERED_EVENT, () => this.markerOverlay.refresh())
 
     const piecesIndexEl = this.root.querySelector<HTMLDivElement>('#pieces-index')!
     this.piecesIndex = new PiecesIndex(piecesIndexEl)
@@ -525,13 +518,28 @@ export class PracticeView {
       this.togglePlayPause()
     })
 
-    /** Escape stops playback outright, like the Stop button — a distinct action from Space's play/pause toggle. */
+    /** Escape puts down the active marker tool if there is one, else stops playback outright, like the Stop button — a distinct action from Space's play/pause toggle. */
     window.addEventListener('keydown', (e) => {
       if (e.key !== 'Escape') return
       const target = e.target as HTMLElement | null
       if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) return
       if (!this.isVisible()) return
+      if (this.markerOverlay.activeTool) {
+        this.markerOverlay.setTool(null)
+        return
+      }
       void this.stopActive()
+    })
+
+    /** T / G pick up the text / fingering marker tool (pressing it again puts it down). G rather than F, which is already zen mode. */
+    window.addEventListener('keydown', (e) => {
+      const tool: MarkerTool | null = e.key === 't' || e.key === 'T' ? 'text' : e.key === 'g' || e.key === 'G' ? 'fingering' : null
+      if (!tool || e.ctrlKey || e.metaKey || e.altKey) return
+      const target = e.target as HTMLElement | null
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) return
+      if (!this.isVisible() || !this.markerOverlay.available) return
+      e.preventDefault()
+      this.toggleMarkerTool(tool)
     })
 
     /** F toggles zen mode (hide toolbar/sidebar/tab-bar, sheet only) — every other shortcut keeps working since they're all window-level listeners gated on isVisible(), never on whether the now-hidden controls are present in the DOM. */
@@ -870,6 +878,11 @@ export class PracticeView {
     this.bookModeBtn.style.display = 'inline-block'
     this.bookModeBtn.classList.toggle('active', tab.bookMode)
     void this.loadRatingForTab(tab)
+    // "untracked-" tabs have no stable file_hash (desktop hashing failed, or
+    // running outside Tauri), so there's nothing to persist markers under.
+    const markerHash = tab.fileHash.startsWith('untracked-') ? null : tab.fileHash
+    this.markerToolsEl.style.display = markerHash ? 'flex' : 'none'
+    void this.markerOverlay.setTab(tab.pageContainer, markerHash, this.markerHostFor(tab))
 
     if (tab.kind === 'mscz') {
       this.cursorBoxEl.style.display = 'none'
@@ -901,7 +914,6 @@ export class PracticeView {
 
       this.msczCursor.setItems(tab.timeline?.events ?? null)
       this.pdfCursor.setItems(null)
-      await this.markerPanel.setFileHash(tab.fileHash)
       this.piecesIndex.setPieces(tab.pieces)
 
       const hasAudio = tab.timeline !== null
@@ -931,12 +943,6 @@ export class PracticeView {
 
       this.msczCursor.setItems(null)
       this.pdfCursor.setItems(tab.calibrationOverlay.getPoints())
-      // Markers work for PDF tabs too (anchored to a measure number, same
-      // as .mscz — see MarkerPanel's docs, which never assumed a file kind
-      // in the first place). "untracked-" tabs have no stable file_hash
-      // (desktop hashing failed, or running outside Tauri), so markers stay
-      // unavailable for those, same restriction PDF calibration itself has.
-      await this.markerPanel.setFileHash(tab.fileHash.startsWith('untracked-') ? null : tab.fileHash)
       this.piecesIndex.setPieces(null) // pieces index is .mscz-only — no raw XML to detect boundaries from in a PDF
 
       this.navEl.style.display = tab.pageCount > 1 ? 'flex' : 'none'
@@ -1127,7 +1133,8 @@ export class PracticeView {
         this.loopStatusEl.textContent = ''
         this.calibrationStatusEl.textContent = ''
         this.ratingMountEl.style.display = 'none'
-        void this.markerPanel.setFileHash(null)
+        void this.markerOverlay.setTab(null, null, null)
+        this.markerToolsEl.style.display = 'none'
         this.piecesIndex.setPieces(null)
         this.playBtn.disabled = true
         this.stopBtn.disabled = true
@@ -1624,6 +1631,7 @@ export class PracticeView {
       if (rightPage >= tab.pageCount) {
         tab.rightPane.canvasContainer.querySelector('canvas')?.remove()
         tab.rightPane.currentPage = rightPage
+        setStagePage(tab.rightPane.canvasContainer, null)
       } else {
         tab.rightPane.currentPage = rightPage
         await this.renderPdfPane(tab, tab.rightPane, rightPage, () => tab.rightPane?.currentPage === rightPage)
@@ -1652,6 +1660,7 @@ export class PracticeView {
     pane.canvasContainer.querySelector('canvas')?.remove()
     pane.canvasContainer.insertBefore(canvas, pane.canvasContainer.firstChild)
     pane.calibrationOverlay.setPage(pageNumber)
+    setStagePage(pane.canvasContainer, pageNumber)
   }
 
   /** Updates the Play button's icon/title and both buttons' disabled state to match `state` — called every time a tab's transportState changes, including on tab (re)activation. */
@@ -1946,7 +1955,59 @@ export class PracticeView {
     tab.rightPane?.calibrationOverlay.setPoints(tab.calibrationOverlay.getPoints())
   }
 
-  /** Toolbar "go to measure" input — 1-based like the number a musician would actually call out ("measure 24"), converted to this app's internal 0-based `measure_index` before reusing the same jump logic markers already use. */
+  /** Picks up `tool`, or puts it down if it's already the active one. */
+  private toggleMarkerTool(tool: MarkerTool): void {
+    this.markerOverlay.setTool(this.markerOverlay.activeTool === tool ? null : tool)
+  }
+
+  private renderMarkerToolButtons(tool: MarkerTool | null): void {
+    this.textToolBtn.classList.toggle('active', tool === 'text')
+    this.fingeringToolBtn.classList.toggle('active', tool === 'fingering')
+  }
+
+  /**
+   * Tab-kind-specific placement for `MarkerOverlay`. `.mscz`: a text marker
+   * snaps to the top-left of the measure clicked on (or nearest to the
+   * click — clicking just above a staff is the natural "write it above the
+   * measure" gesture, and that's outside the measure's own box), so it sits
+   * above that measure. PDF tabs have no measure boxes, only barline points,
+   * so text goes exactly where it was clicked. Fingering always goes exactly
+   * where it was clicked.
+   */
+  private markerHostFor(tab: TabState): MarkerHost {
+    if (tab.kind === 'mscz') {
+      return {
+        placementFor: (kind, click) => {
+          if (kind !== 'text') return click
+          const elements = tab.pageView.getPositions()?.elements.filter((e) => e.page === click.page) ?? []
+          if (elements.length === 0) return click
+          const { width, height } = this.pageSize(tab, click.page)
+          const px = click.x * width
+          const py = click.y * height
+          const verticalGap = (e: (typeof elements)[number]): number => Math.max(0, e.y - py, py - (e.y + e.sy))
+          const inColumn = elements.filter((e) => px >= e.x && px <= e.x + e.sx)
+          const candidates = inColumn.length > 0 ? inColumn : elements
+          const nearest = candidates.reduce((best, e) => (verticalGap(e) < verticalGap(best) ? e : best))
+          return { page: click.page, x: nearest.x / width, y: nearest.y / height }
+        },
+        resolveLegacy: (measureIndex) => {
+          const event = tab.timeline?.events.find((e) => e.measure_index === measureIndex)
+          if (!event) return null
+          const { width, height } = this.pageSize(tab, event.page)
+          return { page: event.page, x: event.bbox.x / width, y: event.bbox.y / height }
+        },
+      }
+    }
+    return {
+      placementFor: (_kind, click) => click,
+      resolveLegacy: (measureIndex) => {
+        const point = tab.calibrationOverlay.getPoints().find((p) => p.measure === measureIndex)
+        return point ? { page: point.page, x: point.x, y: point.y } : null
+      },
+    }
+  }
+
+  /** Toolbar "go to measure" input — 1-based like the number a musician would actually call out ("measure 24"), converted to this app's internal 0-based `measure_index` before jumping. */
   private goToMeasureFromInput(): void {
     const raw = Number(this.gotoMeasureInput.value)
     if (!Number.isFinite(raw) || raw < 1) return
@@ -1974,6 +2035,13 @@ export class PracticeView {
       void this.showPdfPage(active, active.currentPage + step)
     }
   }
+}
+
+/** Records which page a PDF page-stage shows (`null`: none) and announces it — the PDF-side twin of what `PageView.setContent` does for `.mscz` stages. */
+function setStagePage(stage: HTMLElement, page: number | null): void {
+  if (page === null) delete stage.dataset.page
+  else stage.dataset.page = String(page)
+  stage.dispatchEvent(new CustomEvent(PAGE_RENDERED_EVENT, { bubbles: true }))
 }
 
 function isPdfFile(name: string): boolean {

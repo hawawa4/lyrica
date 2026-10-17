@@ -6,6 +6,8 @@ import type {
   LibraryEntry,
   LibrarySettings,
   Marker,
+  MarkerKind,
+  MarkerPosition,
   PinnedFile,
   Piece,
   RecentFile,
@@ -157,10 +159,17 @@ export async function listMarkers(fileHash: string): Promise<Marker[]> {
   return invoke<Marker[]>('list_markers', { fileHash })
 }
 
-export async function addMarker(fileHash: string, measureIndex: number, text: string): Promise<Marker[]> {
+export async function addMarker(fileHash: string, kind: MarkerKind, position: MarkerPosition, text: string): Promise<Marker[]> {
   if (!isTauri()) throw new Error('addMarker: desktop-only for now')
   const { invoke } = await import('@tauri-apps/api/core')
-  return invoke<Marker[]>('add_marker', { fileHash, measureIndex, text })
+  return invoke<Marker[]>('add_marker', { fileHash, kind, position, text })
+}
+
+/** Replaces a marker's text and, unless `position` is `null`, moves it. */
+export async function updateMarker(fileHash: string, markerId: string, text: string, position: MarkerPosition | null): Promise<Marker[]> {
+  if (!isTauri()) throw new Error('updateMarker: desktop-only for now')
+  const { invoke } = await import('@tauri-apps/api/core')
+  return invoke<Marker[]>('update_marker', { fileHash, markerId, text, position })
 }
 
 export async function deleteMarker(fileHash: string, markerId: string): Promise<Marker[]> {

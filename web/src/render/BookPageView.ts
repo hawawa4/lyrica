@@ -1,5 +1,5 @@
 import type { WebMscore, Positions } from '../score-engine'
-import { PageView, MIN_ZOOM, MAX_ZOOM } from './PageView'
+import { PageView, MIN_ZOOM, MAX_ZOOM, PAGE_RENDERED_EVENT } from './PageView'
 import { SelectionOverlay, type MeasureRange } from './SelectionOverlay'
 
 /**
@@ -39,6 +39,8 @@ export class BookPageView {
     private readonly onZoomChange?: (zoom: number) => void,
   ) {
     this.container.classList.add('book-spread')
+    // The spread wrapper is not itself a page — drop any page a previous single-page PageView left advertised on it (see PAGE_RENDERED_EVENT).
+    delete this.container.dataset.page
 
     this.leftContainer = document.createElement('div')
     this.leftContainer.className = 'page-stage book-page book-page-left'
@@ -74,6 +76,8 @@ export class BookPageView {
     const rightPage = this.left.page + 1
     if (rightPage >= this.pageCount) {
       this.rightContainer.querySelector('.score-svg-layer')!.innerHTML = ''
+      delete this.rightContainer.dataset.page
+      this.rightContainer.dispatchEvent(new CustomEvent(PAGE_RENDERED_EVENT, { bubbles: true }))
       return
     }
     await this.right.showPage(rightPage)

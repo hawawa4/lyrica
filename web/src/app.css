@@ -181,6 +181,112 @@
   color: var(--accent-text);
 }
 
+.marker-tool-btn.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-text);
+}
+
+/* Markers written on the sheet (MarkerOverlay). The layer is a size container so marker text is sized in cqw — a fraction of the page's rendered width — and scales with zoom like ink on the page would. */
+.marker-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  container-type: size;
+  z-index: 2;
+}
+
+.marker-layer.placing {
+  pointer-events: auto;
+}
+
+.marker-layer.placing-text {
+  cursor: text;
+}
+
+.marker-layer.placing-fingering {
+  cursor: crosshair;
+}
+
+.sheet-marker {
+  position: absolute;
+  color: var(--marker-ink);
+  white-space: nowrap;
+  user-select: none;
+  line-height: 1;
+}
+
+.marker-layer.placing .sheet-marker {
+  cursor: grab;
+}
+
+.marker-layer.placing .sheet-marker:hover {
+  outline: 1px dashed var(--marker-ink);
+  outline-offset: 2px;
+}
+
+.sheet-marker.dragging {
+  cursor: grabbing;
+  opacity: 0.7;
+}
+
+/* Bottom-left corner sits on the measure's top-left (see PracticeView.markerHostFor); several on one measure stack upward. */
+.sheet-marker-text {
+  font-size: 1.7cqw;
+  font-style: italic;
+  transform: translate(0.4cqw, calc(-100% * (var(--stack-index, 0) + 1) - 0.5cqw));
+}
+
+/* Centered on the click; one digit per line, top to bottom in typed order. */
+.sheet-marker-fingering {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  font-size: 1.6cqw;
+  font-weight: 700;
+  line-height: 0.95;
+  transform: translate(-50%, -50%);
+}
+
+.marker-editor {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  pointer-events: auto;
+  z-index: 3;
+}
+
+.marker-editor-text {
+  transform: translate(0, calc(-100% - 0.5cqw));
+}
+
+.marker-editor-fingering {
+  transform: translate(-50%, -50%);
+}
+
+.marker-editor input {
+  font-size: 13px;
+  padding: 2px 4px;
+  border: 1px solid var(--marker-ink);
+  border-radius: 3px;
+  background: var(--bg-elevated);
+  color: var(--text);
+  width: 14em;
+}
+
+.marker-editor-fingering input {
+  width: 4em;
+  text-align: center;
+  font-weight: 700;
+}
+
+.marker-editor-delete {
+  padding: 2px 6px;
+  font-size: 11px;
+  line-height: 1;
+}
+
 .empty-state {
   flex: 1;
   display: flex;
@@ -302,17 +408,6 @@
   color: var(--text-muted);
   font-size: 12px;
   margin-top: 4px;
-}
-
-.marker-add-row {
-  display: flex;
-  gap: 6px;
-  margin-top: 6px;
-}
-
-.marker-add-row input {
-  flex: 1;
-  min-width: 0;
 }
 
 .tab-bar {

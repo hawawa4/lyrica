@@ -4,7 +4,7 @@ import type { Piece } from '../types'
  * Lists auto-detected piece boundaries for the currently open score (see
  * `detectPieces`/`crates/core/src/pieces.rs`) and lets the user click one to
  * jump to it. Read-only — pieces are detected from the file's own title
- * frames, not user-created, unlike `MarkerPanel`. Hidden entirely when a
+ * frames, not user-created, unlike markers. Hidden entirely when a
  * file has 0 or 1 detected boundaries (i.e. isn't actually a multi-piece
  * combined file).
  */

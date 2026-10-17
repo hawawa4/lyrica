@@ -7,6 +7,9 @@ export const MAX_ZOOM = 3
 /** CSS px width at 100% zoom — the SVG is sized in absolute px (not a %) so it has a real intrinsic size inside a flex-centered `.page-stage`, instead of a 0-width collapse (a percentage width has nothing to resolve against there). */
 const BASE_WIDTH_PX = 700
 
+/** Bubbling DOM event fired on a page-stage whenever it starts showing a different page (or none) — the stage's `data-page` attribute holds the new 0-based page, absent when empty. */
+export const PAGE_RENDERED_EVENT = 'lyrica:pagerendered'
+
 /**
  * Paged, vertical page-by-page display of a score. Caches each rendered SVG
  * page in memory per score instance, so repeat navigation (going back to a
@@ -127,6 +130,10 @@ export class PageView {
    */
   private setContent(svg: string): void {
     this.svgLayer.innerHTML = svg
+    // Advertises which page this stage shows, for overlays that aren't
+    // wired to onPageChange (MarkerOverlay) — and tells them it changed.
+    this.container.dataset.page = String(this.currentPage)
+    this.container.dispatchEvent(new CustomEvent(PAGE_RENDERED_EVENT, { bubbles: true }))
     const svgEl = this.svgLayer.querySelector('svg')
     if (svgEl) {
       svgEl.style.width = `${BASE_WIDTH_PX * this.zoom}px`

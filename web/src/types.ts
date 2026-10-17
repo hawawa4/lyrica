@@ -26,9 +26,22 @@ export interface ImportTimelineResponse {
   timeline: Timeline
 }
 
+export type MarkerKind = 'text' | 'fingering'
+
+/** A spot on a page: 0-based page index plus x/y as a 0-1 fraction of that page's width/height. */
+export interface MarkerPosition {
+  page: number
+  x: number
+  y: number
+}
+
 export interface Marker {
   id: string
-  measure_index: number
+  kind: MarkerKind
+  /** Legacy anchor, only on markers created before `position` existed. */
+  measure_index?: number
+  position?: MarkerPosition
+  /** For `fingering`, only the digits 1-5, drawn stacked top to bottom in this order. */
   text: string
   created_at: number
 }
