@@ -1,5 +1,8 @@
 import type { CalibrationPoint, StaffSystem } from '../types'
 
+/** Pointer travel (px) below which a mousedown/mouseup pair counts as a click (seek) rather than a drag (select). */
+const CLICK_SLOP_PX = 4
+
 /**
  * A selected range of calibration points, by index into the time-sorted
  * point list (mirrors `SelectionOverlay`'s `MeasureRange`, but over
@@ -27,7 +30,7 @@ export interface PointRange {
  * The page's only remaining interaction is drag-select a rectangle to
  * select a *range* of existing measures (like `SelectionOverlay`'s
  * drag-to-select-measures for `.mscz`) for `main.ts`'s L-to-loop, plus
- * double-click-to-seek on the nearest measure.
+ * click-to-seek on the nearest measure.
  *
  * Positions are stored as a **fraction (0-1) of the page's own width/height**
  * — zoom-independent, matching `CalibrationPoint.x`/`y`'s documented contract
@@ -35,7 +38,7 @@ export interface PointRange {
  * place a point is created (click-to-place, CV barline detection) divides by
  * *that moment's* canvas width/height to get this fraction; every place a
  * point is displayed or hit-tested (`render()`, `handleStageClick`,
- * `handleDoubleClick`) multiplies by the *current* canvas's width/height.
+ * `seekNearest`) multiplies by the *current* canvas's width/height.
  * Storing raw canvas-native pixels instead (an earlier version of this file
  * did) silently broke after any zoom change made since a point was placed —
  * the stored pixel offset no longer corresponded to the same place on the
@@ -71,7 +74,6 @@ export class CalibrationOverlay {
     this.stage.addEventListener('mousedown', this.handleMouseDown)
     window.addEventListener('mousemove', this.handleMouseMove)
     window.addEventListener('mouseup', this.handleMouseUp)
-    this.stage.addEventListener('dblclick', this.handleDoubleClick)
   }
 
   onChange(callback: (points: CalibrationPoint[]) => void): void {
@@ -207,7 +209,7 @@ export class CalibrationOverlay {
     this.onChangeCallback?.(this.points)
   }
 
-  /** Called with the index (time-sorted, matches getPoints()) of the calibration point nearest a double-click, for seeking the playback head there. */
+  /** Called with the index (time-sorted, matches getPoints()) of the calibration point nearest a click, for seeking the playback head there. */
   onSeek(callback: (pointIndex: number) => void): void {
     this.onSeekCallback = callback
   }
@@ -216,18 +218,21 @@ export class CalibrationOverlay {
     this.stage.removeEventListener('mousedown', this.handleMouseDown)
     window.removeEventListener('mousemove', this.handleMouseMove)
     window.removeEventListener('mouseup', this.handleMouseUp)
-    this.stage.removeEventListener('dblclick', this.handleDoubleClick)
     this.dotsLayer.remove()
     this.dragRectEl.remove()
   }
 
-  /** Nearest measure on the current page, by on-screen pixel distance from a double-click, for seeking the playback head there. */
-  private handleDoubleClick = (e: MouseEvent): void => {
+  /** Highlights `range` (or nothing, for `null`) without firing `onSelect` — for syncing with the other book-mode pane or clearing programmatically. */
+  setSelection(range: PointRange | null): void {
+    this.selectedRange = range
+    this.render()
+  }
+
+  /** Nearest measure on the current page, by on-screen pixel distance from a click (stage-relative px), for seeking the playback head there. */
+  private seekNearest(clickX: number, clickY: number): void {
     const canvas = this.stage.querySelector('canvas')
     if (!canvas) return
     const rect = this.stage.getBoundingClientRect()
-    const clickX = e.clientX - rect.left
-    const clickY = e.clientY - rect.top
 
     let nearestIndex = -1
     let nearestDistSq = Infinity
@@ -248,6 +253,7 @@ export class CalibrationOverlay {
   }
 
   private handleMouseDown = (e: MouseEvent): void => {
+    if (e.button !== 0) return
     const rect = this.stage.getBoundingClientRect()
     this.dragStart = { x: e.clientX - rect.left, y: e.clientY - rect.top }
     this.dragRectEl.style.display = 'block'
@@ -279,8 +285,14 @@ export class CalibrationOverlay {
       right: Math.max(this.dragStart.x, cur.x),
       bottom: Math.max(this.dragStart.y, cur.y),
     }
+    const start = this.dragStart
     this.dragStart = null
     this.dragRectEl.style.display = 'none'
+
+    if (Math.hypot(cur.x - start.x, cur.y - start.y) < CLICK_SLOP_PX) {
+      this.seekNearest(cur.x, cur.y)
+      return
+    }
 
     const stageRect = this.stage.getBoundingClientRect()
     const selectedIndices: number[] = []

@@ -1,4 +1,3 @@
-import { detectPieces } from '../api-client'
 import type { Piece } from '../types'
 
 /**
@@ -39,21 +38,9 @@ export class PiecesIndex {
     this.onJump = callback
   }
 
-  /** Call once per opened score (pass the original, pre-upgrade bytes). `null` clears it. */
-  async setScoreBytes(bytes: Uint8Array | null): Promise<void> {
-    if (!bytes) {
-      this.root.style.display = 'none'
-      this.listEl.innerHTML = ''
-      return
-    }
-    let pieces: Piece[]
-    try {
-      pieces = await detectPieces(bytes)
-    } catch (e) {
-      console.error('Failed to detect pieces:', e)
-      pieces = []
-    }
-    this.render(pieces)
+  /** Shows `pieces` (detected once per opened score, see `PracticeView`'s tab state); `null` clears it. */
+  setPieces(pieces: Piece[] | null): void {
+    this.render(pieces ?? [])
   }
 
   private render(pieces: Piece[]): void {

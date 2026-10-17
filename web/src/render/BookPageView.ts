@@ -18,7 +18,7 @@ import { SelectionOverlay, type MeasureRange } from './SelectionOverlay'
  * whatever `left` is doing one page ahead, including showing nothing (its
  * container stays empty) past the last page in an odd-paged score.
  *
- * Both sides are fully interactive (drag-select, double-click-seek) — this
+ * Both sides are fully interactive (drag-select, click-to-seek) — this
  * is two complete `SelectionOverlay` instances, not a read-only preview on
  * one side, so loop-selection/jump-to-measure work identically regardless
  * of which page of the spread the target measure happens to land on.
@@ -114,13 +114,24 @@ export class BookPageView {
    * its "selectionOverlay" should never need to call `setPage` itself.
    */
 
-  /** Fires for a selection made on *either* page of the spread — the callback isn't told which side, since loop/selection state in `PracticeView` is per-tab, not per-page. */
+  /** Fires for a selection made on *either* page of the spread — the callback isn't told which side, since loop/selection state in `PracticeView` is per-tab, not per-page. The other side's highlight is synced to match, so a selection on one page never leaves a stale one showing on the other. */
   onSelect(callback: (range: MeasureRange | null) => void): void {
-    this.leftSelectionOverlay.onSelect(callback)
-    this.rightSelectionOverlay.onSelect(callback)
+    this.leftSelectionOverlay.onSelect((range) => {
+      this.rightSelectionOverlay.setSelection(range)
+      callback(range)
+    })
+    this.rightSelectionOverlay.onSelect((range) => {
+      this.leftSelectionOverlay.setSelection(range)
+      callback(range)
+    })
   }
 
-  /** Fires for a double-click-seek on *either* page of the spread. */
+  setSelection(range: MeasureRange | null): void {
+    this.leftSelectionOverlay.setSelection(range)
+    this.rightSelectionOverlay.setSelection(range)
+  }
+
+  /** Fires for a click-to-seek on *either* page of the spread. */
   onSeek(callback: (elid: number) => void): void {
     this.leftSelectionOverlay.onSeek(callback)
     this.rightSelectionOverlay.onSeek(callback)

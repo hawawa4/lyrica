@@ -29,11 +29,11 @@ libraryView.onOpen((path) => {
 
 async function openFromLibrary(path: string): Promise<void> {
   if (!isTauri()) return // LibraryView only ever offers rows to open when running under Tauri; this mirrors that guard rather than assuming it
-  const { readFile } = await import('@tauri-apps/plugin-fs')
-  const bytes = await readFile(path)
-  const filename = path.split(/[/\\]/).pop() ?? path
-  await practiceView.openBytes(bytes, filename, path)
+  // Switch first, so the practice view's loading overlay is what the user
+  // sees while a big score loads, not a library view that looks like it
+  // ignored the click.
   location.hash = '#/practice'
+  await practiceView.openPath(path)
 }
 
 function currentRoute(): Route {
@@ -50,3 +50,5 @@ function render(): void {
 window.addEventListener('hashchange', render)
 if (!location.hash) location.hash = '#/library'
 render()
+
+

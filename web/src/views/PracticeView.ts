@@ -27,12 +27,15 @@ import {
   detectBarlines,
   getKnowledgeLevel,
   setKnowledgeLevel,
+  detectPieces,
+  getPlaybackPosition,
+  adaptScoreForEngine,
 } from '../api-client'
 import { MarkerPanel } from './MarkerPanel'
 import { PiecesIndex } from './PiecesIndex'
 import { RatingStars } from './RatingStars'
 import { TabBar, type TabInfo } from './TabBar'
-import type { CalibrationPoint, KnowledgeLevel, StaffSystem, Timeline, TimelineEvent } from '../types'
+import type { CalibrationPoint, KnowledgeLevel, Piece, StaffSystem, Timeline, TimelineEvent } from '../types'
 import { initTheme, applyTheme, THEME_LABELS, type Theme } from '../theme'
 
 /**
@@ -75,6 +78,8 @@ interface PageDisplay {
 interface SelectionSource {
   onSelect(callback: (range: MeasureRange | null) => void): void
   onSeek(callback: (elid: number) => void): void
+  /** Highlights `range` without firing `onSelect` — `null` clears the highlight. */
+  setSelection(range: MeasureRange | null): void
   destroy(): void
   /**
    * Re-pushes the given page's measure-box positions into whichever
@@ -99,6 +104,10 @@ interface MsczTabState {
   selectionOverlay: SelectionSource
   pageContainer: HTMLDivElement
   timeline: Timeline | null
+  /** Cached `saveMidi()` output — re-exporting it on every tab activation costs seconds on a long multi-piece score. */
+  midiBytes: Uint8Array | null
+  /** Piece boundaries for a multi-piece file (see `PiecesIndex`), detected once at open. Empty/single-entry for an ordinary single-piece file. */
+  pieces: Piece[]
   selection: MeasureRange | null
   speed: number
   loopRegion: [number, number] | null
@@ -192,6 +201,11 @@ export class PracticeView {
   private readonly themeSelectEl: HTMLSelectElement
   private readonly dropOverlay: HTMLDivElement
   private readonly openFileBtn: HTMLButtonElement
+  private readonly loadingOverlayEl: HTMLDivElement
+  private readonly loadingTitleEl: HTMLDivElement
+  private readonly loadingStepEl: HTMLDivElement
+  /** How many opens are in flight — the loading overlay stays up until the last one finishes. */
+  private loadingCount = 0
 
   private readonly tabs = new Map<string, TabState>()
   private activeHash: string | null = null
@@ -268,10 +282,19 @@ export class PracticeView {
           <span id="calibration-status" class="calibration-status"></span>
           <span id="rating-mount" class="rating-mount" style="display:none;"></span>
         </div>
-        <div id="page" class="page-area">
-          <div class="empty-state" id="empty-state">
-            <div>No file open</div>
-            <div class="hint">Open a .mscz or .pdf file, or drag one onto this window</div>
+        <div class="page-area-wrap">
+          <div id="page" class="page-area">
+            <div class="empty-state" id="empty-state">
+              <div>No file open</div>
+              <div class="hint">Open a .mscz or .pdf file, or drag one onto this window</div>
+            </div>
+          </div>
+          <div id="loading-overlay" class="loading-overlay" style="display:none;" role="status" aria-live="polite">
+            <div class="loading-card">
+              <div class="spinner"></div>
+              <div class="loading-title"></div>
+              <div class="loading-step"></div>
+            </div>
           </div>
         </div>
       </div>
@@ -320,6 +343,9 @@ export class PracticeView {
     this.themeSelectEl = this.root.querySelector('#theme-select')!
     this.dropOverlay = this.root.querySelector('#drop-overlay')!
     this.openFileBtn = this.root.querySelector('#open-file-btn')!
+    this.loadingOverlayEl = this.root.querySelector('#loading-overlay')!
+    this.loadingTitleEl = this.root.querySelector('.loading-title')!
+    this.loadingStepEl = this.root.querySelector('.loading-step')!
 
     for (const theme of Object.keys(THEME_LABELS) as Theme[]) {
       const opt = document.createElement('option')
@@ -354,6 +380,7 @@ export class PracticeView {
       this.cursorBoxEl.style.width = `${(event.bbox.sx / width) * 100}%`
       this.cursorBoxEl.style.height = `${(event.bbox.sy / height) * 100}%`
       this.headMarker.setPosition((event.bbox.x / width) * 100, (event.bbox.y / height) * 100)
+      active.headMs = event.time_ms
     })
 
     /**
@@ -379,6 +406,7 @@ export class PracticeView {
       // target.x/y are already a 0-1 fraction of the page (see
       // CalibrationOverlay's module docs) — no canvas-size division needed.
       this.headMarker.setPosition(target.x * 100, target.y * 100)
+      active.headMs = target.time_ms
     })
 
     const markerPanelEl = this.root.querySelector<HTMLDivElement>('#marker-panel')!
@@ -467,6 +495,22 @@ export class PracticeView {
       },
       { passive: false },
     )
+
+    /**
+     * A click on the empty area around the page (outside every page-stage)
+     * clears the selection/loop — clicks *on* a page are handled by its own
+     * SelectionOverlay/CalibrationOverlay (click = seek, drag = select).
+     * `.book-spread` is excluded because the spread wrapper itself carries
+     * `.page-stage` for `.mscz` tabs, though the gap between its two pages
+     * is still "outside the page".
+     */
+    this.pageContainerEl.addEventListener('mousedown', (e) => {
+      if (e.button !== 0) return
+      const target = e.target as Element | null
+      if (target?.closest('.page-stage:not(.book-spread)')) return
+      const active = this.activeTab()
+      if (active) void this.clearSelection(active)
+    })
 
     this.playBtn.addEventListener('click', () => this.togglePlayPause())
     this.stopBtn.addEventListener('click', () => void this.stopActive())
@@ -858,7 +902,7 @@ export class PracticeView {
       this.msczCursor.setItems(tab.timeline?.events ?? null)
       this.pdfCursor.setItems(null)
       await this.markerPanel.setFileHash(tab.fileHash)
-      await this.piecesIndex.setScoreBytes(tab.originalBytes)
+      this.piecesIndex.setPieces(tab.pieces)
 
       const hasAudio = tab.timeline !== null
       this.renderTransportButtons(tab.transportState, hasAudio)
@@ -867,8 +911,8 @@ export class PracticeView {
 
       if (hasAudio) {
         this.setSpeed(tab.speed)
-        const midiBytes = await getMidi(tab.score)
-        await loadMidi(midiBytes)
+        tab.midiBytes ??= await getMidi(tab.score)
+        await loadMidi(tab.midiBytes)
         await setLoopRegion(tab.loopRegion)
         await setMetronomeEnabled(this.metronomeCheckbox.checked)
         this.updateMsczHeadMarker(tab)
@@ -893,7 +937,7 @@ export class PracticeView {
       // (desktop hashing failed, or running outside Tauri), so markers stay
       // unavailable for those, same restriction PDF calibration itself has.
       await this.markerPanel.setFileHash(tab.fileHash.startsWith('untracked-') ? null : tab.fileHash)
-      await this.piecesIndex.setScoreBytes(null) // pieces index is .mscz-only — no raw XML to detect boundaries from in a PDF
+      this.piecesIndex.setPieces(null) // pieces index is .mscz-only — no raw XML to detect boundaries from in a PDF
 
       this.navEl.style.display = tab.pageCount > 1 ? 'flex' : 'none'
       this.pageIndicatorEl.textContent = `Page ${tab.currentPage + 1} / ${tab.pageCount}`
@@ -1084,7 +1128,7 @@ export class PracticeView {
         this.calibrationStatusEl.textContent = ''
         this.ratingMountEl.style.display = 'none'
         void this.markerPanel.setFileHash(null)
-        void this.piecesIndex.setScoreBytes(null)
+        this.piecesIndex.setPieces(null)
         this.playBtn.disabled = true
         this.stopBtn.disabled = true
         for (const btn of Object.values(this.speedButtons)) btn.disabled = true
@@ -1095,11 +1139,59 @@ export class PracticeView {
   }
 
   async openBytes(bytes: Uint8Array, filename: string, path: string | null): Promise<void> {
-    if (isPdfFile(filename)) {
-      await this.openPdfBytes(bytes, filename, path)
-    } else {
-      await this.openMsczBytes(bytes, filename, path)
+    this.beginLoading(filename)
+    try {
+      if (isPdfFile(filename)) {
+        await this.openPdfBytes(bytes, filename, path)
+      } else {
+        await this.openMsczBytes(bytes, filename, path)
+      }
+    } catch (e) {
+      console.error(`Failed to open ${filename}:`, e)
+      this.statusEl.textContent = `Failed to open ${filename}: ${e instanceof Error ? e.message : String(e)}`
+    } finally {
+      this.endLoading()
     }
+  }
+
+  /**
+   * Opens a file by path (desktop only), showing the loading overlay from
+   * the very start — reading a large file off disk is itself part of the
+   * wait. Used by the library view, which switches to this view first so the
+   * user watches progress here instead of a library that seems to ignore
+   * their click.
+   */
+  async openPath(path: string): Promise<void> {
+    const filename = path.split(/[/\\]/).pop() ?? path
+    this.beginLoading(filename)
+    try {
+      this.setLoadingStep('Reading file…')
+      const { readFile } = await import('@tauri-apps/plugin-fs')
+      const bytes = await readFile(path)
+      await this.openBytes(bytes, filename, path)
+    } catch (e) {
+      console.error(`Failed to read ${path}:`, e)
+      this.statusEl.textContent = `Failed to open ${filename}: ${e instanceof Error ? e.message : String(e)}`
+    } finally {
+      this.endLoading()
+    }
+  }
+
+  /** Shows the loading overlay (spinner + `filename` + current step) over the page area. Nestable: stays up until every `beginLoading` has its `endLoading`. */
+  private beginLoading(filename: string): void {
+    this.loadingCount++
+    this.loadingTitleEl.textContent = `Opening ${filename}`
+    this.loadingStepEl.textContent = ''
+    this.loadingOverlayEl.style.display = 'flex'
+  }
+
+  private setLoadingStep(step: string): void {
+    this.loadingStepEl.textContent = step
+  }
+
+  private endLoading(): void {
+    this.loadingCount = Math.max(0, this.loadingCount - 1)
+    if (this.loadingCount === 0) this.loadingOverlayEl.style.display = 'none'
   }
 
   /**
@@ -1169,7 +1261,7 @@ export class PracticeView {
 
     selectionOverlay.onSeek((elid) => {
       const tabState = getTabState()
-      const event = tabState.timeline?.events.find((e) => e.source_elid === elid)
+      const event = tabState.timeline && this.eventForElidNearHead(tabState.timeline, elid, tabState.headMs)
       if (event) void this.seekActive(tabState, event.time_ms)
     })
 
@@ -1177,7 +1269,7 @@ export class PracticeView {
   }
 
   private async openMsczBytes(bytes: Uint8Array, filename: string, path: string | null): Promise<void> {
-    this.statusEl.textContent = `Loading ${filename}...`
+    this.setLoadingStep('Loading score…')
 
     // webmscore's worker-based load() transfers `data.buffer` into the worker
     // (an explicit `Transferable`, see node_modules/webmscore/src/worker-helper.js),
@@ -1187,9 +1279,22 @@ export class PracticeView {
     // the original file for markers).
     const originalBytes = bytes.slice()
 
+    // Score files from newer MuseScore versions get rewritten into a form the
+    // engine understands first (it would otherwise silently drop e.g. every
+    // key signature). In-memory only; hashing/pieces still use originalBytes.
+    let engineBytes: Uint8Array = originalBytes
+    try {
+      engineBytes = await adaptScoreForEngine(originalBytes)
+    } catch (e) {
+      console.error('Failed to adapt score for the engine, loading it as-is:', e)
+    }
+    // openScore detaches the buffer it's given; the timeline needs a copy of
+    // what was loaded.
+    let loadedBytes: Uint8Array = engineBytes === originalBytes ? originalBytes : engineBytes.slice()
+
     let result: OpenScoreResult
     try {
-      result = await openScore(bytes)
+      result = await openScore(engineBytes === originalBytes ? bytes : engineBytes)
     } catch (e) {
       this.statusEl.textContent = `Failed to open ${filename}: ${e instanceof Error ? e.message : String(e)}`
       return
@@ -1197,6 +1302,9 @@ export class PracticeView {
 
     let { score } = result
     const { needsUpgrade, metadata } = result
+    // `loadedBytes` must stay exactly what webmscore ends up holding (the
+    // upgraded re-save, if any) — the timeline reads its measure layout from
+    // it, so it has to describe the score the positions/MIDI came from.
 
     // Upgrading is purely an in-memory re-save inside webmscore's own engine
     // (to the format version it natively works with) — it never touches the
@@ -1205,8 +1313,10 @@ export class PracticeView {
     // hash — see the comment on hashing below). Nothing for the user to
     // decide here, so no confirmation prompt.
     if (needsUpgrade) {
+      this.setLoadingStep('Converting from an older MuseScore format…')
       const upgradedBytes = await upgradeScore(score)
       score.destroy()
+      loadedBytes = upgradedBytes.slice() // openScore detaches the buffer it's given
       result = await openScore(upgradedBytes)
       score = result.score
     }
@@ -1220,6 +1330,7 @@ export class PracticeView {
     let fileHash: string | null = null
     if (isTauri()) {
       try {
+        this.setLoadingStep('Checking file…')
         fileHash = await contentHash(originalBytes, filename)
       } catch (e) {
         console.error('Failed to compute file hash:', e)
@@ -1254,6 +1365,8 @@ export class PracticeView {
       selectionOverlay,
       pageContainer,
       timeline: null,
+      midiBytes: null,
+      pieces: [],
       selection: null,
       speed: 1.0,
       loopRegion: null,
@@ -1263,20 +1376,31 @@ export class PracticeView {
       bookMode: false,
     }
 
+    this.setLoadingStep('Laying out pages…')
     await pageView.setScore(score, metadata.pages)
+    this.setLoadingStep('Rendering first page…')
     await pageView.showPage(0)
 
     if (isTauri() && fileHash) {
-      const positions = await getMeasurePositions(score)
-      const midiBytes = await getMidi(score)
-      const { timeline } = await importTimeline(positions, midiBytes)
+      this.setLoadingStep('Preparing playback…')
+      const positions = pageView.getPositions() ?? (await getMeasurePositions(score))
+      tabState.midiBytes = await getMidi(score)
+      this.setLoadingStep('Building playback timeline…')
+      const { timeline } = await importTimeline(positions, tabState.midiBytes, loadedBytes)
       tabState.timeline = timeline
+      this.setLoadingStep('Finding pieces…')
+      try {
+        tabState.pieces = await detectPieces(originalBytes)
+      } catch (e) {
+        console.error('Failed to detect pieces:', e)
+      }
 
       if (path) {
         await this.recordAndNotifyRecentFile(path, fileHash, title)
       }
     }
 
+    this.setLoadingStep('Loading audio…')
     this.tabs.set(tabState.fileHash, tabState)
     await this.activateTab(tabState)
   }
@@ -1315,7 +1439,7 @@ export class PracticeView {
   }
 
   private async openPdfBytes(bytes: Uint8Array, filename: string, path: string | null): Promise<void> {
-    this.statusEl.textContent = `Loading ${filename}...`
+    this.setLoadingStep('Loading PDF…')
 
     // pdf.js's getDocument() transfers `data.buffer` into its worker (passed
     // as an explicit Transferable in its internal postMessage call — see
@@ -1388,6 +1512,7 @@ export class PracticeView {
 
     calibrationOverlay.onSelect((range) => {
       tabState.selectedRange = range
+      tabState.rightPane?.calibrationOverlay.setSelection(range)
       void this.setPdfLoop(range)
       if (range) {
         const loopRegion = this.loopRegionForPointRange(calibrationOverlay.getPoints(), range)
@@ -1435,6 +1560,7 @@ export class PracticeView {
       }
     }
 
+    this.setLoadingStep('Rendering first page…')
     await this.showPdfPage(tabState, 0)
 
     this.tabs.set(tabState.fileHash, tabState)
@@ -1578,11 +1704,60 @@ export class PracticeView {
     tab.headMs = targetMs
     const [loopStart, loopEnd] = tab.loopRegion ?? [null, null]
     if (loopStart !== null && loopEnd !== null && (targetMs < loopStart || targetMs > loopEnd)) {
-      if (tab.kind === 'mscz') await this.setLoop(null)
-      else await this.setPdfLoop(null)
+      await this.clearSelection(tab)
     }
     if (this.activeHash === tab.fileHash) await seekMidi(targetMs)
     this.updateHeadMarker(tab)
+  }
+
+  /** Clears `tab`'s measure selection — its highlight on every pane, the status text, and the loop it armed. */
+  private async clearSelection(tab: TabState): Promise<void> {
+    if (tab.kind === 'mscz') {
+      tab.selection = null
+      tab.selectionOverlay.setSelection(null)
+    } else {
+      tab.selectedRange = null
+      tab.calibrationOverlay.setSelection(null)
+      tab.rightPane?.calibrationOverlay.setSelection(null)
+    }
+    if (this.activeHash !== tab.fileHash) return
+    this.selectionStatusEl.textContent = ''
+    if (tab.kind === 'mscz') await this.setLoop(null)
+    else await this.setPdfLoop(null)
+  }
+
+  /**
+   * Start time of the piece playing at `positionMs` (the latest piece
+   * boundary at or before the measure playing then, matched in the same
+   * unrolled pass, so a repeat inside the piece doesn't confuse it). A
+   * single-piece file has its only boundary at measure 0, i.e. time 0.
+   */
+  private pieceStartMs(tab: MsczTabState, positionMs: number): number {
+    const events = tab.timeline?.events
+    if (!events || events.length === 0) return 0
+    let current = 0
+    while (current + 1 < events.length && events[current + 1].time_ms <= positionMs) current++
+    const elid = events[current].source_elid
+    const pieceStartElid = tab.pieces.reduce((best, p) => (p.start_measure_index <= elid ? Math.max(best, p.start_measure_index) : best), 0)
+    for (let i = current; i >= 0; i--) {
+      if (events[i].source_elid === pieceStartElid) return events[i].time_ms
+    }
+    return 0
+  }
+
+  /**
+   * A printed measure can play several times (repeats, D.S./D.C.); clicking
+   * it seeks to the pass nearest the current head rather than always the
+   * first one, so clicking inside a repeated section you're already in
+   * doesn't jump back a whole pass.
+   */
+  private eventForElidNearHead(timeline: Timeline, elid: number, headMs: number): TimelineEvent | null {
+    let best: TimelineEvent | null = null
+    for (const e of timeline.events) {
+      if (e.source_elid !== elid) continue
+      if (!best || Math.abs(e.time_ms - headMs) < Math.abs(best.time_ms - headMs)) best = e
+    }
+    return best
   }
 
   private async playActive(): Promise<void> {
@@ -1629,14 +1804,24 @@ export class PracticeView {
   private async stopActive(): Promise<void> {
     const active = this.activeTab()
     if (!active || active.transportState === 'stopped') return
+    // headMs only moves on explicit seeks, not while audio plays — ask the
+    // engine where playback actually got to, to know which piece we're in.
+    let positionMs = active.headMs
+    try {
+      positionMs = (await getPlaybackPosition()) * 1000
+    } catch (e) {
+      console.error('Failed to read playback position:', e)
+    }
     await stopMidi()
     this.msczCursor.stop()
     this.pdfCursor.stop()
     if (active.kind === 'pdf') active.calibrationOverlay.setPlayingIndex(null)
     active.transportState = 'stopped'
     // Head resets to the active loop's start if one is set (loop stays
-    // armed across Stop, see setLoop/setPdfLoop), else all the way to 0.
-    active.headMs = active.loopRegion?.[0] ?? 0
+    // armed across Stop, see setLoop/setPdfLoop), else to the start of the
+    // piece being played — never all the way back to the top of a
+    // multi-piece file.
+    active.headMs = active.loopRegion?.[0] ?? (active.kind === 'mscz' ? this.pieceStartMs(active, positionMs) : 0)
     this.updateHeadMarker(active)
     this.renderTransportButtons('stopped', true)
   }
@@ -1735,6 +1920,7 @@ export class PracticeView {
   private wirePdfPaneInteractions(tab: PdfTabState, overlay: CalibrationOverlay): void {
     overlay.onSelect((range) => {
       tab.selectedRange = range
+      tab.calibrationOverlay.setSelection(range)
       void this.setPdfLoop(range)
       if (range) {
         const loopRegion = this.loopRegionForPointRange(overlay.getPoints(), range)

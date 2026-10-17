@@ -6,11 +6,19 @@ export interface MeasureRange {
   endElid: number
 }
 
+/** Pointer travel (px) below which a mousedown/mouseup pair counts as a click rather than a drag. */
+const CLICK_SLOP_PX = 4
+
 /**
- * Click-drag-to-measure-range selection, overlaid on a rendered page. Draws a
- * transparent box per measure (from `measurePositions()`'s elements, filtered
- * to the current page), highlights the ones a drag rectangle overlaps, and
- * reports the resulting measure range on mouseup.
+ * Measure interaction overlaid on a rendered page. Draws a transparent box
+ * per measure (from `measurePositions()`'s elements, filtered to the current
+ * page) and turns pointer input into:
+ * - click on a measure: `onSeek(elid)` (move the playback head there)
+ * - click anywhere else: clear the selection, `onSelect(null)`
+ * - drag across measures: highlight the ones the drag rectangle overlaps,
+ *   `onSelect(range)` (loop them)
+ * The selected range is kept here (not just as box styling) so it's still
+ * highlighted after the page is re-rendered or flipped away and back.
  *
  * Box positions are computed as percentages of the page's native size
  * (`pageSize` from webmscore's Positions payload), not fixed pixel values —
@@ -23,6 +31,7 @@ export class SelectionOverlay {
   private readonly boxesLayer: HTMLDivElement
   private readonly dragRectEl: HTMLDivElement
   private elements: PositionElement[] = []
+  private selected: MeasureRange | null = null
   private dragStart: { x: number; y: number } | null = null
   private onSelectionChange: ((range: MeasureRange | null) => void) | null = null
   private onSeekCallback: ((elid: number) => void) | null = null
@@ -48,7 +57,6 @@ export class SelectionOverlay {
     this.stage.addEventListener('mousedown', this.handleMouseDown)
     window.addEventListener('mousemove', this.handleMouseMove)
     window.addEventListener('mouseup', this.handleMouseUp)
-    this.stage.addEventListener('dblclick', this.handleDoubleClick)
   }
 
   /** Call once per page shown: all measure elements plus which page is visible. */
@@ -66,7 +74,13 @@ export class SelectionOverlay {
     this.onSelectionChange = callback
   }
 
-  /** Called with the elid of the measure double-clicked, for seeking the playback head there. */
+  /** Highlights `range` (or nothing, for `null`) without firing `onSelect` — for keeping this overlay in sync with a selection made elsewhere (the other page of a book spread) or cleared programmatically. */
+  setSelection(range: MeasureRange | null): void {
+    this.selected = range
+    this.renderBoxes()
+  }
+
+  /** Called with the elid of the measure clicked, for seeking the playback head there. */
   onSeek(callback: (elid: number) => void): void {
     this.onSeekCallback = callback
   }
@@ -75,7 +89,6 @@ export class SelectionOverlay {
     this.stage.removeEventListener('mousedown', this.handleMouseDown)
     window.removeEventListener('mousemove', this.handleMouseMove)
     window.removeEventListener('mouseup', this.handleMouseUp)
-    this.stage.removeEventListener('dblclick', this.handleDoubleClick)
     this.boxesLayer.remove()
     this.dragRectEl.remove()
   }
@@ -96,6 +109,9 @@ export class SelectionOverlay {
       box.style.top = `${(el.y / pageHeight) * 100}%`
       box.style.width = `${(el.sx / pageWidth) * 100}%`
       box.style.height = `${(el.sy / pageHeight) * 100}%`
+      const isSelected = !!this.selected && el.id >= this.selected.startElid && el.id <= this.selected.endElid
+      box.style.background = isSelected ? 'var(--selection)' : 'transparent'
+      box.style.border = isSelected ? '1px solid var(--selection-border)' : 'none'
       this.boxesLayer.appendChild(box)
     }
   }
@@ -111,6 +127,7 @@ export class SelectionOverlay {
   }
 
   private handleMouseDown = (e: MouseEvent): void => {
+    if (e.button !== 0) return
     const rect = this.stage.getBoundingClientRect()
     this.dragStart = { x: e.clientX - rect.left, y: e.clientY - rect.top }
     this.dragRectEl.style.display = 'block'
@@ -136,53 +153,44 @@ export class SelectionOverlay {
     if (!this.dragStart) return
     const rect = this.stage.getBoundingClientRect()
     const cur = { x: e.clientX - rect.left, y: e.clientY - rect.top }
-    const dragBox = {
-      left: Math.min(this.dragStart.x, cur.x),
-      top: Math.min(this.dragStart.y, cur.y),
-      right: Math.max(this.dragStart.x, cur.x),
-      bottom: Math.max(this.dragStart.y, cur.y),
-    }
+    const start = this.dragStart
     this.dragStart = null
     this.dragRectEl.style.display = 'none'
 
-    const stageRect = this.stage.getBoundingClientRect()
-    const selectedIds: number[] = []
-    for (const box of Array.from(this.boxesLayer.children) as HTMLElement[]) {
-      const boxRect = box.getBoundingClientRect()
-      const bl = boxRect.left - stageRect.left
-      const bt = boxRect.top - stageRect.top
-      const br = bl + boxRect.width
-      const bb = bt + boxRect.height
-      const overlaps = bl < dragBox.right && br > dragBox.left && bt < dragBox.bottom && bb > dragBox.top
-      box.style.background = overlaps ? 'var(--selection)' : 'transparent'
-      box.style.border = overlaps ? '1px solid var(--selection-border)' : 'none'
-      if (overlaps) selectedIds.push(Number(box.dataset.elid))
-    }
-
-    if (selectedIds.length === 0) {
-      this.onSelectionChange?.(null)
+    if (Math.hypot(cur.x - start.x, cur.y - start.y) < CLICK_SLOP_PX) {
+      const box = this.boxes().find((b) => cur.x >= b.left && cur.x <= b.right && cur.y >= b.top && cur.y <= b.bottom)
+      if (box) {
+        this.onSeekCallback?.(box.elid)
+      } else {
+        this.setSelection(null)
+        this.onSelectionChange?.(null)
+      }
       return
     }
-    this.onSelectionChange?.({
-      startElid: Math.min(...selectedIds),
-      endElid: Math.max(...selectedIds),
-    })
+
+    const dragBox = {
+      left: Math.min(start.x, cur.x),
+      top: Math.min(start.y, cur.y),
+      right: Math.max(start.x, cur.x),
+      bottom: Math.max(start.y, cur.y),
+    }
+    const selectedIds = this.boxes()
+      .filter((b) => b.left < dragBox.right && b.right > dragBox.left && b.top < dragBox.bottom && b.bottom > dragBox.top)
+      .map((b) => b.elid)
+
+    const range = selectedIds.length === 0 ? null : { startElid: Math.min(...selectedIds), endElid: Math.max(...selectedIds) }
+    this.setSelection(range)
+    this.onSelectionChange?.(range)
   }
 
-  private handleDoubleClick = (e: MouseEvent): void => {
+  /** Every measure box on this page, in stage-relative px. */
+  private boxes(): { elid: number; left: number; top: number; right: number; bottom: number }[] {
     const stageRect = this.stage.getBoundingClientRect()
-    const x = e.clientX - stageRect.left
-    const y = e.clientY - stageRect.top
-    for (const box of Array.from(this.boxesLayer.children) as HTMLElement[]) {
-      const boxRect = box.getBoundingClientRect()
-      const bl = boxRect.left - stageRect.left
-      const bt = boxRect.top - stageRect.top
-      const br = bl + boxRect.width
-      const bb = bt + boxRect.height
-      if (x >= bl && x <= br && y >= bt && y <= bb) {
-        this.onSeekCallback?.(Number(box.dataset.elid))
-        return
-      }
-    }
+    return (Array.from(this.boxesLayer.children) as HTMLElement[]).map((box) => {
+      const r = box.getBoundingClientRect()
+      const left = r.left - stageRect.left
+      const top = r.top - stageRect.top
+      return { elid: Number(box.dataset.elid), left, top, right: left + r.width, bottom: top + r.height }
+    })
   }
 }
