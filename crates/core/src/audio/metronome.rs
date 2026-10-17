@@ -59,8 +59,10 @@ impl ClickSample {
         // Canonical 44-byte header, written by the extraction script.
         let src_rate = u32::from_le_bytes(wav[24..28].try_into().unwrap()) as f64;
         let pcm: Vec<f32> = wav[44..]
-            .chunks_exact(2)
-            .map(|b| i16::from_le_bytes([b[0], b[1]]) as f32 / 32768.0)
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|&b| i16::from_le_bytes(b) as f32 / 32768.0)
             .collect();
         let ratio = src_rate / out_rate as f64;
         let out_len = (pcm.len() as f64 / ratio) as usize;
