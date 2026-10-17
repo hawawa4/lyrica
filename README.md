@@ -1,6 +1,7 @@
 # Lyrica
 
-**Practice from the score you already have.**
+**Practice from the score you already have.**  
+[lyrica.hawawa.org](https://lyrica.hawawa.org)
 
 Lyrica opens your [MuseScore](https://musescore.org) `.mscz` files like a PDF reader (not an editor) and adds the things you reach for while learning a piece: loop a hard passage, slow it down, play along with a click, and keep track of what you've practised.
 

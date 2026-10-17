@@ -37,6 +37,7 @@
     "shortDescription": "Sheet-music practice app for MuseScore files",
     "longDescription": "Sheet-music practice app for MuseScore files",
     "category": "Education",
+    "homepage": "https://lyrica.hawawa.org",
     "publisher": "me@hawawa.org",
     "linux": {
       "deb": {

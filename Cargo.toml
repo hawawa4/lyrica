@@ -6,4 +6,5 @@ members = ["crates/*"]
 version = "1.0.0"
 edition = "2021"
 license = "GPL-3.0-only"
+homepage = "https://lyrica.hawawa.org"
 repository = "https://github.com/hawawa4/lyrica"
