@@ -18,6 +18,7 @@ import {
   setPlaybackSpeed,
   setLoopRegion,
   setMetronomeEnabled,
+  setMetronomeVolume,
   contentHash,
   recordRecentFile,
   hashBytes,
@@ -181,7 +182,10 @@ export class PracticeView {
   private readonly playBtn: HTMLButtonElement
   private readonly stopBtn: HTMLButtonElement
   private readonly speedButtons: Record<number, HTMLButtonElement>
-  private readonly metronomeCheckbox: HTMLInputElement
+  private readonly metronomeBtn: HTMLButtonElement
+  private readonly metronomeVolumeInput: HTMLInputElement
+  /** Whether the click track is on — a global setting (the audio engine has one player), kept across tab switches. */
+  private metronomeOn = false
   private readonly pageContainerEl: HTMLDivElement
   private readonly emptyStateEl: HTMLDivElement
   private readonly selectionStatusEl: HTMLSpanElement
@@ -249,7 +253,17 @@ export class PracticeView {
           <button id="speed-05" class="speed-btn" disabled>0.5x</button>
           <button id="speed-075" class="speed-btn" disabled>0.75x</button>
           <button id="speed-10" class="speed-btn" disabled>1.0x</button>
-          <label><input id="metronome-checkbox" type="checkbox" disabled /> Metronome</label>
+          <div class="metronome-control">
+            <button id="metronome-btn" class="icon-btn metronome-btn" disabled aria-pressed="false" title="Metronome (M)">
+              <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M9 3h6l4 18H5L9 3z" />
+                <path d="M5.9 17h12.2" />
+                <path d="M12 17l5-11" />
+                <circle cx="15.6" cy="9.1" r="1.3" fill="currentColor" />
+              </svg>
+            </button>
+            <input id="metronome-volume" type="range" min="0" max="100" step="1" class="metronome-volume" title="Metronome volume" aria-label="Metronome volume" />
+          </div>
         </div>
         <div id="zoom-group" class="toolbar-group zoom-control" style="display:none;">
           <button id="zoom-out" class="icon-btn" title="Zoom out">&minus;</button>
@@ -327,7 +341,8 @@ export class PracticeView {
       0.75: this.root.querySelector('#speed-075')!,
       1.0: this.root.querySelector('#speed-10')!,
     }
-    this.metronomeCheckbox = this.root.querySelector('#metronome-checkbox')!
+    this.metronomeBtn = this.root.querySelector('#metronome-btn')!
+    this.metronomeVolumeInput = this.root.querySelector('#metronome-volume')!
     this.pageContainerEl = this.root.querySelector('#page')!
     this.emptyStateEl = this.root.querySelector('#empty-state')!
     this.selectionStatusEl = this.root.querySelector('#selection-status')!
@@ -452,9 +467,14 @@ export class PracticeView {
     }
     this.speedButtons[1.0].classList.add('active')
 
-    this.metronomeCheckbox.addEventListener('change', () => {
-      void setMetronomeEnabled(this.metronomeCheckbox.checked)
+    this.metronomeBtn.addEventListener('click', () => this.setMetronomeOn(!this.metronomeOn))
+    this.metronomeVolumeInput.value = String(Math.round(loadMetronomeVolume() * 100))
+    this.metronomeVolumeInput.addEventListener('input', () => {
+      const volume = Number(this.metronomeVolumeInput.value) / 100
+      saveMetronomeVolume(volume)
+      void setMetronomeVolume(volume)
     })
+    if (isTauri()) void setMetronomeVolume(loadMetronomeVolume())
 
     this.rescanMeasuresBtn.addEventListener('click', async () => {
       const active = this.activeTab()
@@ -558,10 +578,9 @@ export class PracticeView {
       const target = e.target as HTMLElement | null
       if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) return
       if (!this.isVisible()) return
-      if (this.metronomeCheckbox.disabled) return
+      if (this.metronomeBtn.disabled) return
       e.preventDefault()
-      this.metronomeCheckbox.checked = !this.metronomeCheckbox.checked
-      this.metronomeCheckbox.dispatchEvent(new Event('change'))
+      this.setMetronomeOn(!this.metronomeOn)
     })
 
     if (isTauri()) {
@@ -919,14 +938,14 @@ export class PracticeView {
       const hasAudio = tab.timeline !== null
       this.renderTransportButtons(tab.transportState, hasAudio)
       for (const btn of Object.values(this.speedButtons)) btn.disabled = !hasAudio
-      this.metronomeCheckbox.disabled = !hasAudio
+      this.metronomeBtn.disabled = !hasAudio
 
       if (hasAudio) {
         this.setSpeed(tab.speed)
         tab.midiBytes ??= await getMidi(tab.score)
         await loadMidi(tab.midiBytes)
         await setLoopRegion(tab.loopRegion)
-        await setMetronomeEnabled(this.metronomeCheckbox.checked)
+        await setMetronomeEnabled(this.metronomeOn)
         this.updateMsczHeadMarker(tab)
       }
     } else {
@@ -962,13 +981,13 @@ export class PracticeView {
       const hasAudio = tab.points.length >= 2
       this.renderTransportButtons(tab.transportState, hasAudio)
       for (const btn of Object.values(this.speedButtons)) btn.disabled = !hasAudio
-      this.metronomeCheckbox.disabled = !hasAudio
+      this.metronomeBtn.disabled = !hasAudio
 
       if (hasAudio) {
         this.setSpeed(tab.speed)
         await this.loadPdfTabTempoMap(tab)
         await setLoopRegion(tab.loopRegion)
-        await setMetronomeEnabled(this.metronomeCheckbox.checked)
+        await setMetronomeEnabled(this.metronomeOn)
       }
     }
 
@@ -1139,7 +1158,7 @@ export class PracticeView {
         this.playBtn.disabled = true
         this.stopBtn.disabled = true
         for (const btn of Object.values(this.speedButtons)) btn.disabled = true
-        this.metronomeCheckbox.disabled = true
+        this.metronomeBtn.disabled = true
       }
     }
     this.renderTabBar()
@@ -1549,7 +1568,7 @@ export class PracticeView {
       const isPlaying = !this.stopBtn.disabled
       this.playBtn.disabled = !hasAudio || isPlaying
       for (const btn of Object.values(this.speedButtons)) btn.disabled = !hasAudio
-      this.metronomeCheckbox.disabled = !hasAudio
+      this.metronomeBtn.disabled = !hasAudio
     })
 
     let needsAutoScan = false
@@ -1848,6 +1867,14 @@ export class PracticeView {
     else void this.playActive()
   }
 
+  private setMetronomeOn(on: boolean): void {
+    this.metronomeOn = on
+    this.metronomeBtn.classList.toggle('active', on)
+    this.metronomeBtn.setAttribute('aria-pressed', String(on))
+    this.metronomeBtn.title = on ? 'Metronome on (M)' : 'Metronome off (M)'
+    void setMetronomeEnabled(on)
+  }
+
   private toggleZenMode(): void {
     this.root.classList.toggle('zen-mode')
   }
@@ -2042,6 +2069,28 @@ function setStagePage(stage: HTMLElement, page: number | null): void {
   if (page === null) delete stage.dataset.page
   else stage.dataset.page = String(page)
   stage.dispatchEvent(new CustomEvent(PAGE_RENDERED_EVENT, { bubbles: true }))
+}
+
+const METRONOME_VOLUME_KEY = 'lyrica.metronomeVolume'
+const DEFAULT_METRONOME_VOLUME = 0.8
+
+/** Last-used metronome volume (0-1) — a per-machine convenience, so browser storage is enough; falls back to the default when storage is unavailable. */
+function loadMetronomeVolume(): number {
+  try {
+    const stored = Number(localStorage.getItem(METRONOME_VOLUME_KEY))
+    if (localStorage.getItem(METRONOME_VOLUME_KEY) !== null && Number.isFinite(stored)) return Math.min(1, Math.max(0, stored))
+  } catch {
+    // storage unavailable — default stands
+  }
+  return DEFAULT_METRONOME_VOLUME
+}
+
+function saveMetronomeVolume(volume: number): void {
+  try {
+    localStorage.setItem(METRONOME_VOLUME_KEY, String(volume))
+  } catch {
+    // storage unavailable — the setting just won't persist
+  }
 }
 
 function isPdfFile(name: string): boolean {

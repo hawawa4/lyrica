@@ -69,6 +69,7 @@ fn main() {
             commands::set_speed,
             commands::set_loop_region,
             commands::set_metronome_enabled,
+            commands::set_metronome_volume,
             commands::playback_position,
             commands::list_markers,
             commands::add_marker,

@@ -503,6 +503,31 @@
   color: var(--accent-text);
 }
 
+.metronome-control {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.metronome-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Stays visibly "pressed in" while the click track is on. */
+.metronome-btn.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-text);
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
+.metronome-volume {
+  width: 80px;
+  accent-color: var(--accent);
+}
+
 .context-menu {
   position: fixed;
   z-index: 1000;

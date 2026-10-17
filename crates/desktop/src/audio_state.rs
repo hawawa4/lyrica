@@ -142,6 +142,10 @@ impl AudioState {
         self.player.lock().unwrap().set_metronome_enabled(enabled);
     }
 
+    pub fn set_metronome_volume(&self, volume: f32) {
+        self.player.lock().unwrap().set_metronome_volume(volume);
+    }
+
     pub fn position_secs(&self) -> f64 {
         self.player.lock().unwrap().position_secs()
     }

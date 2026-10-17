@@ -104,6 +104,12 @@ pub fn set_metronome_enabled(audio: State<AudioState>, enabled: bool) {
     audio.set_metronome_enabled(enabled)
 }
 
+/// `volume` is 0.0 (silent) to 1.0.
+#[tauri::command]
+pub fn set_metronome_volume(audio: State<AudioState>, volume: f32) {
+    audio.set_metronome_volume(volume)
+}
+
 #[tauri::command]
 pub fn playback_position(audio: State<AudioState>) -> f64 {
     audio.position_secs()

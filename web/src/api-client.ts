@@ -119,6 +119,13 @@ export async function setMetronomeEnabled(enabled: boolean): Promise<void> {
   await invoke('set_metronome_enabled', { enabled })
 }
 
+/** `volume` is 0 (silent) to 1 (full). */
+export async function setMetronomeVolume(volume: number): Promise<void> {
+  if (!isTauri()) throw new Error('setMetronomeVolume: desktop-only for now')
+  const { invoke } = await import('@tauri-apps/api/core')
+  await invoke('set_metronome_volume', { volume })
+}
+
 interface OpenFileResponse {
   file_hash: string
   mscz_version: string
