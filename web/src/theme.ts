@@ -1,7 +1,7 @@
 export type Theme = 'light' | 'dark' | 'paper'
 
 const THEMES: Theme[] = ['light', 'dark', 'paper']
-const STORAGE_KEY = 'musepractice-theme'
+const STORAGE_KEY = 'lyrica-theme'
 
 function isTheme(value: string | null): value is Theme {
   return THEMES.includes(value as Theme)

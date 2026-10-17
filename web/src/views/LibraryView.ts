@@ -54,7 +54,7 @@ export class LibraryView {
     this.root.className = 'library-view'
     this.root.innerHTML = `
       <div class="library-header">
-        <span class="app-title">MusePractice</span>
+        <span class="app-title">Lyrica</span>
         <div class="library-folder-row">
           <button id="choose-folder-btn" class="primary">Choose folder&hellip;</button>
           <span class="library-folder-path" id="root-folder-label">Loading&hellip;</span>

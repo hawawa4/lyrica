@@ -1,10 +1,12 @@
-# MusePractice
+# Lyrica
 
 **Practice from the score you already have.**
 
-MusePractice opens your [MuseScore](https://musescore.org) `.mscz` files like a PDF reader (not an editor) and adds the things you reach for while learning a piece: loop a hard passage, slow it down, play along with a click, and keep track of what you've practised.
+Lyrica opens your [MuseScore](https://musescore.org) `.mscz` files like a PDF reader (not an editor) and adds the things you reach for while learning a piece: loop a hard passage, slow it down, play along with a click, and keep track of what you've practised.
 
-[![CI](https://github.com/hawawa4/musepractice/actions/workflows/ci.yml/badge.svg)](https://github.com/hawawa4/musepractice/actions/workflows/ci.yml)
+> **Not affiliated with MuseScore.** Lyrica is an independent project. It has no affiliation, association, endorsement or connection of any kind with the MuseScore team, the MuseScore project, or Muse Group. "MuseScore" is a trademark of its respective owners and is used here only to say which file format Lyrica can open.
+
+[![CI](https://github.com/hawawa4/lyrica/actions/workflows/ci.yml/badge.svg)](https://github.com/hawawa4/lyrica/actions/workflows/ci.yml)
 [![License: GPL v3](https://img.shields.io/badge/license-GPLv3-blue.svg)](LICENSE)
 
 ## Features
@@ -32,14 +34,14 @@ Your original files are never modified. Scores saved by an older MuseScore are u
 
 ## Install
 
-Download the latest `.deb` or `.AppImage` from the [releases page](https://github.com/hawawa4/musepractice/releases/latest).
+Download the latest `.deb` or `.AppImage` from the [releases page](https://github.com/hawawa4/lyrica/releases/latest).
 
 ```sh
 # Debian / Ubuntu
-sudo apt install ./MusePractice_*.deb
+sudo apt install ./Lyrica_*.deb
 
 # Any distro
-chmod +x MusePractice_*.AppImage && ./MusePractice_*.AppImage
+chmod +x Lyrica_*.AppImage && ./Lyrica_*.AppImage
 ```
 
 Only Linux builds are published for now. The app is built on [Tauri](https://tauri.app), so other platforms should be feasible but haven't been tested.
@@ -81,11 +83,11 @@ See [CLAUDE.md](CLAUDE.md) for the non-obvious gotchas (webmscore quirks, soundf
 
 ```sh
 cd site && npm install && npm run dev                  # develop
-docker build -t musepractice-site site/                # static site in nginx
-docker run --rm -p 8080:8080 musepractice-site
+docker build -t lyrica-site site/                # static site in nginx
+docker run --rm -p 8080:8080 lyrica-site
 ```
 
-Tagged releases also publish the image to `ghcr.io/hawawa4/musepractice-site`.
+Tagged releases also publish the image to `ghcr.io/hawawa4/lyrica-site`.
 
 ## Releasing
 
@@ -95,4 +97,8 @@ To cut a release, bump the version in `Cargo.toml` (`[workspace.package]`), `cra
 
 ## Credits and licence
 
-MusePractice is free software under the [GNU GPL v3](LICENSE). It builds on [webmscore](https://github.com/LibreScore/webmscore) (GPL-3.0), [pdf.js](https://mozilla.github.io/pdf.js/) (Apache-2.0), [rustysynth](https://github.com/sinshu/rustysynth) (MIT), and ships the [FluidR3 GM soundfont](assets/FluidR3_GM_License.md) and Noto Sans JP (OFL). MuseScore is a trademark of Muse Group; this project is not affiliated with it.
+Lyrica is free software under the [GNU GPL v3](LICENSE). It builds on [webmscore](https://github.com/LibreScore/webmscore) (GPL-3.0), [pdf.js](https://mozilla.github.io/pdf.js/) (Apache-2.0), [rustysynth](https://github.com/sinshu/rustysynth) (MIT), and ships the [FluidR3 GM soundfont](assets/FluidR3_GM_License.md) and Noto Sans JP (OFL).
+
+## Disclaimer
+
+Lyrica is an independent, community project. It is not made, sponsored, endorsed or supported by the MuseScore team, the MuseScore project or Muse Group, and has no affiliation with them in any way. "MuseScore" and `.mscz` are mentioned only to describe file compatibility. Lyrica reads the MuseScore file format using the open-source webmscore library.

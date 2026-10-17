@@ -94,7 +94,7 @@ jobs:
           npm ci
           npm run build
       - name: Docker image builds
-        run: docker build -t musepractice-site:ci site/
+        run: docker build -t lyrica-site:ci site/
 
   workflows:
     name: Workflow lint

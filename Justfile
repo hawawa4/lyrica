@@ -1,4 +1,4 @@
-# MusePractice dev tasks.
+# Lyrica dev tasks.
 
 # Byte-identical to the Debian fluid-soundfont-gm package's FluidR3_GM.sf2
 # (confirmed via matching content-length: 148398306). Used instead of

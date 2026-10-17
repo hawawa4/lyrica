@@ -7,7 +7,7 @@ repository.workspace = true
 authors = ["me@hawawa.org"]
 
 [[bin]]
-name = "musepractice"
+name = "lyrica"
 path = "src/main.rs"
 
 [build-dependencies]

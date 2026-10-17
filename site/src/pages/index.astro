@@ -2,7 +2,7 @@
 import Layout from '../layouts/Layout.astro'
 import Demo from '../components/Demo.astro'
 
-const repo = 'https://github.com/hawawa4/musepractice'
+const repo = 'https://github.com/hawawa4/lyrica'
 const releases = `${repo}/releases/latest`
 
 const features = [
@@ -24,7 +24,7 @@ const features = [
   },
   {
     title: 'Pieces inside one file',
-    body: 'Soundtrack albums and collections are often one giant score. MusePractice finds the titles inside and gives you an index to jump between pieces.',
+    body: 'Soundtrack albums and collections are often one giant score. Lyrica finds the titles inside and gives you an index to jump between pieces.',
   },
   {
     title: 'A library that tracks progress',
@@ -50,15 +50,15 @@ const keys = [
 ---
 
 <Layout
-  title="MusePractice — practice from the score you already have"
-  description="MusePractice opens MuseScore files like a PDF reader and adds loops, slow-down, a metronome, measure notes and a progress-tracking library. Free and open source."
+  title="Lyrica — practice from the score you already have"
+  description="Lyrica opens MuseScore files like a PDF reader and adds loops, slow-down, a metronome, measure notes and a progress-tracking library. Free and open source."
 >
   <header class="hero">
     <div class="wrap">
       <p class="eyebrow">Free · Open source · Desktop</p>
       <h1>Practice from the score<br />you already have.</h1>
       <p class="sub">
-        MusePractice opens your MuseScore files like a PDF reader, and adds the things you actually reach
+        Lyrica opens your MuseScore files like a PDF reader, and adds the things you actually reach
         for while learning a piece: loop a hard passage, slow it down, play along with a click, and keep
         track of what you’ve practised.
       </p>
@@ -81,7 +81,7 @@ const keys = [
           editor: you want to see the page, hear the passage you’re stuck on, and repeat it slowly.
         </p>
         <p>
-          MusePractice treats a score as something to read. You open it, select some bars, and practise.
+          Lyrica treats a score as something to read. You open it, select some bars, and practise.
           There is nothing to edit and nothing to break.
         </p>
       </div>
@@ -135,7 +135,8 @@ const keys = [
 
   <footer>
     <div class="wrap">
-      <span>MusePractice is free software under the <a href={`${repo}/blob/main/LICENSE`}>GNU GPL v3</a>.</span>
+      <span class="disclaimer">Lyrica is an independent project and is not affiliated with, endorsed by or connected to the MuseScore team, the MuseScore project or Muse Group in any way. “MuseScore” is named only to describe the file format Lyrica opens.</span>
+      <span>Lyrica is free software under the <a href={`${repo}/blob/main/LICENSE`}>GNU GPL v3</a>.</span>
       <span>
         <a href={repo}>GitHub</a> · <a href={`${repo}/issues`}>Report a problem</a> · <a href={releases}>Latest release</a>
       </span>
@@ -179,5 +180,6 @@ const keys = [
   .honest li strong { color: var(--ink); }
 
   footer { padding: 2rem 0 3rem; color: var(--muted); font-size: 0.9rem; }
+  .disclaimer { flex-basis: 100%; max-width: 46rem; }
   footer .wrap { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 0.75rem; }
 </style>

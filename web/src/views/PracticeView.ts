@@ -228,7 +228,7 @@ export class PracticeView {
     this.root.id = 'app'
     this.root.innerHTML = `
       <div class="toolbar">
-        <span class="app-title">MusePractice</span>
+        <span class="app-title">Lyrica</span>
         <div class="toolbar-group">
           <input id="file-input" type="file" accept=".mscz,.mscx,.pdf" />
           <button id="open-file-btn" class="primary" style="display:none;">Open file&hellip;</button>
@@ -653,15 +653,15 @@ export class PracticeView {
     }
 
     // Manual test hooks retained for Playwright/manual verification during development.
-    ;(window as unknown as { __musepracticeOpenBytes: (bytes: Uint8Array, filename: string) => Promise<void> }).__musepracticeOpenBytes = (
+    ;(window as unknown as { __lyricaOpenBytes: (bytes: Uint8Array, filename: string) => Promise<void> }).__lyricaOpenBytes = (
       bytes: Uint8Array,
       filename: string,
     ) => this.openBytes(bytes, filename, null)
-    ;(window as unknown as { __musepracticePageView: () => PageDisplay | null }).__musepracticePageView = () => {
+    ;(window as unknown as { __lyricaPageView: () => PageDisplay | null }).__lyricaPageView = () => {
       const active = this.activeTab()
       return active?.kind === 'mscz' ? active.pageView : null
     }
-    ;(window as unknown as { __musepracticeGetTimeline: () => Timeline | null }).__musepracticeGetTimeline = () => {
+    ;(window as unknown as { __lyricaGetTimeline: () => Timeline | null }).__lyricaGetTimeline = () => {
       const active = this.activeTab()
       return active?.kind === 'mscz' ? active.timeline : null
     }

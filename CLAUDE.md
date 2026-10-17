@@ -1,4 +1,4 @@
-# MusePractice
+# Lyrica
 
 A sheet-music practice app that opens existing MuseScore `.mscz` files (like a PDF reader, not an editor) with practice helpers: loop selection, markers, speed control, metronome, pieces index.
 

@@ -1,6 +1,6 @@
 # Landing page: build the static site, serve it with nginx.
-#   docker build -t musepractice-site site/
-#   docker run --rm -p 8080:8080 musepractice-site
+#   docker build -t lyrica-site site/
+#   docker run --rm -p 8080:8080 lyrica-site
 
 FROM node:22-alpine AS build
 WORKDIR /site

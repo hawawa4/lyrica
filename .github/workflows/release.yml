@@ -131,7 +131,7 @@ jobs:
           gh release create "$TAG" dist/* \
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
-            --title "MusePractice $VERSION" \
+            --title "Lyrica $VERSION" \
             --generate-notes
 
   site-image:
