@@ -38,8 +38,7 @@ pub fn default_output_sample_rate() -> Result<i32, OutputError> {
 /// `player` must already be constructed with
 /// [`default_output_sample_rate`]'s value (see its doc comment for why).
 ///
-/// This is the one place desktop and web/server genuinely diverge (per
-/// IMPLEMENTATION_PLAN.md Phase 4): synth logic in `Player` is shared, but
+/// This is the one place desktop and web/server genuinely diverge: synth logic in `Player` is shared, but
 /// the web/server target instead streams synthesized PCM to the browser's
 /// Web Audio API over the API boundary rather than opening a cpal device.
 pub fn start_output_stream(player: Arc<Mutex<Player>>) -> Result<cpal::Stream, OutputError> {

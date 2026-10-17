@@ -30,15 +30,13 @@ impl AudioState {
     /// case no output device is found at all, letting the synth still
     /// construct even though playback won't work until one appears.
     pub fn new(soundfont_bytes: &[u8], fallback_sample_rate: i32) -> Result<Self, String> {
-        let sample_rate = output_cpal::default_output_sample_rate()
-            .map(|r| r as i32)
-            .unwrap_or_else(|e| {
-                eprintln!(
-                    "warning: could not query output device sample rate ({e}), \
+        let sample_rate = output_cpal::default_output_sample_rate().unwrap_or_else(|e| {
+            eprintln!(
+                "warning: could not query output device sample rate ({e}), \
                      falling back to {fallback_sample_rate}Hz"
-                );
-                fallback_sample_rate
-            });
+            );
+            fallback_sample_rate
+        });
 
         let player = Arc::new(Mutex::new(
             Player::new(soundfont_bytes, sample_rate).map_err(|e| e.to_string())?,
@@ -86,10 +84,14 @@ impl AudioState {
         Ok(())
     }
 
-    /// PDF mode (Phase 9): metronome-only "playback" from a calibration-
+    /// PDF mode: metronome-only "playback" from a calibration-
     /// derived tempo map, no note data — see `Player::load_tempo_map`'s docs.
     pub fn load_tempo_map(&self, tempo_map: Vec<TempoMapEntry>, duration_ms: f64) {
-        let midi_file = self.player.lock().unwrap().load_tempo_map(tempo_map, duration_ms);
+        let midi_file = self
+            .player
+            .lock()
+            .unwrap()
+            .load_tempo_map(tempo_map, duration_ms);
         *self.current_midi.lock().unwrap() = Some(midi_file);
     }
 

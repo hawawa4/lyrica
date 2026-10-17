@@ -1,4 +1,4 @@
-//! PDF mode (IMPLEMENTATION_PLAN.md Phase 9): user-calibrated tempo points
+//! PDF mode: user-calibrated tempo points
 //! for scores with no usable `.mscz` — the user taps along (or places points
 //! directly) to mark "this position on this page = measure N", and the app
 //! linearly interpolates between consecutive points to derive an approximate
@@ -50,7 +50,10 @@ struct CalibrationMeta {
     points: Vec<CalibrationPoint>,
 }
 
-pub fn list_points(base_dir: &Path, file_hash: &str) -> Result<Vec<CalibrationPoint>, SidecarError> {
+pub fn list_points(
+    base_dir: &Path,
+    file_hash: &str,
+) -> Result<Vec<CalibrationPoint>, SidecarError> {
     let meta: CalibrationMeta = sidecar::load_item(base_dir, KIND, file_hash, FILENAME)?;
     Ok(meta.points)
 }
@@ -66,7 +69,9 @@ pub fn save_points(
     mut points: Vec<CalibrationPoint>,
 ) -> Result<Vec<CalibrationPoint>, SidecarError> {
     points.sort_by(|a, b| a.time_ms.total_cmp(&b.time_ms));
-    let meta = CalibrationMeta { points: points.clone() };
+    let meta = CalibrationMeta {
+        points: points.clone(),
+    };
     sidecar::save_item(base_dir, KIND, file_hash, FILENAME, &meta)?;
     Ok(points)
 }
@@ -125,8 +130,20 @@ mod tests {
         assert_eq!(list_points(tmp.path(), hash).unwrap().len(), 0);
 
         let points = vec![
-            CalibrationPoint { page: 0, x: 10.0, y: 20.0, time_ms: 0.0, measure: 0 },
-            CalibrationPoint { page: 0, x: 30.0, y: 20.0, time_ms: 2000.0, measure: 1 },
+            CalibrationPoint {
+                page: 0,
+                x: 10.0,
+                y: 20.0,
+                time_ms: 0.0,
+                measure: 0,
+            },
+            CalibrationPoint {
+                page: 0,
+                x: 30.0,
+                y: 20.0,
+                time_ms: 2000.0,
+                measure: 1,
+            },
         ];
         save_points(tmp.path(), hash, points.clone()).unwrap();
 
@@ -142,13 +159,20 @@ mod tests {
         save_points(
             tmp.path(),
             hash,
-            vec![CalibrationPoint { page: 0, x: 0.0, y: 0.0, time_ms: 0.0, measure: 0 }],
+            vec![CalibrationPoint {
+                page: 0,
+                x: 0.0,
+                y: 0.0,
+                time_ms: 0.0,
+                measure: 0,
+            }],
         )
         .unwrap();
 
         // crates/core/src/markers.rs uses the same hash under "scores/" —
         // confirm it sees nothing from the "pdfs/" sidecar.
-        let markers: Vec<crate::markers::Marker> = crate::sidecar::load_meta(tmp.path(), hash).unwrap();
+        let markers: Vec<crate::markers::Marker> =
+            crate::sidecar::load_meta(tmp.path(), hash).unwrap();
         assert_eq!(markers.len(), 0);
 
         let points = list_points(tmp.path(), hash).unwrap();
@@ -159,22 +183,56 @@ mod tests {
     fn tempo_map_derives_qpm_from_measure_count_and_elapsed_time() {
         // 4/4, 2 measures (8 beats) elapsed over exactly 4 seconds => 120 qpm.
         let points = vec![
-            CalibrationPoint { page: 0, x: 0.0, y: 0.0, time_ms: 0.0, measure: 0 },
-            CalibrationPoint { page: 0, x: 0.0, y: 0.0, time_ms: 4000.0, measure: 2 },
+            CalibrationPoint {
+                page: 0,
+                x: 0.0,
+                y: 0.0,
+                time_ms: 0.0,
+                measure: 0,
+            },
+            CalibrationPoint {
+                page: 0,
+                x: 0.0,
+                y: 0.0,
+                time_ms: 4000.0,
+                measure: 2,
+            },
         ];
         let map = tempo_map(&points, 4);
         assert_eq!(map.len(), 1);
         assert_eq!(map[0].time_ms, 0.0);
-        assert!((map[0].qpm - 120.0).abs() < 0.001, "expected ~120 qpm, got {}", map[0].qpm);
+        assert!(
+            (map[0].qpm - 120.0).abs() < 0.001,
+            "expected ~120 qpm, got {}",
+            map[0].qpm
+        );
         assert_eq!(map[0].numerator, 4);
     }
 
     #[test]
     fn tempo_map_produces_one_entry_per_segment_for_varying_tempo() {
         let points = vec![
-            CalibrationPoint { page: 0, x: 0.0, y: 0.0, time_ms: 0.0, measure: 0 },
-            CalibrationPoint { page: 0, x: 0.0, y: 0.0, time_ms: 2000.0, measure: 1 }, // 4 beats / 2s = 120qpm
-            CalibrationPoint { page: 0, x: 0.0, y: 0.0, time_ms: 6000.0, measure: 2 }, // 4 beats / 4s = 60qpm
+            CalibrationPoint {
+                page: 0,
+                x: 0.0,
+                y: 0.0,
+                time_ms: 0.0,
+                measure: 0,
+            },
+            CalibrationPoint {
+                page: 0,
+                x: 0.0,
+                y: 0.0,
+                time_ms: 2000.0,
+                measure: 1,
+            }, // 4 beats / 2s = 120qpm
+            CalibrationPoint {
+                page: 0,
+                x: 0.0,
+                y: 0.0,
+                time_ms: 6000.0,
+                measure: 2,
+            }, // 4 beats / 4s = 60qpm
         ];
         let map = tempo_map(&points, 4);
         assert_eq!(map.len(), 2);
@@ -186,7 +244,13 @@ mod tests {
     #[test]
     fn fewer_than_two_points_derives_no_tempo() {
         assert_eq!(tempo_map(&[], 4).len(), 0);
-        let one = vec![CalibrationPoint { page: 0, x: 0.0, y: 0.0, time_ms: 0.0, measure: 0 }];
+        let one = vec![CalibrationPoint {
+            page: 0,
+            x: 0.0,
+            y: 0.0,
+            time_ms: 0.0,
+            measure: 0,
+        }];
         assert_eq!(tempo_map(&one, 4).len(), 0);
     }
 }

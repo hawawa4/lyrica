@@ -12,7 +12,7 @@ pub struct ClickEvent {
 /// covering `[0, duration_ms]`. One click per beat (quarter note), with the
 /// first beat of each bar accented per the map's `numerator` in effect at
 /// that point — "click track generated from the time signature and tempo
-/// map" per the handoff spec's metronome requirement.
+/// map".
 pub fn generate_clicks(tempo_map: &[TempoMapEntry], duration_ms: f64) -> Vec<ClickEvent> {
     if tempo_map.is_empty() || duration_ms <= 0.0 {
         return Vec::new();

@@ -11,7 +11,7 @@ const BASE_WIDTH_PX = 700
  * Paged, vertical page-by-page display of a score. Caches each rendered SVG
  * page in memory per score instance, so repeat navigation (going back to a
  * page already visited) never re-calls `saveSvg` — the "pages cached once
- * rendered" snappiness requirement from IMPLEMENTATION_PLAN.md Phase 2.
+ * rendered" snappiness requirement.
  */
 export class PageView {
   private score: WebMscore | null = null
@@ -83,7 +83,7 @@ export class PageView {
   /**
    * Attach a newly-opened score. Clears any previously cached pages and
    * fetches `measurePositions()` once (cached here for the lifetime of this
-   * score, per IMPLEMENTATION_PLAN.md Phase 3 — pure derived data, cheap to
+   * score — pure derived data, cheap to
    * keep in memory, safe to re-fetch if ever needed since it's read-only).
    */
   async setScore(score: WebMscore, pageCount: number): Promise<void> {

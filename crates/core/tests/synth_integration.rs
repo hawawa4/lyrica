@@ -29,8 +29,14 @@ fn renders_audible_non_nan_audio_for_darkside() {
     let mut right = vec![0.0f32; frame_count];
     player.render(&mut left, &mut right);
 
-    assert!(left.iter().all(|s| s.is_finite()), "left channel contains NaN/inf");
-    assert!(right.iter().all(|s| s.is_finite()), "right channel contains NaN/inf");
+    assert!(
+        left.iter().all(|s| s.is_finite()),
+        "left channel contains NaN/inf"
+    );
+    assert!(
+        right.iter().all(|s| s.is_finite()),
+        "right channel contains NaN/inf"
+    );
 
     // At least one channel should have non-trivial amplitude somewhere in
     // these 2 seconds (the piece starts immediately per the timeline test's
@@ -39,7 +45,10 @@ fn renders_audible_non_nan_audio_for_darkside() {
         .iter()
         .chain(right.iter())
         .fold(0.0f32, |acc, s| acc.max(s.abs()));
-    assert!(max_abs > 0.001, "rendered audio is effectively silent (max abs sample = {max_abs})");
+    assert!(
+        max_abs > 0.001,
+        "rendered audio is effectively silent (max abs sample = {max_abs})"
+    );
 
     assert!(player.position_secs() > 0.0);
 }
@@ -113,7 +122,7 @@ fn speed_scales_position_advance_rate_not_wallclock_rate() {
     );
 }
 
-/// Phase 5's "essential" interaction: an arbitrary A/B loop region (not tied
+/// The essential practice interaction: an arbitrary A/B loop region (not tied
 /// to the whole file or to embedded MIDI loop markers) must actually wrap
 /// playback position back to `loop_start_ms`, repeatedly, rather than running
 /// past `loop_end_ms` or stopping.
@@ -156,7 +165,7 @@ fn loop_region_wraps_position_back_to_start() {
 /// The metronome should produce audible clicks mixed into the output even on
 /// a MIDI file region with no notes playing (silence from the soundfont
 /// alone), confirming clicks are generated independently of note content —
-/// per the handoff spec, "not a soundfont instrument patch."
+/// i.e. not a soundfont instrument patch.
 #[test]
 fn metronome_clicks_are_audible_without_relying_on_notes() {
     let soundfont_path = soundfont_path();
@@ -180,11 +189,17 @@ fn metronome_clicks_are_audible_without_relying_on_notes() {
     player.render(&mut left, &mut right);
 
     assert!(left.iter().all(|s| s.is_finite()));
-    let max_abs = left.iter().chain(right.iter()).fold(0.0f32, |acc, s| acc.max(s.abs()));
-    assert!(max_abs > 0.001, "expected audible metronome clicks, got max abs sample = {max_abs}");
+    let max_abs = left
+        .iter()
+        .chain(right.iter())
+        .fold(0.0f32, |acc, s| acc.max(s.abs()));
+    assert!(
+        max_abs > 0.001,
+        "expected audible metronome clicks, got max abs sample = {max_abs}"
+    );
 }
 
-/// PDF mode (Phase 9) has no note data at all — only a user-calibrated tempo
+/// PDF mode has no note data at all — only a user-calibrated tempo
 /// map — so `Player::load_tempo_map` must produce audible metronome clicks
 /// and a working A/B loop region exactly like `.mscz` MIDI playback does,
 /// with zero note events ever dispatched.
@@ -215,8 +230,14 @@ fn tempo_map_only_playback_produces_clicks_with_no_notes() {
     player.render(&mut left, &mut right);
 
     assert!(left.iter().all(|s| s.is_finite()));
-    let max_abs = left.iter().chain(right.iter()).fold(0.0f32, |acc, s| acc.max(s.abs()));
-    assert!(max_abs > 0.001, "expected audible metronome clicks, got max abs sample = {max_abs}");
+    let max_abs = left
+        .iter()
+        .chain(right.iter())
+        .fold(0.0f32, |acc, s| acc.max(s.abs()));
+    assert!(
+        max_abs > 0.001,
+        "expected audible metronome clicks, got max abs sample = {max_abs}"
+    );
 
     // Loop region defaults to the whole duration when play_loop is true —
     // confirm it actually wraps rather than running past `duration_ms`.

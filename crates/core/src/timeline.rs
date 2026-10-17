@@ -37,7 +37,7 @@ pub struct PositionEvent {
 /// Mirrors webmscore's `Positions` (the return shape of `measurePositions()`),
 /// as received from the JS layer via the `import_timeline` API call. Rust
 /// never calls webmscore itself — this is already-exported JSON handed over
-/// the API boundary (see IMPLEMENTATION_PLAN.md's API boundary section).
+/// the API boundary.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Positions {
     pub elements: Vec<PositionElement>,
@@ -145,7 +145,11 @@ pub fn build_timeline(
 
 /// Each unrolled measure's start time in the MIDI's own timeline, or `None`
 /// if `measures` can't be trusted to describe this score (see `build_timeline`).
-fn midi_measure_times(positions: &Positions, measures: &[MeasureInfo], clock: &MidiClock) -> Option<Vec<f64>> {
+fn midi_measure_times(
+    positions: &Positions,
+    measures: &[MeasureInfo],
+    clock: &MidiClock,
+) -> Option<Vec<f64>> {
     if measures.len() != positions.elements.len() {
         return None;
     }
@@ -189,7 +193,9 @@ impl MidiClock {
             // Timecode-based timing (SMPTE) doesn't carry tempo meta-events the
             // same way; none of webmscore's exports use it, but fall back to a
             // sane default rather than panicking if one ever does.
-            midly::Timing::Timecode(fps, ticks_per_frame) => fps.as_f32() as f64 * ticks_per_frame as f64,
+            midly::Timing::Timecode(fps, ticks_per_frame) => {
+                fps.as_f32() as f64 * ticks_per_frame as f64
+            }
         };
 
         // setTempo events carry an absolute µs-per-beat value but only a
@@ -201,7 +207,9 @@ impl MidiClock {
             let mut abs_tick: u64 = 0;
             for event in track {
                 abs_tick += u32::from(event.delta) as u64;
-                if let midly::TrackEventKind::Meta(midly::MetaMessage::Tempo(microsperbeat)) = event.kind {
+                if let midly::TrackEventKind::Meta(midly::MetaMessage::Tempo(microsperbeat)) =
+                    event.kind
+                {
                     breakpoints.push((abs_tick, 60_000_000.0 / u32::from(microsperbeat) as f64));
                 }
             }
@@ -241,7 +249,9 @@ impl MidiClock {
     }
 
     fn has_tempo_at(&self, tick: f64) -> bool {
-        self.breakpoints.iter().any(|(bp_tick, _)| *bp_tick as f64 == tick)
+        self.breakpoints
+            .iter()
+            .any(|(bp_tick, _)| *bp_tick as f64 == tick)
     }
 
     /// (time_ms, qpm) breakpoints, consecutive identical tempos dropped

@@ -30,7 +30,10 @@ struct RatingMeta {
 
 /// `None` means unrated — a freshly-opened piece, or one that was rated then
 /// explicitly cleared (see `set_knowledge_level`'s `None` case).
-pub fn get_knowledge_level(base_dir: &Path, file_hash: &str) -> Result<Option<KnowledgeLevel>, SidecarError> {
+pub fn get_knowledge_level(
+    base_dir: &Path,
+    file_hash: &str,
+) -> Result<Option<KnowledgeLevel>, SidecarError> {
     let meta: RatingMeta = sidecar::load_item(base_dir, KIND, file_hash, FILENAME)?;
     Ok(meta.level)
 }
@@ -110,18 +113,21 @@ mod tests {
         // A marker added for hash-a must not be clobbered by, or clobber, its rating.
         crate::markers::add_marker(tmp.path(), "hash-a", 0, "note".to_string()).unwrap();
         assert_eq!(get_knowledge_level(tmp.path(), "hash-a").unwrap(), Some(2));
-        assert_eq!(crate::markers::list_markers(tmp.path(), "hash-a").unwrap().len(), 1);
+        assert_eq!(
+            crate::markers::list_markers(tmp.path(), "hash-a")
+                .unwrap()
+                .len(),
+            1
+        );
     }
 
     #[test]
     fn bulk_lookup_omits_unrated_hashes() {
         let tmp = tempfile::tempdir().unwrap();
         set_knowledge_level(tmp.path(), "hash-a", Some(1)).unwrap();
-        let levels = get_knowledge_levels(
-            tmp.path(),
-            &["hash-a".to_string(), "hash-b".to_string()],
-        )
-        .unwrap();
+        let levels =
+            get_knowledge_levels(tmp.path(), &["hash-a".to_string(), "hash-b".to_string()])
+                .unwrap();
         assert_eq!(levels.get("hash-a"), Some(&1));
         assert_eq!(levels.get("hash-b"), None);
     }

@@ -17,7 +17,7 @@ export interface PointRange {
 }
 
 /**
- * PDF mode (Phase 9): measures are positioned entirely by the CV
+ * PDF mode: measures are positioned entirely by the CV
  * barline-detection assist (`addPointsFromBarlines`/
  * `addPointsFromBarlinesAcrossPages`) — there is no manual click-to-place/
  * click-to-remove UI (an earlier version had one, gated behind a
@@ -108,7 +108,7 @@ export class CalibrationOverlay {
   }
 
   /**
-   * CV barline-detection assist (`crates/cv-barline`, optional/Phase 9):
+   * CV barline-detection assist (`crates/cv-barline`, optional):
    * directly adds a real calibration point for every detected barline x on
    * the current page (across all detected staff systems), auto-numbering
    * them in reading order (system top-to-bottom, then x left-to-right

@@ -53,7 +53,7 @@ pub fn load_midi(audio: State<AudioState>, midi_bytes: Vec<u8>) -> Result<(), St
     audio.load_midi(&midi_bytes)
 }
 
-/// PDF mode (Phase 9): loads a calibration-derived tempo map for
+/// PDF mode: loads a calibration-derived tempo map for
 /// metronome-only "playback" (no note data — see `AudioState::load_tempo_map`'s
 /// docs for why this is safe to drive through the same `play`/`stop`/
 /// `set_loop_region` commands as `.mscz` MIDI playback).
@@ -127,7 +127,11 @@ pub fn add_marker(
 }
 
 #[tauri::command]
-pub fn delete_marker(app: AppHandle, file_hash: String, marker_id: String) -> Result<Vec<Marker>, String> {
+pub fn delete_marker(
+    app: AppHandle,
+    file_hash: String,
+    marker_id: String,
+) -> Result<Vec<Marker>, String> {
     let base_dir = markers_base_dir(&app)?;
     api::delete_marker(&base_dir, &file_hash, &marker_id).map_err(|e| e.to_string())
 }
@@ -138,7 +142,10 @@ pub fn detect_pieces(bytes: Vec<u8>) -> Result<Vec<Piece>, String> {
 }
 
 #[tauri::command]
-pub fn get_knowledge_level(app: AppHandle, file_hash: String) -> Result<Option<KnowledgeLevel>, String> {
+pub fn get_knowledge_level(
+    app: AppHandle,
+    file_hash: String,
+) -> Result<Option<KnowledgeLevel>, String> {
     let base_dir = markers_base_dir(&app)?;
     api::get_knowledge_level(&base_dir, &file_hash).map_err(|e| e.to_string())
 }
@@ -186,7 +193,10 @@ pub fn get_library_settings(app: AppHandle) -> Result<LibrarySettings, String> {
 }
 
 #[tauri::command]
-pub fn set_root_folder(app: AppHandle, root_folder: Option<String>) -> Result<LibrarySettings, String> {
+pub fn set_root_folder(
+    app: AppHandle,
+    root_folder: Option<String>,
+) -> Result<LibrarySettings, String> {
     let base_dir = markers_base_dir(&app)?;
     api::set_root_folder(&base_dir, root_folder).map_err(|e| e.to_string())
 }
@@ -219,7 +229,7 @@ pub fn unpin_file(app: AppHandle, file_hash: String) -> Result<Vec<PinnedFile>, 
     api::unpin_file(&base_dir, &file_hash).map_err(|e| e.to_string())
 }
 
-/// PDF mode (Phase 9): stable content-hash key for a PDF's bytes, same blake3
+/// PDF mode: stable content-hash key for a PDF's bytes, same blake3
 /// scheme `open_file` uses for `.mscz` (see `api::hash_bytes`'s docs).
 #[tauri::command]
 pub fn hash_bytes(bytes: Vec<u8>) -> String {
@@ -227,7 +237,10 @@ pub fn hash_bytes(bytes: Vec<u8>) -> String {
 }
 
 #[tauri::command]
-pub fn list_calibration_points(app: AppHandle, file_hash: String) -> Result<Vec<CalibrationPoint>, String> {
+pub fn list_calibration_points(
+    app: AppHandle,
+    file_hash: String,
+) -> Result<Vec<CalibrationPoint>, String> {
     let base_dir = markers_base_dir(&app)?;
     api::list_calibration_points(&base_dir, &file_hash).map_err(|e| e.to_string())
 }
@@ -252,4 +265,3 @@ pub fn pdf_tempo_map(points: Vec<CalibrationPoint>, numerator: u8) -> Vec<TempoM
 pub fn detect_barlines(png_bytes: Vec<u8>) -> Result<Vec<StaffSystem>, String> {
     api::detect_barlines(&png_bytes).map_err(|e| e.to_string())
 }
-

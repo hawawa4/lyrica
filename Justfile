@@ -15,7 +15,7 @@ soundfont_url := "https://github.com/pianobooster/fluid-soundfont/releases/downl
 # substitute a system font on its own. webmscore's `WebMscore.load()` has a
 # `fonts` param made exactly for this: extra font files loaded into its virtual
 # filesystem. Confirmed empirically this font fixes rendering (see
-# _spike/test-cjk-font.mjs during development).
+# during development).
 cjk_font_url := "https://github.com/notofonts/noto-cjk/releases/download/Sans2.004/16_NotoSansJP.zip"
 
 # Running `just` with no recipe name lists everything (default Justfile convention).

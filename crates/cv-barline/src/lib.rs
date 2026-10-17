@@ -1,9 +1,7 @@
-//! PDF-mode barline-detection assist (IMPLEMENTATION_PLAN.md Phase 9,
-//! optional/skippable). Classical computer vision, not ML or OMR: detecting
+//! PDF-mode barline-detection assist (optional). Classical computer vision, not ML or OMR: detecting
 //! barlines (vertical dark-pixel runs spanning staff height) is a
 //! comparatively well-solved sub-problem even without machine learning,
-//! unlike notehead/pitch recognition — see the handoff spec's PDF-mode
-//! section for why full OMR was rejected as a core feature.
+//! unlike notehead/pitch recognition, which is why the app doesn't attempt full OMR.
 //!
 //! Returns candidate x-positions as **suggestions only** — the caller (the
 //! JS calibration UI) renders them as adjustable/dismissable markers the
@@ -12,7 +10,7 @@
 //! `crates/core`'s sidecar storage.
 //!
 //! Input is a page's rendered bitmap as PNG bytes (handed from the JS
-//! canvas via the API boundary, same pattern as Phase 4's MIDI/positions
+//! canvas via the API boundary, same pattern as the MIDI/positions
 //! data hand-off — `crates/core` still never parses `.mscz`/MIDI directly;
 //! this crate is a separate, self-contained concern that only ever sees
 //! pixels).
@@ -148,7 +146,11 @@ fn detect_barlines_in_image(img: &GrayImage) -> Vec<StaffSystem> {
         .into_iter()
         .map(|(top, bottom)| {
             let barline_xs = find_barline_columns(img, top, bottom, ink_left, ink_right);
-            StaffSystem { top, bottom, barline_xs }
+            StaffSystem {
+                top,
+                bottom,
+                barline_xs,
+            }
         })
         .collect()
 }
@@ -184,7 +186,12 @@ fn is_dark(luma: u8) -> bool {
     luma <= tuning::DARK_THRESHOLD
 }
 
-fn find_staff_line_rows(img: &GrayImage, ink_left: u32, ink_right: u32, ink_width: u32) -> Vec<u32> {
+fn find_staff_line_rows(
+    img: &GrayImage,
+    ink_left: u32,
+    ink_right: u32,
+    ink_width: u32,
+) -> Vec<u32> {
     let (_, height) = img.dimensions();
     let threshold = (ink_width as f32 * tuning::STAFF_LINE_ROW_DENSITY) as u32;
     let mut rows = Vec::new();
@@ -318,7 +325,13 @@ fn group_staves_into_systems(staves: &[(u32, u32)], line_spacing: f32) -> Vec<(u
     systems
 }
 
-fn find_barline_columns(img: &GrayImage, top: u32, bottom: u32, ink_left: u32, ink_right: u32) -> Vec<u32> {
+fn find_barline_columns(
+    img: &GrayImage,
+    top: u32,
+    bottom: u32,
+    ink_left: u32,
+    ink_right: u32,
+) -> Vec<u32> {
     let (_, height) = img.dimensions();
     let band_top = top.saturating_sub(tuning::STAFF_VERTICAL_MARGIN);
     let band_bottom = (bottom + tuning::STAFF_VERTICAL_MARGIN).min(height.saturating_sub(1));
@@ -327,7 +340,9 @@ fn find_barline_columns(img: &GrayImage, top: u32, bottom: u32, ink_left: u32, i
 
     let candidate_columns: Vec<u32> = (ink_left..=ink_right)
         .filter(|&x| {
-            let dark_count = (band_top..=band_bottom).filter(|&y| is_dark(img.get_pixel(x, y).0[0])).count() as u32;
+            let dark_count = (band_top..=band_bottom)
+                .filter(|&y| is_dark(img.get_pixel(x, y).0[0]))
+                .count() as u32;
             dark_count >= threshold
         })
         .collect();
@@ -389,7 +404,7 @@ mod tests {
 
     /// Draws one synthetic piano grand-staff system: two 5-line staves (a
     /// realistic tight gap between them, smaller than their own height —
-    /// confirmed against MuseScore's actual rendered output during Phase 9
+    /// confirmed against MuseScore's actual rendered output during
     /// development) plus real barlines spanning the *entire* system — from
     /// the top staff's top line straight through to the bottom staff's
     /// bottom line, including the gap. This is the actual signal a real
@@ -407,7 +422,9 @@ mod tests {
     ) -> (u32, u32) {
         let top_staff: Vec<u32> = (0..5).map(|i| top_staff_top + i * line_spacing).collect();
         let bottom_staff_top = *top_staff.last().unwrap() + inter_staff_gap;
-        let bottom_staff: Vec<u32> = (0..5).map(|i| bottom_staff_top + i * line_spacing).collect();
+        let bottom_staff: Vec<u32> = (0..5)
+            .map(|i| bottom_staff_top + i * line_spacing)
+            .collect();
 
         draw_staff_lines(img, &top_staff, ink_left, ink_right);
         draw_staff_lines(img, &bottom_staff, ink_left, ink_right);
@@ -423,7 +440,8 @@ mod tests {
     #[test]
     fn detects_one_grand_staff_system_and_its_full_height_barlines() {
         let mut img = blank(800, 300);
-        let (top, bottom) = draw_synthetic_system(&mut img, 50, 10, 30, &[50, 300, 550, 780], 30, 790);
+        let (top, bottom) =
+            draw_synthetic_system(&mut img, 50, 10, 30, &[50, 300, 550, 780], 30, 790);
 
         let systems = detect_barlines_in_image(&img);
         assert_eq!(systems.len(), 1);
@@ -448,7 +466,7 @@ mod tests {
     /// stem that spans only one staff of a grand-staff system (not the full
     /// system height, including the inter-staff gap) must never be reported
     /// as a barline candidate — confirmed as a real false positive against
-    /// actual rendered sheet music during Phase 9 development, when an
+    /// actual rendered sheet music during development, when an
     /// earlier version of this module detected barlines per individual staff
     /// instead of per full system.
     #[test]
@@ -495,7 +513,11 @@ mod tests {
         }
 
         let systems = detect_barlines_in_image(&img);
-        assert_eq!(systems.len(), 2, "expected exactly the 2 real systems, got {systems:?}");
+        assert_eq!(
+            systems.len(),
+            2,
+            "expected exactly the 2 real systems, got {systems:?}"
+        );
         assert_eq!(systems[0].top, top1);
         assert_eq!(systems[0].bottom, bottom1);
         assert_eq!(systems[0].barline_xs, vec![50, 400]);
@@ -517,8 +539,11 @@ mod tests {
         draw_synthetic_system(&mut img, 20, 6, 18, &[20, 200, 380], 10, 390);
 
         let mut png_bytes: Vec<u8> = Vec::new();
-        img.write_to(&mut std::io::Cursor::new(&mut png_bytes), image::ImageFormat::Png)
-            .unwrap();
+        img.write_to(
+            &mut std::io::Cursor::new(&mut png_bytes),
+            image::ImageFormat::Png,
+        )
+        .unwrap();
 
         let systems = detect_barlines(&png_bytes).unwrap();
         assert_eq!(systems.len(), 1);

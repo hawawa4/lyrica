@@ -40,14 +40,17 @@ pub fn read_rootfile_contents<R: Read + Seek>(reader: R) -> Result<String, MsczE
     let mut archive = ZipArchive::new(reader)?;
     let rootfile_path = find_rootfile_path(&mut archive)?;
 
-    let mut rootfile = archive.by_name(&rootfile_path)
+    let mut rootfile = archive
+        .by_name(&rootfile_path)
         .map_err(|_| MsczError::RootfileMissing(rootfile_path.clone()))?;
     let mut contents = String::new();
     rootfile.read_to_string(&mut contents)?;
     Ok(contents)
 }
 
-pub(crate) fn find_rootfile_path<R: Read + Seek>(archive: &mut ZipArchive<R>) -> Result<String, MsczError> {
+pub(crate) fn find_rootfile_path<R: Read + Seek>(
+    archive: &mut ZipArchive<R>,
+) -> Result<String, MsczError> {
     let mut container_xml = String::new();
     archive
         .by_name("META-INF/container.xml")?

@@ -58,7 +58,10 @@ pub fn set_root_folder(
     root_folder: Option<String>,
 ) -> Result<LibrarySettings, LibraryError> {
     let settings = LibrarySettings { root_folder };
-    save_json(&flat_json_path(base_dir, "library_settings.json")?, &settings)?;
+    save_json(
+        &flat_json_path(base_dir, "library_settings.json")?,
+        &settings,
+    )?;
     Ok(settings)
 }
 
@@ -77,16 +80,23 @@ const SCANNED_EXTENSIONS: &[&str] = &["mscz", "mscx", "pdf"];
 pub fn scan_library(root: &Path) -> Vec<LibraryEntry> {
     let mut entries = Vec::new();
 
-    for entry in WalkDir::new(root).into_iter().filter_entry(|e| !is_hidden(e)) {
+    for entry in WalkDir::new(root)
+        .into_iter()
+        .filter_entry(|e| !is_hidden(e))
+    {
         let Ok(entry) = entry else { continue };
         if !entry.file_type().is_file() {
             continue;
         }
         let path = entry.path();
-        let has_scanned_extension = path
-            .extension()
-            .and_then(|ext| ext.to_str())
-            .is_some_and(|ext| SCANNED_EXTENSIONS.iter().any(|allowed| ext.eq_ignore_ascii_case(allowed)));
+        let has_scanned_extension =
+            path.extension()
+                .and_then(|ext| ext.to_str())
+                .is_some_and(|ext| {
+                    SCANNED_EXTENSIONS
+                        .iter()
+                        .any(|allowed| ext.eq_ignore_ascii_case(allowed))
+                });
         if !has_scanned_extension {
             continue;
         }
@@ -249,4 +259,3 @@ mod tests {
         assert_eq!(after_unpin.len(), 0);
     }
 }
-

@@ -77,7 +77,7 @@ let cjkFontBytesPromise: Promise<ArrayBuffer | null> | null = null
  * which detaches it as a side effect. Returning the same cached instance
  * across multiple `openScore()` calls (one per opened tab) would hand the
  * second call an already-detached buffer, throwing "The object can not be
- * cloned." — confirmed empirically when opening a second file after Phase 8's
+ * cloned." — confirmed empirically when opening a second file after
  * multi-tab support was added.
  */
 async function loadCjkFont(): Promise<Uint8Array[]> {
@@ -107,8 +107,7 @@ export interface OpenScoreResult {
  * Comparing against that stub would make every file look up-to-date, which
  * is the opposite of what we want.
  *
- * Empirically confirmed instead via the two fixtures in `_spike/fixtures/`:
- * a native MS4 file (`Dark Side Of Fate.mscz`) reports `metadata.fileVersion
+ * Empirically confirmed instead against real files: a native MS4 file reports `metadata.fileVersion
  * === 450` after round-tripping through this exact webmscore 1.2.1 build, so
  * 450 is this engine's current/native format version for our purposes.
  */
@@ -118,7 +117,7 @@ const ENGINE_FILE_VERSION = 450
  * Load a .mscz file's bytes, report whether its format version is below the
  * engine's own (MS4), and return its metadata. Does not upgrade automatically
  * — callers must show a confirmation prompt and call `upgradeScore` themselves
- * (see IMPLEMENTATION_PLAN.md Phase 1: "never write back over the original file").
+ * (the original file is never written back over).
  */
 export async function openScore(bytes: Uint8Array): Promise<OpenScoreResult> {
   const WebMscore = await ensureReady()

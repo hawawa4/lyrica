@@ -49,7 +49,7 @@ import { initTheme, applyTheme, THEME_LABELS, type Theme } from '../theme'
  * already-rendered pages (the "no re-fetch lag" requirement).
  *
  * Two kinds: `.mscz` tabs (real note data, full timeline/markers/pieces) and
- * PDF tabs (Phase 9 — no note data, just rendered pages + user-calibrated
+ * PDF tabs (no note data, just rendered pages + user-calibrated
  * tempo points for metronome-only playback). A discriminated union rather
  * than one shape with optional fields, since the two kinds share almost
  * nothing beyond "a tab with a title and a page area."

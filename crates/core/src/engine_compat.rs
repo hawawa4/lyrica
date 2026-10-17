@@ -28,7 +28,9 @@ pub fn adapt_for_engine(mscz_bytes: &[u8]) -> Result<Option<Vec<u8>>, MsczError>
     let mut archive = ZipArchive::new(Cursor::new(mscz_bytes))?;
     let rootfile_path = mscz::find_rootfile_path(&mut archive)?;
     let mut contents = String::new();
-    archive.by_name(&rootfile_path)?.read_to_string(&mut contents)?;
+    archive
+        .by_name(&rootfile_path)?
+        .read_to_string(&mut contents)?;
 
     let Some(adapted) = adapt_key_signatures(&contents) else {
         return Ok(None);
@@ -62,7 +64,9 @@ fn adapt_key_signatures(mscx: &str) -> Option<String> {
     let mut out = String::with_capacity(mscx.len());
     let mut rest = mscx;
     while let Some(start) = rest.find("<KeySig>") {
-        let Some(len) = rest[start..].find("</KeySig>") else { break };
+        let Some(len) = rest[start..].find("</KeySig>") else {
+            break;
+        };
         let end = start + len + "</KeySig>".len();
         out.push_str(&rest[..start]);
         out.push_str(&adapt_key_sig_element(&rest[start..end], concert_pitch));
@@ -75,13 +79,20 @@ fn adapt_key_signatures(mscx: &str) -> Option<String> {
 fn adapt_key_sig_element(element: &str, concert_pitch: bool) -> String {
     let concert = tag_value(element, "concertKey");
     let actual = tag_value(element, "actualKey");
-    let key = if concert_pitch { concert.or(actual) } else { actual.or(concert) };
+    let key = if concert_pitch {
+        concert.or(actual)
+    } else {
+        actual.or(concert)
+    };
     let Some(key) = key else {
         return element.to_string();
     };
     let without = remove_tag(&remove_tag(element, "concertKey"), "actualKey");
     let inner_start = "<KeySig>".len();
-    format!("<KeySig><accidental>{key}</accidental>{}", &without[inner_start..])
+    format!(
+        "<KeySig><accidental>{key}</accidental>{}",
+        &without[inner_start..]
+    )
 }
 
 /// Text of the first `<tag>text</tag>` in `s`.
@@ -120,14 +131,22 @@ mod tests {
     #[test]
     fn transposing_staff_uses_written_key_unless_in_concert_pitch() {
         let keysig = "<KeySig><concertKey>0</concertKey><actualKey>2</actualKey></KeySig>";
-        assert_eq!(adapt_key_signatures(keysig).unwrap(), "<KeySig><accidental>2</accidental></KeySig>");
+        assert_eq!(
+            adapt_key_signatures(keysig).unwrap(),
+            "<KeySig><accidental>2</accidental></KeySig>"
+        );
         let concert = format!("<Style><concertPitch>1</concertPitch></Style>{keysig}");
-        assert!(adapt_key_signatures(&concert).unwrap().ends_with("<KeySig><accidental>0</accidental></KeySig>"));
+        assert!(adapt_key_signatures(&concert)
+            .unwrap()
+            .ends_with("<KeySig><accidental>0</accidental></KeySig>"));
     }
 
     #[test]
     fn older_format_is_left_alone() {
-        assert_eq!(adapt_key_signatures("<KeySig><accidental>-1</accidental></KeySig>"), None);
+        assert_eq!(
+            adapt_key_signatures("<KeySig><accidental>-1</accidental></KeySig>"),
+            None
+        );
     }
 
     #[test]
@@ -138,16 +157,23 @@ mod tests {
             return;
         }
         let original = std::fs::read(path).unwrap();
-        let adapted = adapt_for_engine(&original).unwrap().expect("EoSD uses <concertKey>");
+        let adapted = adapt_for_engine(&original)
+            .unwrap()
+            .expect("EoSD uses <concertKey>");
         let contents = mscz::read_rootfile_contents(Cursor::new(&adapted)).unwrap();
         assert!(!contents.contains("<concertKey>"));
-        assert_eq!(contents.matches("<KeySig>").count(), contents.matches("<KeySig><accidental>").count());
+        assert_eq!(
+            contents.matches("<KeySig>").count(),
+            contents.matches("<KeySig><accidental>").count()
+        );
 
         // Everything else in the archive survives untouched.
         let before = ZipArchive::new(Cursor::new(&original)).unwrap();
         let after = ZipArchive::new(Cursor::new(&adapted)).unwrap();
         let names = |a: &ZipArchive<Cursor<&Vec<u8>>>| {
-            a.file_names().map(|n| n.unwrap().into_owned()).collect::<std::collections::BTreeSet<_>>()
+            a.file_names()
+                .map(|n| n.unwrap().into_owned())
+                .collect::<std::collections::BTreeSet<_>>()
         };
         assert_eq!(names(&before), names(&after));
     }

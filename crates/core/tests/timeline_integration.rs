@@ -19,7 +19,7 @@ fn darkside_timeline_unrolls_repeats_and_dedupes_tempo() {
     let timeline = build_timeline(&positions, &midi, None).unwrap();
 
     // Dark Side Of Fate has 46 printed measures but, per real repeat/D.C.
-    // structure confirmed during Phase 4 research, performs 112 measure
+    // structure, performs 112 measure
     // instances when repeats are unrolled.
     assert_eq!(positions.elements.len(), 46);
     assert_eq!(timeline.events.len(), 112);
@@ -118,7 +118,12 @@ fn midi_derived_times_match_positions_when_the_midi_has_no_tempo_drift() {
     let positions = load_positions("darkside_measures.json");
     let timeline = build_timeline(&positions, &load_midi("darkside.mid"), Some(&layout)).unwrap();
     for (event, pos) in timeline.events.iter().zip(&positions.events) {
-        assert!((event.time_ms - pos.position).abs() < 2.0, "{} vs {}", event.time_ms, pos.position);
+        assert!(
+            (event.time_ms - pos.position).abs() < 2.0,
+            "{} vs {}",
+            event.time_ms,
+            pos.position
+        );
     }
 }
 
@@ -144,5 +149,9 @@ fn timeline_follows_midi_after_a_ds_jump_with_tempo_drift() {
     // but its first MIDI note sounds at 720945ms.
     assert_eq!(timeline.events[414].source_elid, 185);
     assert!((positions.events[414].position - 708_505.0).abs() < 1.0);
-    assert!((timeline.events[414].time_ms - 720_945.0).abs() < 2.0, "got {}", timeline.events[414].time_ms);
+    assert!(
+        (timeline.events[414].time_ms - 720_945.0).abs() < 2.0,
+        "got {}",
+        timeline.events[414].time_ms
+    );
 }

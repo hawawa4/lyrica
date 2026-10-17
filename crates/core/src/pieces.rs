@@ -136,7 +136,10 @@ mod tests {
         let file = File::open(path).unwrap();
         let contents = mscz::read_rootfile_contents(file).unwrap();
         let pieces = detect_pieces(&contents).unwrap();
-        assert!(pieces.len() <= 1, "expected a single-piece file to have at most one title frame, got {pieces:?}");
+        assert!(
+            pieces.len() <= 1,
+            "expected a single-piece file to have at most one title frame, got {pieces:?}"
+        );
     }
 
     #[test]
@@ -150,13 +153,36 @@ mod tests {
         let contents = mscz::read_rootfile_contents(file).unwrap();
         let pieces = detect_pieces(&contents).unwrap();
 
-        assert_eq!(pieces.len(), 17, "expected 17 piece boundaries, got {}", pieces.len());
+        assert_eq!(
+            pieces.len(),
+            17,
+            "expected 17 piece boundaries, got {}",
+            pieces.len()
+        );
 
         // Spot-check against ordinals independently verified during research
         // (counting <Measure> tags in document order up to each title VBox).
-        assert_eq!(pieces[0], Piece { start_measure_index: 0, title: "赤より紅い夢".to_string() });
-        assert_eq!(pieces[1], Piece { start_measure_index: 28, title: "ほおずきみたいに紅い魂".to_string() });
-        assert_eq!(pieces[16], Piece { start_measure_index: 832, title: "紅楼\u{3000}～ Eastern Dream...".to_string() });
+        assert_eq!(
+            pieces[0],
+            Piece {
+                start_measure_index: 0,
+                title: "赤より紅い夢".to_string()
+            }
+        );
+        assert_eq!(
+            pieces[1],
+            Piece {
+                start_measure_index: 28,
+                title: "ほおずきみたいに紅い魂".to_string()
+            }
+        );
+        assert_eq!(
+            pieces[16],
+            Piece {
+                start_measure_index: 832,
+                title: "紅楼\u{3000}～ Eastern Dream...".to_string()
+            }
+        );
 
         // Boundaries must be strictly increasing (document order, no duplicates/out-of-order).
         for pair in pieces.windows(2) {

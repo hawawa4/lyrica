@@ -33,7 +33,7 @@ pub struct TempoMapEntry {
 /// channel-voice events plus a combined tempo/time-signature map — the data
 /// `Player`'s custom scheduler needs to drive `Synthesizer` directly instead
 /// of `rustysynth::MidiFileSequencer` (which has no arbitrary-region-loop or
-/// seek API; see `plans/` discussion / Player's module docs for why this
+/// seek API; see Player's module docs for why this
 /// project doesn't use it for playback).
 pub fn parse_midi_events(
     midi_bytes: &[u8],
@@ -41,7 +41,9 @@ pub fn parse_midi_events(
     let smf = midly::Smf::parse(midi_bytes)?;
     let ticks_per_beat: f64 = match smf.header.timing {
         midly::Timing::Metrical(tpb) => u16::from(tpb) as f64,
-        midly::Timing::Timecode(fps, ticks_per_frame) => fps.as_f32() as f64 * ticks_per_frame as f64,
+        midly::Timing::Timecode(fps, ticks_per_frame) => {
+            fps.as_f32() as f64 * ticks_per_frame as f64
+        }
     };
 
     // First pass: collect every tempo/time-signature meta-event's absolute
@@ -144,16 +146,24 @@ pub fn parse_midi_events(
             if let midly::TrackEventKind::Midi { channel, message } = event.kind {
                 let channel = u8::from(channel) as i32;
                 let (command, data1, data2) = match message {
-                    midly::MidiMessage::NoteOff { key, vel } => (0x80, u8::from(key) as i32, u8::from(vel) as i32),
-                    midly::MidiMessage::NoteOn { key, vel } => (0x90, u8::from(key) as i32, u8::from(vel) as i32),
+                    midly::MidiMessage::NoteOff { key, vel } => {
+                        (0x80, u8::from(key) as i32, u8::from(vel) as i32)
+                    }
+                    midly::MidiMessage::NoteOn { key, vel } => {
+                        (0x90, u8::from(key) as i32, u8::from(vel) as i32)
+                    }
                     midly::MidiMessage::Aftertouch { key, vel } => {
                         (0xA0, u8::from(key) as i32, u8::from(vel) as i32)
                     }
                     midly::MidiMessage::Controller { controller, value } => {
                         (0xB0, u8::from(controller) as i32, u8::from(value) as i32)
                     }
-                    midly::MidiMessage::ProgramChange { program } => (0xC0, u8::from(program) as i32, 0),
-                    midly::MidiMessage::ChannelAftertouch { vel } => (0xD0, u8::from(vel) as i32, 0),
+                    midly::MidiMessage::ProgramChange { program } => {
+                        (0xC0, u8::from(program) as i32, 0)
+                    }
+                    midly::MidiMessage::ChannelAftertouch { vel } => {
+                        (0xD0, u8::from(vel) as i32, 0)
+                    }
                     midly::MidiMessage::PitchBend { bend } => {
                         let raw = bend.0.as_int();
                         (0xE0, (raw & 0x7F) as i32, (raw >> 7) as i32)

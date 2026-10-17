@@ -32,8 +32,8 @@ pub struct LoadedMidi {
 /// `MidiFileSequencer` only supports playing once or looping the *entire*
 /// file (via embedded RPG-Maker-style loop markers), with no seek or
 /// arbitrary-region-loop API, and `MidiFile`'s internal event data is
-/// `pub(crate)` (no way to drive it externally either). IMPLEMENTATION_PLAN.md
-/// Phase 5 needs an arbitrary A/B loop region (drag-selected measures -> L to
+/// `pub(crate)` (no way to drive it externally either). The app
+/// needs an arbitrary A/B loop region (drag-selected measures -> L to
 /// loop just that range), so `Player` parses MIDI itself (`midi_events`,
 /// reusing the same tick/tempo-map math as `crates/core/src/timeline.rs`'s
 /// tempo extraction) and advances its own clock, which can snap back to an
@@ -95,15 +95,18 @@ impl Player {
     }
 
     /// Builds metronome-only "playback" from a tempo map with no note events
-    /// at all — PDF mode (IMPLEMENTATION_PLAN.md Phase 9) has no note data to
-    /// synthesize (true audio playback isn't possible without it, per the
-    /// handoff spec), only a user-calibrated tempo map. An empty `events` list
+    /// at all — PDF mode has no note data to
+    /// synthesize (true audio playback isn't possible without it), only a user-calibrated tempo map. An empty `events` list
     /// is a no-op for every event-dispatch path in `render`/`dispatch_due_events`
     /// (loops zero times) while `rebuild_clicks`/loop-wrap/position-tracking
     /// all key off `tempo_map`/`duration_ms` alone — so this reuses the exact
     /// same clock, A/B loop region, and click-generation machinery as `.mscz`
     /// playback with no changes to any of it.
-    pub fn load_tempo_map(&self, tempo_map: Vec<TempoMapEntry>, duration_ms: f64) -> Arc<LoadedMidi> {
+    pub fn load_tempo_map(
+        &self,
+        tempo_map: Vec<TempoMapEntry>,
+        duration_ms: f64,
+    ) -> Arc<LoadedMidi> {
         Arc::new(LoadedMidi {
             events: Vec::new(),
             tempo_map,
@@ -298,7 +301,7 @@ impl Player {
 
     /// Mixes short generated click blips directly into the output buffers at
     /// each due `ClickEvent`'s time — deliberately not routed through the
-    /// soundfont as an instrument patch (per the handoff spec), so it works
+    /// soundfont as an instrument patch, so it works
     /// identically regardless of which soundfont/instrument patches are
     /// loaded. A click is a short exponentially-decaying sine burst: higher
     /// pitch (1600Hz) on accented (beat 1) clicks, lower (1000Hz) otherwise.
@@ -318,7 +321,8 @@ impl Player {
             let click = self.clicks[self.next_click_index];
             if click.time_ms >= block_start_ms {
                 let offset_ms = click.time_ms - block_start_ms;
-                let start_sample = ((offset_ms / 1000.0) * self.sample_rate as f64 / self.speed) as usize;
+                let start_sample =
+                    ((offset_ms / 1000.0) * self.sample_rate as f64 / self.speed) as usize;
                 self.render_click(left, right, start_sample, click.accent);
             }
             self.next_click_index += 1;

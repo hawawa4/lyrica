@@ -9,11 +9,10 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::audio::midi_events::TempoMapEntry;
-use crate::library::{self, LibraryEntry, LibraryError, LibrarySettings, PinnedFile};
 use crate::engine_compat;
+use crate::library::{self, LibraryEntry, LibraryError, LibrarySettings, PinnedFile};
 use crate::markers::{self, Marker};
 use crate::measure_layout;
-pub use cv_barline::{CvBarlineError, StaffSystem};
 use crate::mscz::{self, MsczError};
 use crate::pdf_calibration::{self, CalibrationPoint};
 use crate::pieces::{self, Piece, PiecesError};
@@ -21,6 +20,7 @@ use crate::rating::{self, KnowledgeLevel};
 use crate::recent_files::{self, RecentFile, RecentFilesError};
 use crate::sidecar::SidecarError;
 use crate::timeline::{self, Positions, Timeline, TimelineError};
+pub use cv_barline::{CvBarlineError, StaffSystem};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OpenFileRequest {
@@ -106,8 +106,7 @@ pub fn adapt_score_for_engine(bytes: Vec<u8>) -> Vec<u8> {
 /// Rust never parses `.mscz`/MIDI directly — this receives already-exported
 /// data from the JS layer (webmscore's `measurePositions()` JSON and
 /// `saveMidi()` bytes) and builds the derived `Timeline`, so it can be
-/// persisted without re-deriving it from source on every launch (see
-/// IMPLEMENTATION_PLAN.md's "API boundary" section).
+/// persisted without re-deriving it from source on every launch.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ImportTimelineRequest {
     pub positions: Positions,
@@ -251,7 +250,7 @@ pub fn unpin_file(base_dir: &Path, file_hash: &str) -> Result<Vec<PinnedFile>, L
     library::unpin_file(base_dir, file_hash)
 }
 
-/// PDF mode (Phase 9) calibration CRUD, keyed by the PDF's own content hash
+/// PDF mode calibration CRUD, keyed by the PDF's own content hash
 /// (same blake3-of-bytes scheme as `.mscz` files, via `open_file`/`mscz`'s
 /// hashing — PDFs aren't parsed by `mscz`, but nothing stops reusing the same
 /// hash function directly on the raw bytes).

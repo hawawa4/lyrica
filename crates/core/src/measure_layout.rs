@@ -89,8 +89,12 @@ pub fn parse_measure_layout(mscx_contents: &str) -> Result<Vec<MeasureInfo>, Mea
                             break_subtype.clear();
                             break_pause = None;
                         }
-                        b"subtype" if parent == Some(b"LayoutBreak") => text_target = TextTarget::BreakSubtype,
-                        b"pause" if parent == Some(b"LayoutBreak") => text_target = TextTarget::BreakPause,
+                        b"subtype" if parent == Some(b"LayoutBreak") => {
+                            text_target = TextTarget::BreakSubtype
+                        }
+                        b"pause" if parent == Some(b"LayoutBreak") => {
+                            text_target = TextTarget::BreakPause
+                        }
                         _ => {}
                     }
                 }
@@ -182,6 +186,15 @@ mod tests {
           </Score></museScore>"#;
         let m = parse_measure_layout(mscx).unwrap();
         let got: Vec<(f64, f64)> = m.iter().map(|m| (m.whole_notes, m.pause_secs)).collect();
-        assert_eq!(got, vec![(0.25, 0.0), (0.75, 0.0), (0.75, 3.0), (0.75, 1.5), (0.75, 0.0)]);
+        assert_eq!(
+            got,
+            vec![
+                (0.25, 0.0),
+                (0.75, 0.0),
+                (0.75, 3.0),
+                (0.75, 1.5),
+                (0.75, 0.0)
+            ]
+        );
     }
 }

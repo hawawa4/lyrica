@@ -1,6 +1,6 @@
 # MusePractice
 
-A sheet-music practice app that opens existing MuseScore `.mscz` files (like a PDF reader, not an editor) with practice helpers: loop selection, markers, speed control, metronome, pieces index. See `mscz-reader-handoff.md` for the full feature spec and `IMPLEMENTATION_PLAN.md` for the phased build plan this project follows.
+A sheet-music practice app that opens existing MuseScore `.mscz` files (like a PDF reader, not an editor) with practice helpers: loop selection, markers, speed control, metronome, pieces index.
 
 ## Toolchain
 
@@ -12,10 +12,10 @@ Run `just` with no arguments to list all dev recipes (build, test, dev server, s
 
 - `crates/core` — shared Rust logic (score version-sniffing, timeline construction, audio synth). No `tauri::`/`axum::` imports — both shells are thin adapters over this.
 - `crates/desktop` — Tauri 2 shell. Thin `#[tauri::command]` wrappers over `crates/core::api`.
-- `crates/server` — axum shell (not yet built — Phase 2b).
-- `crates/cv-barline` — PDF-mode barline-detection assist (not yet built — Phase 9).
+- `crates/server` — axum shell (placeholder, not yet built).
+- `crates/cv-barline` — PDF-mode barline-detection assist (classical CV, no ML).
+- `site/` — the static landing page (Astro), built into a Docker image. Independent of the app.
 - `web/` — Vite + TypeScript frontend, shared by both the Tauri webview and (eventually) axum's static serving. webmscore and all score/PDF rendering happens here; Rust never parses `.mscz`/MIDI directly.
-- `_spike/` — disposable Phase 1 risk-reduction harness (webmscore position-export API validation). Not part of the real app; keep it that way.
 
 ## Soundfont
 
@@ -25,13 +25,13 @@ The app needs a GM soundfont for audio playback, fetched on demand (not committe
 just fetch-soundfont
 ```
 
-This pulls `FluidR3_GM.sf2` into `assets/`. **Do not switch this to MuseScore's own soundfont** (`MuseScore_General.sf2`/`.sf3`) — it sounds badly wrong (quiet, bass-only) through `rustysynth`, the Rust synth crate this project uses, because `rustysynth` has zero SF2 modulator support (confirmed in its source — `pmod`/`imod` chunks are parsed and discarded) and MuseScore's soundfont depends on modulators to sound right. Not fixable by adjusting gain or player code. See `plans/oxisynth-migration.md` for the full diagnosis and a deferred plan to fix this properly.
+This pulls `FluidR3_GM.sf2` into `assets/`. **Do not switch this to MuseScore's own soundfont** (`MuseScore_General.sf2`/`.sf3`) — it sounds badly wrong (quiet, bass-only) through `rustysynth`, the Rust synth crate this project uses, because `rustysynth` has zero SF2 modulator support (confirmed in its source — `pmod`/`imod` chunks are parsed and discarded) and MuseScore's soundfont depends on modulators to sound right. Not fixable by adjusting gain or player code. The proper fix is migrating to `oxisynth`, which supports modulators (not done yet).
 
 Separately: `rustysynth` cannot load `.sf3` (Ogg-compressed-sample soundfonts) at all — only uncompressed `.sf2`.
 
 ## Known gotchas
 
-- **webmscore in Node vs. browser**: webmscore 1.2.1's Node-targeted glue code breaks under Node 22 (read-only `navigator`, global `fetch` misdetection) — see `_spike/shim-preload.cjs` and `_spike/FINDINGS.md` if you ever need to run it outside a browser/webview again. This should never be needed in `web/` itself, which always runs in a real browser or Tauri webview.
+- **webmscore in Node vs. browser**: webmscore 1.2.1's Node-targeted glue code breaks under Node 22 (read-only `navigator`, global `fetch` misdetection) — it should never be needed in `web/` itself, which always runs in a real browser or Tauri webview.
 - **webmscore in Vite**: vendored as two parts — `web/public/vendor/webmscore/` (the runtime `.mjs`/`.wasm`/`.data`, served byte-identical via Vite's `publicDir`, loaded via a dynamic `import()` of its own absolute URL, never statically imported) and `web/vendor/webmscore/` (type-only declarations, erased at compile time). A static import gets minified/bundled by Rollup and silently breaks the Web-Worker-based wasm loading. See the comments atop `web/src/score-engine.ts` for the full reasoning.
 - **`WebMscoreW.version()` is a dead stub** that always returns `-1` in the browser build — don't use it for the upgrade-needed check; compare `metadata.fileVersion` against the hardcoded `ENGINE_FILE_VERSION` constant in `score-engine.ts` instead.
 - **`segmentPositions()` crashes** (wasm signature mismatch) in webmscore 1.2.1. `measurePositions()` works fine and is what `Timeline` construction uses — don't reach for `segmentPositions()` as a fallback without re-testing it.

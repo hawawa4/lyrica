@@ -23,7 +23,7 @@ export function isTauri(): boolean {
  * crates/core/src/timeline.rs — Rust never parses .mscz/MIDI itself, it
  * receives already-exported data from this JS layer).
  *
- * Desktop-only for now (the axum server shell isn't built yet — Phase 2b).
+ * Desktop-only for now (there is no server shell yet).
  */
 /**
  * Rewrites a `.mscz` from a newer MuseScore into what webmscore's 4.0-based
@@ -57,8 +57,7 @@ export async function importTimeline(
 /**
  * Playback control. Desktop-only for now (see importTimeline's note — the
  * same transport gap applies here; web/server will stream synthesized PCM
- * to the Web Audio API instead, per IMPLEMENTATION_PLAN.md Phase 4, not yet
- * built).
+ * to the Web Audio API instead (not yet built).
  */
 export async function loadMidi(midiBytes: Uint8Array): Promise<void> {
   if (!isTauri()) throw new Error('loadMidi: desktop-only for now')
@@ -280,7 +279,7 @@ export async function getKnowledgeLevels(fileHashes: string[]): Promise<Record<s
 }
 
 /**
- * PDF mode (Phase 9): stable content-hash key for a PDF's bytes, same blake3
+ * PDF mode: stable content-hash key for a PDF's bytes, same blake3
  * scheme `contentHash`/`open_file` use for `.mscz` (see Rust's
  * `api::hash_bytes` docs for why PDFs need a separate command rather than
  * reusing `open_file` itself — no MuseScore-version concept to sniff).

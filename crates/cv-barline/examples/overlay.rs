@@ -2,8 +2,12 @@ use cv_barline::detect_barlines;
 use image::{Rgb, RgbImage};
 
 fn main() {
-    let path = std::env::args().nth(1).expect("usage: overlay <png_path> <out_path>");
-    let out_path = std::env::args().nth(2).expect("usage: overlay <png_path> <out_path>");
+    let path = std::env::args()
+        .nth(1)
+        .expect("usage: overlay <png_path> <out_path>");
+    let out_path = std::env::args()
+        .nth(2)
+        .expect("usage: overlay <png_path> <out_path>");
     let bytes = std::fs::read(&path).expect("read png");
     let systems = detect_barlines(&bytes).expect("detect");
 

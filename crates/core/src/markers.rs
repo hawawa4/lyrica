@@ -41,8 +41,14 @@ pub fn add_marker(
 ) -> Result<Vec<Marker>, SidecarError> {
     let mut meta: MarkersMeta = sidecar::load_meta(base_dir, file_hash)?;
     let created_at = now_unix();
-    let id = blake3::hash(format!("{file_hash}-{measure_index}-{created_at}-{}", meta.markers.len()).as_bytes())
-        .to_hex()[..16]
+    let id = blake3::hash(
+        format!(
+            "{file_hash}-{measure_index}-{created_at}-{}",
+            meta.markers.len()
+        )
+        .as_bytes(),
+    )
+    .to_hex()[..16]
         .to_string();
     meta.markers.push(Marker {
         id,
@@ -54,7 +60,11 @@ pub fn add_marker(
     Ok(meta.markers)
 }
 
-pub fn delete_marker(base_dir: &Path, file_hash: &str, marker_id: &str) -> Result<Vec<Marker>, SidecarError> {
+pub fn delete_marker(
+    base_dir: &Path,
+    file_hash: &str,
+    marker_id: &str,
+) -> Result<Vec<Marker>, SidecarError> {
     let mut meta: MarkersMeta = sidecar::load_meta(base_dir, file_hash)?;
     meta.markers.retain(|m| m.id != marker_id);
     sidecar::save_meta(base_dir, file_hash, &meta)?;
