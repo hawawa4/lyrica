@@ -1,0 +1,73 @@
+---
+interface Props {
+  title: string
+  description: string
+}
+const { title, description } = Astro.props
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title}</title>
+    <meta name="description" content={description} />
+    <meta name="color-scheme" content="light dark" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  </head>
+  <body>
+    <slot />
+  </body>
+</html>
+
+<style is:global>
+  :root {
+    --bg: #f7f1e5;
+    --surface: #fffaf0;
+    --ink: #2b2118;
+    --muted: #6d5f50;
+    --line: #e1d6c2;
+    --accent: #b8541a;
+    --accent-ink: #fff;
+    --accent-soft: rgba(184, 84, 26, 0.14);
+    --serif: 'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, serif;
+    --sans: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #17130f;
+      --surface: #211b15;
+      --ink: #f1e8d8;
+      --muted: #a89a86;
+      --line: #3a3027;
+      --accent: #e8935a;
+      --accent-ink: #1a120b;
+      --accent-soft: rgba(232, 147, 90, 0.18);
+    }
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 17px/1.6 var(--sans);
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .wrap { max-width: 68rem; margin: 0 auto; padding: 0 1.25rem; }
+  h1, h2, h3 { font-family: var(--serif); line-height: 1.15; margin: 0; font-weight: 600; }
+  kbd {
+    font: 0.85em var(--sans);
+    padding: 0.05em 0.45em;
+    border: 1px solid var(--line);
+    border-bottom-width: 2px;
+    border-radius: 5px;
+    background: var(--surface);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+  }
+</style>
