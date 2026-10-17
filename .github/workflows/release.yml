@@ -1,0 +1,169 @@
+name: Release
+
+# Two ways to cut a release; both read the version from the repo:
+#   1. Bump the version everywhere, merge to main, then run this workflow
+#      manually from the Actions tab. It creates the tag vX.Y.Z on that commit.
+#   2. Push a tag yourself (git tag v1.0.1 && git push origin v1.0.1).
+# Either way the tag must match the version in Cargo.toml, tauri.conf.json and
+# web/package.json, and CI must pass before anything is built or published.
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: Verify version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      tag: ${{ steps.v.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: v
+        run: |
+          set -euo pipefail
+          cargo_v=$(grep -m1 '^version' Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')
+          tauri_v=$(jq -r .version crates/desktop/tauri.conf.json)
+          web_v=$(jq -r .version web/package.json)
+          echo "Cargo.toml=$cargo_v tauri.conf.json=$tauri_v web/package.json=$web_v"
+          if [ "$cargo_v" != "$tauri_v" ] || [ "$cargo_v" != "$web_v" ]; then
+            echo "::error::Version mismatch between Cargo.toml, tauri.conf.json and web/package.json"
+            exit 1
+          fi
+          tag="v$cargo_v"
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            if [ "$GITHUB_REF_NAME" != "$tag" ]; then
+              echo "::error::Pushed tag $GITHUB_REF_NAME does not match version $cargo_v (expected $tag)"
+              exit 1
+            fi
+          else
+            if [ "$GITHUB_REF_NAME" != "main" ]; then
+              echo "::error::Run this workflow from main, not $GITHUB_REF_NAME"
+              exit 1
+            fi
+            if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1; then
+              echo "::error::Tag $tag already exists. Bump the version first."
+              exit 1
+            fi
+          fi
+          echo "version=$cargo_v" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+  ci:
+    name: CI
+    needs: prepare
+    uses: ./.github/workflows/ci.yml
+
+  build:
+    name: Build (Linux)
+    needs: [prepare, ci]
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: System libraries (Tauri + ALSA)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev libayatana-appindicator3-dev \
+            libasound2-dev libssl-dev patchelf xdg-utils file
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: extractions/setup-just@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Cache soundfont
+        uses: actions/cache@v4
+        with:
+          path: assets/FluidR3_GM.sf2
+          key: soundfont-${{ hashFiles('Justfile') }}
+
+      - name: Install Tauri CLI
+        run: cargo install tauri-cli --version '^2' --locked
+
+      - run: npm ci
+        working-directory: web
+      # `just release` fetches the soundfont + CJK font, then builds .deb and .AppImage.
+      - run: just release
+
+      - name: Collect bundles and checksums
+        run: |
+          mkdir dist
+          cp target/release/bundle/deb/*.deb target/release/bundle/appimage/*.AppImage dist/
+          cd dist && sha256sum ./* > SHA256SUMS.txt && cat SHA256SUMS.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bundles
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub release
+    needs: [prepare, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: bundles
+          path: dist
+      - name: Create release (and tag, if it doesn't exist yet)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          gh release create "$TAG" dist/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "MusePractice $VERSION" \
+            --generate-notes
+
+  site-image:
+    name: Publish landing page image
+    needs: [prepare, ci]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/metadata-action@v5
+        id: meta
+        with:
+          images: ghcr.io/${{ github.repository }}-site
+          tags: |
+            type=raw,value=${{ needs.prepare.outputs.version }}
+            type=raw,value=latest
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.licenses=GPL-3.0-only
+      - uses: docker/build-push-action@v6
+        with:
+          context: site
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
