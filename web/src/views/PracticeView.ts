@@ -1815,7 +1815,13 @@ export class PracticeView {
     await stopMidi()
     this.msczCursor.stop()
     this.pdfCursor.stop()
-    if (active.kind === 'pdf') active.calibrationOverlay.setPlayingIndex(null)
+    // The "currently playing" highlight only means anything while playing
+    // (or paused mid-measure) — the head marker alone shows where play resumes.
+    this.cursorBoxEl.style.display = 'none'
+    if (active.kind === 'pdf') {
+      active.calibrationOverlay.setPlayingIndex(null)
+      active.rightPane?.calibrationOverlay.setPlayingIndex(null)
+    }
     active.transportState = 'stopped'
     // Head resets to the active loop's start if one is set (loop stays
     // armed across Stop, see setLoop/setPdfLoop), else to the start of the
