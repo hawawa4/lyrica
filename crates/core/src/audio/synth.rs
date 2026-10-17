@@ -60,6 +60,17 @@ pub struct Player {
     next_click_index: usize,
     click_sample: ClickSample,
     accent_sample: ClickSample,
+    /// Clicks still sounding. A click sample (~70ms) is far longer than one
+    /// synth block (64 samples), so each one plays out across many chunks.
+    sounding_clicks: Vec<SoundingClick>,
+    metronome_volume: f32,
+}
+
+/// A click partway through playback: which sample, and how far into it.
+#[derive(Debug, Clone, Copy)]
+struct SoundingClick {
+    accent: bool,
+    position: usize,
 }
 
 impl Player {
@@ -82,6 +93,8 @@ impl Player {
             next_click_index: 0,
             click_sample,
             accent_sample,
+            sounding_clicks: Vec::new(),
+            metronome_volume: 1.0,
         })
     }
 
@@ -201,6 +214,12 @@ impl Player {
         self.rebuild_clicks();
     }
 
+    /// Click loudness, 0.0 (silent) to 1.0 (the sample's own full level).
+    /// Safe to call mid-playback.
+    pub fn set_metronome_volume(&mut self, volume: f32) {
+        self.metronome_volume = volume.clamp(0.0, 1.0);
+    }
+
     /// Current position in the MIDI file's own timeline, in seconds.
     pub fn position_secs(&self) -> f64 {
         self.position_ms / 1000.0
@@ -209,7 +228,11 @@ impl Player {
     pub fn end_of_sequence(&self) -> bool {
         match &self.midi {
             None => true,
-            Some(midi) => self.loop_region.is_none() && self.next_event_index >= midi.events.len(),
+            Some(midi) => {
+                self.loop_region.is_none()
+                    && self.next_event_index >= midi.events.len()
+                    && self.position_ms >= midi.duration_ms
+            }
         }
     }
 
@@ -267,7 +290,13 @@ impl Player {
                     .process_midi_message(e.channel, e.command, e.data1, e.data2);
                 self.next_event_index += 1;
             }
-            if self.loop_region.is_none() && self.next_event_index >= midi.events.len() {
+            // Also wait for the clock to reach the end: tempo-map-only
+            // (PDF) playback has no events at all, and would otherwise
+            // stop on its very first chunk.
+            if self.loop_region.is_none()
+                && self.next_event_index >= midi.events.len()
+                && self.position_ms >= midi.duration_ms
+            {
                 self.playing = false;
             }
         }
@@ -294,6 +323,7 @@ impl Player {
             self.next_event_index = midi.events.partition_point(|e| e.time_ms < target_ms);
         }
         self.next_click_index = self.clicks.partition_point(|c| c.time_ms < target_ms);
+        self.sounding_clicks.clear();
     }
 
     fn rebuild_clicks(&mut self) {
@@ -302,6 +332,7 @@ impl Player {
             _ => Vec::new(),
         };
         self.next_click_index = 0;
+        self.sounding_clicks.clear();
     }
 
     /// Mixes the recorded click samples directly into the output buffers at
@@ -313,6 +344,12 @@ impl Player {
         if !self.metronome_enabled || self.clicks.is_empty() {
             return;
         }
+        // Tails of clicks that started in earlier chunks.
+        let mut sounding = std::mem::take(&mut self.sounding_clicks);
+        for click in &mut sounding {
+            click.position += self.render_click(left, right, 0, *click);
+        }
+
         // Called before `position_ms` is advanced past this chunk, so
         // `position_ms` itself is this chunk's start time.
         let block_start_ms = self.position_ms;
@@ -327,21 +364,50 @@ impl Player {
                 let offset_ms = click.time_ms - block_start_ms;
                 let start_sample =
                     ((offset_ms / 1000.0) * self.sample_rate as f64 / self.speed) as usize;
-                self.render_click(left, right, start_sample, click.accent);
+                let mut started = SoundingClick {
+                    accent: click.accent,
+                    position: 0,
+                };
+                started.position += self.render_click(left, right, start_sample, started);
+                sounding.push(started);
             }
             self.next_click_index += 1;
         }
+
+        sounding.retain(|c| c.position < self.sample_for(c.accent).samples.len());
+        self.sounding_clicks = sounding;
     }
 
-    fn render_click(&self, left: &mut [f32], right: &mut [f32], start_sample: usize, accent: bool) {
-        let sample = if accent { &self.accent_sample } else { &self.click_sample };
-        for (i, &value) in sample.samples.iter().enumerate() {
-            let sample_index = start_sample + i;
-            if sample_index >= left.len() {
-                break;
-            }
-            left[sample_index] += value;
-            right[sample_index] += value;
+    fn sample_for(&self, accent: bool) -> &ClickSample {
+        if accent {
+            &self.accent_sample
+        } else {
+            &self.click_sample
         }
+    }
+
+    /// Adds `click`'s sample, from its current position, into the buffers
+    /// starting at `start_sample`, stopping at the buffer's end. Returns how
+    /// many sample frames were written.
+    fn render_click(
+        &self,
+        left: &mut [f32],
+        right: &mut [f32],
+        start_sample: usize,
+        click: SoundingClick,
+    ) -> usize {
+        let remaining = self
+            .sample_for(click.accent)
+            .samples
+            .get(click.position..)
+            .unwrap_or(&[]);
+        let room = left.len().saturating_sub(start_sample);
+        let count = remaining.len().min(room);
+        for (i, &value) in remaining[..count].iter().enumerate() {
+            let value = value * self.metronome_volume;
+            left[start_sample + i] += value;
+            right[start_sample + i] += value;
+        }
+        count
     }
 }

@@ -254,3 +254,47 @@ fn tempo_map_only_playback_produces_clicks_with_no_notes() {
          but observed {max_observed_position_ms}ms"
     );
 }
+
+/// Each click must play out in full — its sample is far longer than one
+/// synth block, and an earlier version cut every click off at the end of
+/// the block it started in (inaudible, though still "nonzero"). Checks the
+/// rendered energy against the samples' own, at full and half volume.
+#[test]
+fn metronome_clicks_play_their_whole_sample_scaled_by_volume() {
+    let soundfont_path = soundfont_path();
+    if !soundfont_path.exists() {
+        eprintln!("skipping: soundfont not present in this environment");
+        return;
+    }
+    let soundfont_bytes = fs::read(&soundfont_path).unwrap();
+    let sample_rate = 44100;
+    let (click, accent) = mp_core::audio::metronome::load_click_samples(sample_rate);
+    let energy = |s: &[f32]| s.iter().map(|v| v.abs() as f64).sum::<f64>();
+    // 120 qpm in 4/4 over 2s: an accent at 0ms, plain clicks at 500/1000/1500ms.
+    let expected = energy(&accent.samples) + 3.0 * energy(&click.samples);
+
+    for volume in [1.0f32, 0.5] {
+        let mut player = Player::new(&soundfont_bytes, sample_rate).unwrap();
+        let tempo_map = vec![TempoMapEntry {
+            time_ms: 0.0,
+            qpm: 120.0,
+            numerator: 4,
+        }];
+        let midi = player.load_tempo_map(tempo_map, 4000.0);
+        player.set_metronome_enabled(true);
+        player.set_metronome_volume(volume);
+        player.play(&midi, false);
+
+        let frame_count = sample_rate as usize * 2;
+        let mut left = vec![0.0f32; frame_count];
+        let mut right = vec![0.0f32; frame_count];
+        player.render(&mut left, &mut right);
+
+        let rendered = energy(&left);
+        let want = expected * volume as f64;
+        assert!(
+            (rendered - want).abs() < want * 0.05,
+            "volume {volume}: rendered click energy {rendered:.1}, expected ~{want:.1}"
+        );
+    }
+}
