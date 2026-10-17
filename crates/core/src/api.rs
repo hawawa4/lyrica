@@ -10,7 +10,9 @@ use thiserror::Error;
 
 use crate::audio::midi_events::TempoMapEntry;
 use crate::library::{self, LibraryEntry, LibraryError, LibrarySettings, PinnedFile};
+use crate::engine_compat;
 use crate::markers::{self, Marker};
+use crate::measure_layout;
 pub use cv_barline::{CvBarlineError, StaffSystem};
 use crate::mscz::{self, MsczError};
 use crate::pdf_calibration::{self, CalibrationPoint};
@@ -86,6 +88,21 @@ pub fn detect_pieces(bytes: &[u8]) -> Result<Vec<Piece>, DetectPiecesError> {
     Ok(pieces::detect_pieces(&contents)?)
 }
 
+/// The `.mscz` bytes to hand webmscore: rewritten where its MuseScore-4.0
+/// engine would silently drop newer-format content (see `engine_compat`),
+/// otherwise the input unchanged. Unreadable input is passed through too —
+/// webmscore reports its own, better error for a genuinely broken file.
+pub fn adapt_score_for_engine(bytes: Vec<u8>) -> Vec<u8> {
+    match engine_compat::adapt_for_engine(&bytes) {
+        Ok(Some(adapted)) => adapted,
+        Ok(None) => bytes,
+        Err(e) => {
+            eprintln!("adapt_score_for_engine: leaving score as-is: {e}");
+            bytes
+        }
+    }
+}
+
 /// Rust never parses `.mscz`/MIDI directly — this receives already-exported
 /// data from the JS layer (webmscore's `measurePositions()` JSON and
 /// `saveMidi()` bytes) and builds the derived `Timeline`, so it can be
@@ -95,6 +112,12 @@ pub fn detect_pieces(bytes: &[u8]) -> Result<Vec<Piece>, DetectPiecesError> {
 pub struct ImportTimelineRequest {
     pub positions: Positions,
     pub midi_bytes: Vec<u8>,
+    /// The `.mscz` bytes webmscore actually loaded (the upgraded re-save, if
+    /// one happened), for `measure_layout` — lets the timeline match the
+    /// MIDI's timing exactly, see `timeline::build_timeline`. Optional: the
+    /// timeline falls back to `measurePositions()`' own times without it.
+    #[serde(default)]
+    pub score_bytes: Option<Vec<u8>>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -111,7 +134,17 @@ pub enum ImportTimelineError {
 pub fn import_timeline(
     req: ImportTimelineRequest,
 ) -> Result<ImportTimelineResponse, ImportTimelineError> {
-    let timeline = timeline::build_timeline(&req.positions, &req.midi_bytes)?;
+    // Unreadable/unparseable score bytes only cost timing precision, never
+    // the whole timeline — build_timeline falls back without them.
+    let measures = req.score_bytes.as_deref().and_then(|bytes| {
+        let contents = mscz::read_rootfile_contents(Cursor::new(bytes))
+            .map_err(|e| eprintln!("import_timeline: could not read score XML: {e}"))
+            .ok()?;
+        measure_layout::parse_measure_layout(&contents)
+            .map_err(|e| eprintln!("import_timeline: could not parse measure layout: {e}"))
+            .ok()
+    });
+    let timeline = timeline::build_timeline(&req.positions, &req.midi_bytes, measures.as_deref())?;
     Ok(ImportTimelineResponse { timeline })
 }
 

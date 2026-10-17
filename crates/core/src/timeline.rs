@@ -3,6 +3,8 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use crate::measure_layout::MeasureInfo;
+
 /// A bounding box in SVG page-pixel space, matching webmscore's
 /// `PositionElement` shape ({x, y, sx, sy}).
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -74,7 +76,8 @@ pub enum TimelineError {
 }
 
 /// Builds the flattened playback timeline from webmscore's `measurePositions()`
-/// output plus the raw MIDI bytes from `saveMidi(true, false)`.
+/// output plus the raw MIDI bytes from `saveMidi(true, false)`, and (when
+/// available) the per-measure layout read from the score's own XML.
 ///
 /// `positions.events[]` already IS the repeats-unrolled sequence — confirmed
 /// empirically against real scores containing inline repeats and a D.C./D.S.
@@ -83,17 +86,33 @@ pub enum TimelineError {
 /// `elements.len()` (the printed/non-unrolled measure count) whenever the
 /// piece has any repeat structure, while matching 1:1 when it doesn't. This
 /// means measure-boundary/repeat-unroll logic does NOT need to be
-/// reimplemented against MIDI tick positions — `positions` alone gives
-/// `measure_index -> source_elid -> time_ms`, each `source_elid` looked up
-/// against `elements[]` for its page/bbox.
+/// reimplemented — `positions` alone gives `measure_index -> source_elid`,
+/// each `source_elid` looked up against `elements[]` for its page/bbox.
 ///
-/// MIDI is parsed here only for the tempo_map (position data carries no
-/// tempo information). Redundant consecutive-identical tempo events (seen in
-/// practice — one real-world score re-asserted the same tempo 7 times at
-/// regular intervals) are deduped to keep the map small.
-pub fn build_timeline(positions: &Positions, midi_bytes: &[u8]) -> Result<Timeline, TimelineError> {
+/// Each event's `time_ms`, though, is taken from the MIDI whenever `measures`
+/// is given: walking the unrolled sequence while summing each measure's
+/// length (plus any section-break pause, which MuseScore's MIDI export
+/// inserts as extra ticks) gives every measure's MIDI tick, converted to ms
+/// with the MIDI's own tempo map. That keeps seeking/the cursor in lockstep
+/// with what the audio actually plays — `measurePositions()`' own `position`
+/// can disagree with the MIDI after a D.S./D.C. (see `measure_layout`'s
+/// module docs). Falls back to `measurePositions()`' times if the layout
+/// doesn't line up with `positions` (measure count mismatch, or running past
+/// the end of the MIDI).
+///
+/// The tempo_map output deduplicates redundant consecutive-identical tempo
+/// events (seen in practice — one real-world score re-asserted the same tempo
+/// 7 times at regular intervals) to keep it small.
+pub fn build_timeline(
+    positions: &Positions,
+    midi_bytes: &[u8],
+    measures: Option<&[MeasureInfo]>,
+) -> Result<Timeline, TimelineError> {
     let elements_by_id: HashMap<u32, &PositionElement> =
         positions.elements.iter().map(|el| (el.id, el)).collect();
+
+    let clock = MidiClock::parse(midi_bytes)?;
+    let midi_times = measures.and_then(|m| midi_measure_times(positions, m, &clock));
 
     let mut events = Vec::with_capacity(positions.events.len());
     for (index, ev) in positions.events.iter().enumerate() {
@@ -103,7 +122,7 @@ pub fn build_timeline(positions: &Positions, midi_bytes: &[u8]) -> Result<Timeli
         events.push(TimelineEvent {
             measure_index: index as u32,
             source_elid: ev.elid,
-            time_ms: ev.position,
+            time_ms: midi_times.as_ref().map_or(ev.position, |t| t[index]),
             page: el.page,
             bbox: Rect {
                 x: el.x,
@@ -115,7 +134,7 @@ pub fn build_timeline(positions: &Positions, midi_bytes: &[u8]) -> Result<Timeli
     }
 
     let duration_ms = events.last().map(|e| e.time_ms).unwrap_or(0.0);
-    let tempo_map = extract_tempo_map(midi_bytes)?;
+    let tempo_map = clock.tempo_map_ms();
 
     Ok(Timeline {
         events,
@@ -124,52 +143,118 @@ pub fn build_timeline(positions: &Positions, midi_bytes: &[u8]) -> Result<Timeli
     })
 }
 
-fn extract_tempo_map(midi_bytes: &[u8]) -> Result<Vec<(f64, f64)>, TimelineError> {
-    let smf = midly::Smf::parse(midi_bytes)?;
-    let ticks_per_beat: f64 = match smf.header.timing {
-        midly::Timing::Metrical(tpb) => u16::from(tpb) as f64,
-        // Timecode-based timing (SMPTE) doesn't carry tempo meta-events the
-        // same way; none of webmscore's exports use it, but fall back to a
-        // sane default rather than panicking if one ever does.
-        midly::Timing::Timecode(fps, ticks_per_frame) => fps.as_f32() as f64 * ticks_per_frame as f64,
-    };
+/// Each unrolled measure's start time in the MIDI's own timeline, or `None`
+/// if `measures` can't be trusted to describe this score (see `build_timeline`).
+fn midi_measure_times(positions: &Positions, measures: &[MeasureInfo], clock: &MidiClock) -> Option<Vec<f64>> {
+    if measures.len() != positions.elements.len() {
+        return None;
+    }
+    let mut tick = 0.0_f64;
+    let mut times = Vec::with_capacity(positions.events.len());
+    for ev in &positions.events {
+        if tick > clock.end_tick {
+            return None;
+        }
+        times.push(clock.tick_to_ms(tick));
+        let measure = measures.get(ev.elid as usize)?;
+        tick += measure.whole_notes * 4.0 * clock.ticks_per_beat;
+        // MuseScore's MIDI export only inserts the pause when the section
+        // break actually falls inside the repeat segment being played; that
+        // always comes with a tempo event exactly at the pause's start tick
+        // (the pause is encoded as extra ticks at its own tempo).
+        if measure.pause_secs > 0.0 && clock.has_tempo_at(tick) {
+            tick += (measure.pause_secs * clock.qpm_at(tick) * clock.ticks_per_beat / 60.0).round();
+        }
+    }
+    Some(times)
+}
 
-    // setTempo events carry an absolute µs-per-beat value but only a
-    // relative (per-track) delta tick — accumulate to get an absolute tick
-    // position, then convert using whatever tempo was in effect up to that
-    // point.
-    let mut breakpoints: Vec<(u64, f64)> = Vec::new(); // (abs_tick, qpm)
-    for track in &smf.tracks {
-        let mut abs_tick: u64 = 0;
-        for event in track {
-            abs_tick += u32::from(event.delta) as u64;
-            if let midly::TrackEventKind::Meta(midly::MetaMessage::Tempo(microsperbeat)) = event.kind {
-                let qpm = 60_000_000.0 / u32::from(microsperbeat) as f64;
-                breakpoints.push((abs_tick, qpm));
+/// A MIDI file's tick->ms mapping, from its tempo meta-events.
+struct MidiClock {
+    ticks_per_beat: f64,
+    /// (abs_tick, qpm), sorted by tick, NOT deduplicated (a repeated tempo
+    /// event still marks a point MuseScore's export cared about, see
+    /// `midi_measure_times`).
+    breakpoints: Vec<(u64, f64)>,
+    end_tick: f64,
+}
+
+const DEFAULT_QPM: f64 = 120.0;
+
+impl MidiClock {
+    fn parse(midi_bytes: &[u8]) -> Result<Self, TimelineError> {
+        let smf = midly::Smf::parse(midi_bytes)?;
+        let ticks_per_beat: f64 = match smf.header.timing {
+            midly::Timing::Metrical(tpb) => u16::from(tpb) as f64,
+            // Timecode-based timing (SMPTE) doesn't carry tempo meta-events the
+            // same way; none of webmscore's exports use it, but fall back to a
+            // sane default rather than panicking if one ever does.
+            midly::Timing::Timecode(fps, ticks_per_frame) => fps.as_f32() as f64 * ticks_per_frame as f64,
+        };
+
+        // setTempo events carry an absolute µs-per-beat value but only a
+        // relative (per-track) delta tick — accumulate to get an absolute
+        // tick position.
+        let mut breakpoints: Vec<(u64, f64)> = Vec::new();
+        let mut end_tick: u64 = 0;
+        for track in &smf.tracks {
+            let mut abs_tick: u64 = 0;
+            for event in track {
+                abs_tick += u32::from(event.delta) as u64;
+                if let midly::TrackEventKind::Meta(midly::MetaMessage::Tempo(microsperbeat)) = event.kind {
+                    breakpoints.push((abs_tick, 60_000_000.0 / u32::from(microsperbeat) as f64));
+                }
             }
+            end_tick = end_tick.max(abs_tick);
         }
-    }
-    breakpoints.sort_by_key(|(tick, _)| *tick);
+        breakpoints.sort_by_key(|(tick, _)| *tick);
 
-    // Convert tick positions to ms using the tempo in effect at each point,
-    // and drop consecutive entries with an identical qpm (redundant
-    // re-assertions of the same tempo, not real changes).
-    let mut tempo_map = Vec::new();
-    let mut last_qpm: Option<f64> = None;
-    let mut last_tick: u64 = 0;
-    let mut time_ms = 0.0;
-    for (abs_tick, qpm) in breakpoints {
-        if let Some(prev_qpm) = last_qpm {
-            let delta_ticks = (abs_tick - last_tick) as f64;
-            let ms_per_tick = 60_000.0 / (prev_qpm * ticks_per_beat);
-            time_ms += delta_ticks * ms_per_tick;
-        }
-        if last_qpm != Some(qpm) {
-            tempo_map.push((time_ms, qpm));
-        }
-        last_qpm = Some(qpm);
-        last_tick = abs_tick;
+        Ok(Self {
+            ticks_per_beat,
+            breakpoints,
+            end_tick: end_tick as f64,
+        })
     }
 
-    Ok(tempo_map)
+    fn tick_to_ms(&self, tick: f64) -> f64 {
+        let mut time_ms = 0.0;
+        let mut last_tick = 0.0;
+        let mut qpm = DEFAULT_QPM;
+        for &(bp_tick, bp_qpm) in &self.breakpoints {
+            let bp_tick = bp_tick as f64;
+            if bp_tick > tick {
+                break;
+            }
+            time_ms += (bp_tick - last_tick) * 60_000.0 / (qpm * self.ticks_per_beat);
+            last_tick = bp_tick;
+            qpm = bp_qpm;
+        }
+        time_ms + (tick - last_tick) * 60_000.0 / (qpm * self.ticks_per_beat)
+    }
+
+    fn qpm_at(&self, tick: f64) -> f64 {
+        self.breakpoints
+            .iter()
+            .take_while(|(bp_tick, _)| *bp_tick as f64 <= tick)
+            .last()
+            .map_or(DEFAULT_QPM, |(_, qpm)| *qpm)
+    }
+
+    fn has_tempo_at(&self, tick: f64) -> bool {
+        self.breakpoints.iter().any(|(bp_tick, _)| *bp_tick as f64 == tick)
+    }
+
+    /// (time_ms, qpm) breakpoints, consecutive identical tempos dropped
+    /// (redundant re-assertions of the same tempo, not real changes).
+    fn tempo_map_ms(&self) -> Vec<(f64, f64)> {
+        let mut tempo_map = Vec::new();
+        let mut last_qpm: Option<f64> = None;
+        for &(tick, qpm) in &self.breakpoints {
+            if last_qpm != Some(qpm) {
+                tempo_map.push((self.tick_to_ms(tick as f64), qpm));
+            }
+            last_qpm = Some(qpm);
+        }
+        tempo_map
+    }
 }

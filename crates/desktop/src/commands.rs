@@ -27,14 +27,23 @@ pub fn open_file(bytes: Vec<u8>, original_filename: String) -> Result<OpenFileRe
     .map_err(|e| e.to_string())
 }
 
+/// Returned as a raw binary IPC response (an `ArrayBuffer` on the JS side)
+/// rather than a JSON number array — a whole score is hundreds of KB.
+#[tauri::command]
+pub fn adapt_score_for_engine(bytes: Vec<u8>) -> tauri::ipc::Response {
+    tauri::ipc::Response::new(api::adapt_score_for_engine(bytes))
+}
+
 #[tauri::command]
 pub fn import_timeline(
     positions: Positions,
     midi_bytes: Vec<u8>,
+    score_bytes: Option<Vec<u8>>,
 ) -> Result<ImportTimelineResponse, String> {
     api::import_timeline(api::ImportTimelineRequest {
         positions,
         midi_bytes,
+        score_bytes,
     })
     .map_err(|e| e.to_string())
 }
@@ -243,3 +252,4 @@ pub fn pdf_tempo_map(points: Vec<CalibrationPoint>, numerator: u8) -> Vec<TempoM
 pub fn detect_barlines(png_bytes: Vec<u8>) -> Result<Vec<StaffSystem>, String> {
     api::detect_barlines(&png_bytes).map_err(|e| e.to_string())
 }
+

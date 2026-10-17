@@ -47,7 +47,7 @@ pub fn read_rootfile_contents<R: Read + Seek>(reader: R) -> Result<String, MsczE
     Ok(contents)
 }
 
-fn find_rootfile_path<R: Read + Seek>(archive: &mut ZipArchive<R>) -> Result<String, MsczError> {
+pub(crate) fn find_rootfile_path<R: Read + Seek>(archive: &mut ZipArchive<R>) -> Result<String, MsczError> {
     let mut container_xml = String::new();
     archive
         .by_name("META-INF/container.xml")?

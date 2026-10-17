@@ -16,7 +16,7 @@ fn darkside_timeline_unrolls_repeats_and_dedupes_tempo() {
     let positions = load_positions("darkside_measures.json");
     let midi = load_midi("darkside.mid");
 
-    let timeline = build_timeline(&positions, &midi).unwrap();
+    let timeline = build_timeline(&positions, &midi, None).unwrap();
 
     // Dark Side Of Fate has 46 printed measures but, per real repeat/D.C.
     // structure confirmed during Phase 4 research, performs 112 measure
@@ -62,7 +62,7 @@ fn youkai_timeline_matches_1to1_when_no_repeats() {
     let positions = load_positions("youkai_measures.json");
     let midi = load_midi("youkai.mid");
 
-    let timeline = build_timeline(&positions, &midi).unwrap();
+    let timeline = build_timeline(&positions, &midi, None).unwrap();
 
     // Youkai's .mscx has no repeat barlines, so events should match elements 1:1.
     assert_eq!(positions.elements.len(), 83);
@@ -97,6 +97,52 @@ fn unknown_elid_in_events_is_rejected() {
     };
     let midi = load_midi("youkai.mid");
 
-    let result = build_timeline(&positions, &midi);
+    let result = build_timeline(&positions, &midi, None);
     assert!(result.is_err());
+}
+
+/// Per-measure layout straight from a real score's XML, or `None` (test
+/// skipped) when the sample file isn't present in this environment.
+fn load_layout(path: &str) -> Option<Vec<mp_core::measure_layout::MeasureInfo>> {
+    let file = fs::File::open(path).ok()?;
+    let contents = mp_core::mscz::read_rootfile_contents(file).unwrap();
+    Some(mp_core::measure_layout::parse_measure_layout(&contents).unwrap())
+}
+
+#[test]
+fn midi_derived_times_match_positions_when_the_midi_has_no_tempo_drift() {
+    let Some(layout) = load_layout("/home/hawa/Documents/Musescore/Dark Side Of Fate.mscz") else {
+        eprintln!("skipping: Dark Side Of Fate.mscz not present in this environment");
+        return;
+    };
+    let positions = load_positions("darkside_measures.json");
+    let timeline = build_timeline(&positions, &load_midi("darkside.mid"), Some(&layout)).unwrap();
+    for (event, pos) in timeline.events.iter().zip(&positions.events) {
+        assert!((event.time_ms - pos.position).abs() < 2.0, "{} vs {}", event.time_ms, pos.position);
+    }
+}
+
+/// EoSD's 5th piece has a D.S. back into a 152bpm passage whose tempo
+/// marking sits before the segno; webmscore's MIDI replays it at the
+/// preceding 132bpm, so the audio runs 12.44s behind `measurePositions()`
+/// from there on. The timeline must follow the audio, not `measurePositions()`.
+#[test]
+fn timeline_follows_midi_after_a_ds_jump_with_tempo_drift() {
+    let Some(layout) = load_layout("/home/hawa/Documents/Musescore/EoSD.mscz") else {
+        eprintln!("skipping: EoSD.mscz not present in this environment");
+        return;
+    };
+    let positions = load_positions("eosd_measures.json");
+    let timeline = build_timeline(&positions, &load_midi("eosd.mid"), Some(&layout)).unwrap();
+
+    // Before the drift: identical to measurePositions() (piece 3's start,
+    // including the section pauses between pieces 1-3).
+    assert_eq!(timeline.events[139].source_elid, 72);
+    assert!((timeline.events[139].time_ms - 254_333.0).abs() < 2.0);
+
+    // Piece 6's first measure (elid 185): measurePositions() says 708505ms,
+    // but its first MIDI note sounds at 720945ms.
+    assert_eq!(timeline.events[414].source_elid, 185);
+    assert!((positions.events[414].position - 708_505.0).abs() < 1.0);
+    assert!((timeline.events[414].time_ms - 720_945.0).abs() < 2.0, "got {}", timeline.events[414].time_ms);
 }
