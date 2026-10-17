@@ -4,7 +4,7 @@ use std::sync::Arc;
 use rustysynth::{SoundFont, Synthesizer, SynthesizerSettings};
 use thiserror::Error;
 
-use super::metronome::{self, ClickEvent};
+use super::metronome::{self, ClickEvent, ClickSample};
 use super::midi_events::{self, MidiEventsError, ScheduledEvent, TempoMapEntry};
 
 #[derive(Debug, Error)]
@@ -58,6 +58,8 @@ pub struct Player {
     metronome_enabled: bool,
     clicks: Vec<ClickEvent>,
     next_click_index: usize,
+    click_sample: ClickSample,
+    accent_sample: ClickSample,
 }
 
 impl Player {
@@ -65,6 +67,7 @@ impl Player {
         let sound_font = Arc::new(SoundFont::new(&mut Cursor::new(soundfont_bytes))?);
         let settings = SynthesizerSettings::new(sample_rate);
         let synthesizer = Synthesizer::new(&sound_font, &settings)?;
+        let (click_sample, accent_sample) = metronome::load_click_samples(sample_rate);
         Ok(Self {
             synthesizer,
             sample_rate,
@@ -77,6 +80,8 @@ impl Player {
             metronome_enabled: false,
             clicks: Vec::new(),
             next_click_index: 0,
+            click_sample,
+            accent_sample,
         })
     }
 
@@ -299,12 +304,11 @@ impl Player {
         self.next_click_index = 0;
     }
 
-    /// Mixes short generated click blips directly into the output buffers at
+    /// Mixes the recorded click samples directly into the output buffers at
     /// each due `ClickEvent`'s time — deliberately not routed through the
     /// soundfont as an instrument patch, so it works
     /// identically regardless of which soundfont/instrument patches are
-    /// loaded. A click is a short exponentially-decaying sine burst: higher
-    /// pitch (1600Hz) on accented (beat 1) clicks, lower (1000Hz) otherwise.
+    /// loaded. Beat 1 uses the accent sample, other beats the plain click.
     fn mix_clicks(&mut self, left: &mut [f32], right: &mut [f32], chunk_len: usize) {
         if !self.metronome_enabled || self.clicks.is_empty() {
             return;
@@ -330,17 +334,12 @@ impl Player {
     }
 
     fn render_click(&self, left: &mut [f32], right: &mut [f32], start_sample: usize, accent: bool) {
-        const CLICK_DURATION_SAMPLES: usize = 400;
-        let freq = if accent { 1600.0 } else { 1000.0 };
-        let amplitude = if accent { 0.5 } else { 0.35 };
-        for i in 0..CLICK_DURATION_SAMPLES {
+        let sample = if accent { &self.accent_sample } else { &self.click_sample };
+        for (i, &value) in sample.samples.iter().enumerate() {
             let sample_index = start_sample + i;
             if sample_index >= left.len() {
                 break;
             }
-            let t = i as f32 / self.sample_rate as f32;
-            let decay = (-t * 60.0).exp();
-            let value = amplitude * decay * (2.0 * std::f32::consts::PI * freq * t).sin();
             left[sample_index] += value;
             right[sample_index] += value;
         }

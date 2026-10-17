@@ -42,3 +42,46 @@ pub fn generate_clicks(tempo_map: &[TempoMapEntry], duration_ms: f64) -> Vec<Cli
 
     clicks
 }
+
+const CLICK_WAV: &[u8] = include_bytes!("../../assets/metronome_click.wav");
+const ACCENT_WAV: &[u8] = include_bytes!("../../assets/metronome_accent.wav");
+
+/// A recorded click (mono, 16-bit, 24kHz — see `scripts/extract_metronome.py`),
+/// decoded to f32 and resampled to the output rate once at synth construction
+/// (`rustysynth` doesn't resample, and neither does the click path).
+#[derive(Debug, Clone)]
+pub struct ClickSample {
+    pub samples: Vec<f32>,
+}
+
+impl ClickSample {
+    fn from_wav(wav: &[u8], out_rate: i32) -> Self {
+        // Canonical 44-byte header, written by the extraction script.
+        let src_rate = u32::from_le_bytes(wav[24..28].try_into().unwrap()) as f64;
+        let pcm: Vec<f32> = wav[44..]
+            .chunks_exact(2)
+            .map(|b| i16::from_le_bytes([b[0], b[1]]) as f32 / 32768.0)
+            .collect();
+        let ratio = src_rate / out_rate as f64;
+        let out_len = (pcm.len() as f64 / ratio) as usize;
+        let samples = (0..out_len)
+            .map(|i| {
+                let pos = i as f64 * ratio;
+                let idx = pos as usize;
+                let frac = (pos - idx as f64) as f32;
+                let a = pcm[idx];
+                let b = *pcm.get(idx + 1).unwrap_or(&0.0);
+                a + (b - a) * frac
+            })
+            .collect();
+        Self { samples }
+    }
+}
+
+/// The (normal, accent) click samples resampled to `out_rate`.
+pub fn load_click_samples(out_rate: i32) -> (ClickSample, ClickSample) {
+    (
+        ClickSample::from_wav(CLICK_WAV, out_rate),
+        ClickSample::from_wav(ACCENT_WAV, out_rate),
+    )
+}
