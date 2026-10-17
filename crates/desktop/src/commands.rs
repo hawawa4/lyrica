@@ -1,7 +1,7 @@
 use mp_core::api::{self, ImportTimelineResponse, OpenFileRequest, OpenFileResponse, StaffSystem};
 use mp_core::audio::midi_events::TempoMapEntry;
 use mp_core::library::{LibraryEntry, LibrarySettings, PinnedFile};
-use mp_core::markers::Marker;
+use mp_core::markers::{Marker, MarkerKind, MarkerPosition};
 use mp_core::pdf_calibration::CalibrationPoint;
 use mp_core::pieces::Piece;
 use mp_core::rating::KnowledgeLevel;
@@ -119,11 +119,24 @@ pub fn list_markers(app: AppHandle, file_hash: String) -> Result<Vec<Marker>, St
 pub fn add_marker(
     app: AppHandle,
     file_hash: String,
-    measure_index: u32,
+    kind: MarkerKind,
+    position: MarkerPosition,
     text: String,
 ) -> Result<Vec<Marker>, String> {
     let base_dir = markers_base_dir(&app)?;
-    api::add_marker(&base_dir, &file_hash, measure_index, text).map_err(|e| e.to_string())
+    api::add_marker(&base_dir, &file_hash, kind, position, text).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn update_marker(
+    app: AppHandle,
+    file_hash: String,
+    marker_id: String,
+    text: String,
+    position: Option<MarkerPosition>,
+) -> Result<Vec<Marker>, String> {
+    let base_dir = markers_base_dir(&app)?;
+    api::update_marker(&base_dir, &file_hash, &marker_id, text, position).map_err(|e| e.to_string())
 }
 
 #[tauri::command]

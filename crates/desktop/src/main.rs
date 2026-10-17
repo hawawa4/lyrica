@@ -72,6 +72,7 @@ fn main() {
             commands::playback_position,
             commands::list_markers,
             commands::add_marker,
+            commands::update_marker,
             commands::delete_marker,
             commands::detect_pieces,
             commands::get_knowledge_level,

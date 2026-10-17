@@ -111,7 +111,18 @@ mod tests {
         assert_eq!(get_knowledge_level(tmp.path(), "hash-b").unwrap(), Some(4));
 
         // A marker added for hash-a must not be clobbered by, or clobber, its rating.
-        crate::markers::add_marker(tmp.path(), "hash-a", 0, "note".to_string()).unwrap();
+        crate::markers::add_marker(
+            tmp.path(),
+            "hash-a",
+            crate::markers::MarkerKind::Text,
+            crate::markers::MarkerPosition {
+                page: 0,
+                x: 0.5,
+                y: 0.5,
+            },
+            "note".to_string(),
+        )
+        .unwrap();
         assert_eq!(get_knowledge_level(tmp.path(), "hash-a").unwrap(), Some(2));
         assert_eq!(
             crate::markers::list_markers(tmp.path(), "hash-a")

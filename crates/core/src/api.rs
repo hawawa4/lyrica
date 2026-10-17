@@ -11,7 +11,7 @@ use thiserror::Error;
 use crate::audio::midi_events::TempoMapEntry;
 use crate::engine_compat;
 use crate::library::{self, LibraryEntry, LibraryError, LibrarySettings, PinnedFile};
-use crate::markers::{self, Marker};
+use crate::markers::{self, Marker, MarkerError, MarkerKind, MarkerPosition};
 use crate::measure_layout;
 use crate::mscz::{self, MsczError};
 use crate::pdf_calibration::{self, CalibrationPoint};
@@ -151,24 +151,35 @@ pub fn import_timeline(
 /// persisted under `base_dir` (the shell's app-data directory — desktop
 /// resolves this via Tauri's `app_data_dir()`; `mp-core` itself has no
 /// knowledge of Tauri, see `sidecar`'s module docs).
-pub fn list_markers(base_dir: &Path, file_hash: &str) -> Result<Vec<Marker>, SidecarError> {
+pub fn list_markers(base_dir: &Path, file_hash: &str) -> Result<Vec<Marker>, MarkerError> {
     markers::list_markers(base_dir, file_hash)
 }
 
 pub fn add_marker(
     base_dir: &Path,
     file_hash: &str,
-    measure_index: u32,
+    kind: MarkerKind,
+    position: MarkerPosition,
     text: String,
-) -> Result<Vec<Marker>, SidecarError> {
-    markers::add_marker(base_dir, file_hash, measure_index, text)
+) -> Result<Vec<Marker>, MarkerError> {
+    markers::add_marker(base_dir, file_hash, kind, position, text)
+}
+
+pub fn update_marker(
+    base_dir: &Path,
+    file_hash: &str,
+    marker_id: &str,
+    text: String,
+    position: Option<MarkerPosition>,
+) -> Result<Vec<Marker>, MarkerError> {
+    markers::update_marker(base_dir, file_hash, marker_id, text, position)
 }
 
 pub fn delete_marker(
     base_dir: &Path,
     file_hash: &str,
     marker_id: &str,
-) -> Result<Vec<Marker>, SidecarError> {
+) -> Result<Vec<Marker>, MarkerError> {
     markers::delete_marker(base_dir, file_hash, marker_id)
 }
 
