@@ -30,6 +30,8 @@ export class LibraryView {
   private readonly rootFolderLabel: HTMLSpanElement
   private readonly chooseFolderBtn: HTMLButtonElement
   private readonly searchInput: HTMLInputElement
+  private readonly loadingEl: HTMLDivElement
+  private readonly loadingTextEl: HTMLSpanElement
   private readonly pinnedPanel: FileListPanel<PinnedFile>
   private readonly recentPanel: FileListPanel<RecentFile>
   private readonly folderTree: FolderTree
@@ -55,13 +57,17 @@ export class LibraryView {
         <span class="app-title">MusePractice</span>
         <div class="library-folder-row">
           <button id="choose-folder-btn" class="primary">Choose folder&hellip;</button>
-          <span class="library-folder-path" id="root-folder-label">No folder selected</span>
+          <span class="library-folder-path" id="root-folder-label">Loading&hellip;</span>
         </div>
         <div class="library-search-row">
           <input id="library-search" type="search" placeholder="Search your library&hellip;" />
         </div>
       </div>
       <div class="library-lists">
+        <div id="library-loading" class="library-loading" style="display:none;" role="status" aria-live="polite">
+          <div class="spinner spinner-sm"></div>
+          <span class="library-loading-text"></span>
+        </div>
         <div id="level-filter-bar"></div>
         <div id="pinned-list"></div>
         <div id="recent-list"></div>
@@ -73,6 +79,8 @@ export class LibraryView {
     this.rootFolderLabel = this.root.querySelector('#root-folder-label')!
     this.chooseFolderBtn = this.root.querySelector('#choose-folder-btn')!
     this.searchInput = this.root.querySelector('#library-search')!
+    this.loadingEl = this.root.querySelector('#library-loading')!
+    this.loadingTextEl = this.root.querySelector('.library-loading-text')!
 
     this.pinnedPanel = new FileListPanel<PinnedFile>(this.root.querySelector('#pinned-list')!, 'Pinned')
     this.recentPanel = new FileListPanel<RecentFile>(this.root.querySelector('#recent-list')!, 'Recent files')
@@ -107,8 +115,12 @@ export class LibraryView {
     })
 
     if (isTauri()) {
+      // Up from the very first frame: the remembered folder isn't known until
+      // settings load, and scanning it can take a while after that.
+      this.setLoading('Loading your library…')
       this.chooseFolderBtn.addEventListener('click', () => void this.chooseFolder())
     } else {
+      this.rootFolderLabel.textContent = 'No folder selected'
       this.chooseFolderBtn.disabled = true
       this.chooseFolderBtn.title = 'Library browsing is desktop-only for now'
     }
@@ -240,20 +252,36 @@ export class LibraryView {
     if (!isTauri() || !this.rootFolder) {
       this.scannedRootFolder = null
       this.folderTree.setData([], '')
+      this.setLoading(null)
       return
     }
     if (!force && this.scannedRootFolder === this.rootFolder) {
+      this.setLoading(null)
       return
     }
+    // A big folder takes a while to walk — say so, naming the remembered
+    // folder, so on launch it's clear the app already knows where the
+    // library is and nothing needs choosing again.
+    const scanning = this.rootFolder
+    this.setLoading(`Loading your library from ${scanning}…`)
     try {
-      const entries = await scanLibrary(this.rootFolder)
-      this.scannedRootFolder = this.rootFolder
-      this.folderTree.setData(entries, this.rootFolder)
+      const entries = await scanLibrary(scanning)
+      if (scanning !== this.rootFolder) return // folder changed mid-scan; that scan owns the UI now
+      this.scannedRootFolder = scanning
+      this.folderTree.setData(entries, scanning)
     } catch (e) {
       console.error('Failed to scan library folder:', e)
+      if (scanning !== this.rootFolder) return
       this.scannedRootFolder = null
-      this.folderTree.setData([], this.rootFolder)
+      this.folderTree.setData([], scanning)
     }
+    this.setLoading(null)
+  }
+
+  /** Shows the spinner banner with `message`, or hides it for `null`. */
+  private setLoading(message: string | null): void {
+    this.loadingEl.style.display = message ? 'flex' : 'none'
+    this.loadingTextEl.textContent = message ?? ''
   }
 
   /** Applies a newly-loaded `LibrarySettings` to this view's state and label — shared by `chooseFolder` and `refresh` so the two don't duplicate the same assignment. */
