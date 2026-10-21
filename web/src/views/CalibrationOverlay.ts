@@ -61,6 +61,7 @@ export class CalibrationOverlay {
     this.dotsLayer.style.position = 'absolute'
     this.dotsLayer.style.inset = '0'
     this.dotsLayer.style.pointerEvents = 'none'
+    this.dotsLayer.className = 'measure-markers-layer'
 
     this.dragRectEl = document.createElement('div')
     this.dragRectEl.style.position = 'absolute'
@@ -68,6 +69,7 @@ export class CalibrationOverlay {
     this.dragRectEl.style.background = 'var(--selection)'
     this.dragRectEl.style.pointerEvents = 'none'
     this.dragRectEl.style.display = 'none'
+    this.dragRectEl.classList.add('measure-markers-layer')
 
     this.stage.appendChild(this.dotsLayer)
     this.stage.appendChild(this.dragRectEl)
@@ -254,6 +256,7 @@ export class CalibrationOverlay {
 
   private handleMouseDown = (e: MouseEvent): void => {
     if (e.button !== 0) return
+    if (this.stage.closest('.hide-measure-markers')) return // markers toggled off: the page is view-only
     const rect = this.stage.getBoundingClientRect()
     this.dragStart = { x: e.clientX - rect.left, y: e.clientY - rect.top }
     this.dragRectEl.style.display = 'block'

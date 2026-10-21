@@ -89,14 +89,49 @@
   min-width: 0;
 }
 
-.pdf-toolbar {
-  display: none;
-  align-items: center;
-  gap: 10px;
-  padding: 6px 12px;
-  background: var(--bg-elevated);
-  border-bottom: 1px solid var(--border);
+/* Small floating controls over the top-left of the PDF page area (measure-marker eye toggle, rescan). */
+.pdf-overlay-controls {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 20;
+  gap: 4px;
+}
+
+.pdf-overlay-controls .icon-btn {
+  padding: 5px 7px;
+  box-shadow: var(--shadow);
+}
+
+.pdf-overlay-controls .icon-btn.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-text);
+}
+
+.hide-measure-markers .measure-markers-layer {
+  display: none !important;
+}
+
+.marker-tools {
   flex-wrap: wrap;
+}
+
+.marker-tools-header {
+  border: none;
+  background: none;
+  padding: 2px 4px;
+  font-weight: 600;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+.marker-tools-body {
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .status-bar {
@@ -482,11 +517,24 @@
   gap: 4px;
 }
 
+
 .zoom-indicator {
-  min-width: 42px;
+  width: 54px;
+  padding: 3px 4px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
   text-align: center;
   font-size: 12px;
   color: var(--text-muted);
+}
+
+.zoom-indicator:hover,
+.zoom-indicator:focus {
+  border-color: var(--border);
+  background: var(--bg-page);
+  color: var(--text);
+  outline: none;
 }
 
 .goto-measure-input {

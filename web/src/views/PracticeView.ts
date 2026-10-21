@@ -197,7 +197,7 @@ export class PracticeView {
   private readonly rescanMeasuresBtn: HTMLButtonElement
   private readonly zoomOutBtn: HTMLButtonElement
   private readonly zoomInBtn: HTMLButtonElement
-  private readonly zoomIndicatorEl: HTMLSpanElement
+  private readonly zoomIndicatorEl: HTMLInputElement
   private readonly fitWidthBtn: HTMLButtonElement
   private readonly fitHeightBtn: HTMLButtonElement
   private readonly zoomResetBtn: HTMLButtonElement
@@ -267,7 +267,7 @@ export class PracticeView {
         </div>
         <div id="zoom-group" class="toolbar-group zoom-control" style="display:none;">
           <button id="zoom-out" class="icon-btn" title="Zoom out">&minus;</button>
-          <span id="zoom-indicator" class="zoom-indicator">100%</span>
+          <input id="zoom-indicator" class="zoom-indicator" type="text" inputmode="numeric" value="100%" title="Zoom level — click and type a percentage, then press Enter" aria-label="Zoom percentage" />
           <button id="zoom-in" class="icon-btn" title="Zoom in">+</button>
           <button id="fit-width-btn" title="Fit to width">Fit width</button>
           <button id="fit-height-btn" title="Fit to height">Fit height</button>
@@ -275,8 +275,11 @@ export class PracticeView {
           <button id="book-mode-btn" class="book-mode-btn" title="Book mode: show two pages side by side">&#128214; Book mode</button>
         </div>
         <div id="marker-tools" class="toolbar-group marker-tools" style="display:none;">
-          <button id="text-tool-btn" class="marker-tool-btn" title="Text marker (T): click a measure to write a note above it">&#9998; Text</button>
-          <button id="fingering-tool-btn" class="marker-tool-btn" title="Fingering (G): click where the numbers go, type digits 1-5">Fingering</button>
+          <button id="marker-tools-toggle" class="marker-tools-header" aria-expanded="true" title="Collapse/expand the markers panel"><span class="collapsible-disclosure">&#9660;</span> Markers</button>
+          <div id="marker-tools-body" class="marker-tools-body">
+            <button id="text-tool-btn" class="marker-tool-btn" title="Text marker (T): click a measure to write a note above it">&#9998; Text</button>
+            <button id="fingering-tool-btn" class="marker-tool-btn" title="Fingering (G): click where the numbers go, type digits 1-5">Fingering</button>
+          </div>
         </div>
         <div class="toolbar-spacer"></div>
         <div class="toolbar-group">
@@ -289,9 +292,6 @@ export class PracticeView {
       </div>
 
       <div class="main-area">
-        <div id="pdf-controls" class="pdf-toolbar">
-          <button id="rescan-measures-btn">Rescan measures</button>
-        </div>
         <div class="status-bar">
           <span id="status"></span>
           <span id="selection-status"></span>
@@ -300,6 +300,12 @@ export class PracticeView {
           <span id="rating-mount" class="rating-mount" style="display:none;"></span>
         </div>
         <div class="page-area-wrap">
+          <div id="pdf-controls" class="pdf-overlay-controls" style="display:none;">
+            <button id="toggle-measure-markers-btn" class="icon-btn" aria-pressed="true" title="Show/hide measure markers"></button>
+            <button id="rescan-measures-btn" class="icon-btn" title="Rescan measures (clears and re-detects all measure markers)">
+              <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/></svg>
+            </button>
+          </div>
           <div id="page" class="page-area">
             <div class="empty-state" id="empty-state">
               <div>No file open</div>
@@ -488,6 +494,42 @@ export class PracticeView {
     })
     if (isTauri()) void setMetronomeVolume(loadMetronomeVolume())
 
+    const MARKERS_KEY = 'lyrica-measure-markers-visible'
+    const markersToggle = this.root.querySelector<HTMLButtonElement>('#toggle-measure-markers-btn')!
+    const EYE_OPEN = '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M1.5 12S5.5 5 12 5s10.5 7 10.5 7-4 7-10.5 7S1.5 12 1.5 12z"/><circle cx="12" cy="12" r="3"/></svg>'
+    const EYE_OFF = '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17.9 17.9A10.8 10.8 0 0 1 12 19C5.5 19 1.5 12 1.5 12a19 19 0 0 1 4.6-5.4M9.9 5.2A10 10 0 0 1 12 5c6.5 0 10.5 7 10.5 7a19 19 0 0 1-2.2 3.2M14.1 14.1A3 3 0 0 1 9.9 9.9M2 2l20 20"/></svg>'
+    const setMarkersVisible = (visible: boolean): void => {
+      this.pageContainerEl.classList.toggle('hide-measure-markers', !visible)
+      markersToggle.innerHTML = visible ? EYE_OPEN : EYE_OFF
+      markersToggle.setAttribute('aria-pressed', String(visible))
+      markersToggle.classList.toggle('active', visible)
+    }
+    let markersVisible = true
+    try {
+      markersVisible = localStorage.getItem(MARKERS_KEY) !== '0'
+    } catch {
+      // localStorage unavailable — default stands.
+    }
+    setMarkersVisible(markersVisible)
+    markersToggle.addEventListener('click', () => {
+      markersVisible = !markersVisible
+      setMarkersVisible(markersVisible)
+      try {
+        localStorage.setItem(MARKERS_KEY, markersVisible ? '1' : '0')
+      } catch {
+        // Best-effort persistence only.
+      }
+    })
+
+    const markerToolsToggle = this.root.querySelector<HTMLButtonElement>('#marker-tools-toggle')!
+    const markerToolsBody = this.root.querySelector<HTMLDivElement>('#marker-tools-body')!
+    markerToolsToggle.addEventListener('click', () => {
+      const collapsed = markerToolsBody.style.display !== 'none'
+      markerToolsBody.style.display = collapsed ? 'none' : ''
+      markerToolsToggle.setAttribute('aria-expanded', String(!collapsed))
+      markerToolsToggle.querySelector('.collapsible-disclosure')!.innerHTML = collapsed ? '&#9654;' : '&#9660;'
+    })
+
     this.rescanMeasuresBtn.addEventListener('click', async () => {
       const active = this.activeTab()
       if (!active || active.kind !== 'pdf') return
@@ -502,6 +544,26 @@ export class PracticeView {
         this.rescanMeasuresBtn.disabled = false
       }
     })
+
+    const commitTypedZoom = (): void => {
+      const percent = parseFloat(this.zoomIndicatorEl.value.replace('%', '').trim())
+      const active = this.activeTab()
+      if (Number.isFinite(percent) && percent > 0) this.setActiveTabZoom(percent / 100)
+      else if (active) this.setZoomIndicator(active.kind === 'mscz' ? active.pageView.getZoom() : active.zoom)
+    }
+    this.zoomIndicatorEl.addEventListener('focus', () => this.zoomIndicatorEl.select())
+    this.zoomIndicatorEl.addEventListener('keydown', (e) => {
+      e.stopPropagation() // typing digits/arrows here must not trigger page-nav or other window-level shortcuts
+      if (e.key === 'Enter') {
+        commitTypedZoom()
+        this.zoomIndicatorEl.blur()
+      } else if (e.key === 'Escape') {
+        const active = this.activeTab()
+        if (active) this.setZoomIndicator(active.kind === 'mscz' ? active.pageView.getZoom() : active.zoom)
+        this.zoomIndicatorEl.blur()
+      }
+    })
+    this.zoomIndicatorEl.addEventListener('blur', commitTypedZoom)
 
     this.zoomOutBtn.addEventListener('click', () => this.zoomActiveTab(-ZOOM_STEP))
     this.zoomInBtn.addEventListener('click', () => this.zoomActiveTab(ZOOM_STEP))
@@ -927,7 +989,7 @@ export class PracticeView {
         ? `Selected measures (elid ${tab.selection.startElid}-${tab.selection.endElid})`
         : ''
       this.loopStatusEl.textContent = tab.loopRegion ? 'Looping selected measures' : ''
-      this.zoomIndicatorEl.textContent = `${Math.round(tab.pageView.getZoom() * 100)}%`
+      this.setZoomIndicator(tab.pageView.getZoom())
       this.zoomOutBtn.disabled = tab.pageView.getZoom() <= MIN_ZOOM
       this.zoomInBtn.disabled = tab.pageView.getZoom() >= MAX_ZOOM
 
@@ -956,7 +1018,7 @@ export class PracticeView {
         : ''
       this.loopStatusEl.textContent = tab.loopRegion ? 'Looping measures' : ''
       this.calibrationStatusEl.textContent = this.measureStatusText(tab)
-      this.zoomIndicatorEl.textContent = `${Math.round(tab.zoom * 100)}%`
+      this.setZoomIndicator(tab.zoom)
       this.zoomOutBtn.disabled = tab.zoom <= PDF_MIN_ZOOM
       this.zoomInBtn.disabled = tab.zoom >= PDF_MAX_ZOOM
 
@@ -1033,9 +1095,25 @@ export class PracticeView {
     }
   }
 
+  /** Shows `zoom` (a 1.0 = 100% fraction) in the editable zoom field. */
+  private setZoomIndicator(zoom: number): void {
+    this.zoomIndicatorEl.value = `${Math.round(zoom * 100)}%`
+  }
+
+  /** Applies a typed zoom (1.0 = 100%) to the active tab, clamped to that kind's range; the field is re-synced to whatever was actually applied. */
+  private setActiveTabZoom(zoom: number): void {
+    const active = this.activeTab()
+    if (!active) return
+    if (active.kind === 'mscz') {
+      active.pageView.setZoom(zoom)
+    } else {
+      this.setPdfZoom(active, zoom)
+    }
+  }
+
   private setPdfZoom(tab: PdfTabState, zoom: number): void {
     tab.zoom = Math.min(PDF_MAX_ZOOM, Math.max(PDF_MIN_ZOOM, zoom))
-    this.zoomIndicatorEl.textContent = `${Math.round(tab.zoom * 100)}%`
+    this.setZoomIndicator(tab.zoom)
     this.zoomOutBtn.disabled = tab.zoom <= PDF_MIN_ZOOM
     this.zoomInBtn.disabled = tab.zoom >= PDF_MAX_ZOOM
     void this.showPdfPage(tab, tab.currentPage)
@@ -1246,7 +1324,7 @@ export class PracticeView {
     const onZoomChange = (zoom: number): void => {
       const tabState = getTabState()
       if (this.activeHash !== tabState.fileHash) return
-      this.zoomIndicatorEl.textContent = `${Math.round(zoom * 100)}%`
+      this.setZoomIndicator(zoom)
       this.zoomOutBtn.disabled = zoom <= MIN_ZOOM
       this.zoomInBtn.disabled = zoom >= MAX_ZOOM
     }
