@@ -12,8 +12,13 @@ GlobalWorkerOptions.workerSrc = new URL('/vendor/pdfjs/pdf.worker.mjs', window.l
 
 export type PdfDocument = PDFDocumentProxy
 
+// pdf.js 6 decodes CCITT/JBIG2 (scanned 1-bit pages), JPEG2000 and ICC colour
+// spaces through wasm modules fetched from `wasmUrl`. Without it those images
+// fail to decode and the page renders blank — vendored alongside the worker.
+const WASM_URL = new URL('/vendor/pdfjs/wasm/', window.location.origin).href
+
 export async function loadPdf(bytes: Uint8Array): Promise<PdfDocument> {
-  const task = getDocument({ data: bytes })
+  const task = getDocument({ data: bytes, wasmUrl: WASM_URL })
   return task.promise
 }
 
