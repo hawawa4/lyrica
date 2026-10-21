@@ -34,6 +34,7 @@ export class ScrollPageView {
   constructor(
     private readonly container: HTMLElement,
     horizontal: boolean,
+    private readonly scrollRoot: HTMLElement,
     private readonly onPageChange?: (page: number, pageCount: number, positions: Positions | null) => void,
     private readonly onZoomChange?: (zoom: number) => void,
   ) {
@@ -68,8 +69,8 @@ export class ScrollPageView {
     }
     this.applyStageSizes()
 
-    this.near = new NearViewportObserver((i) => void this.render(i))
-    this.tracker = new CurrentPageTracker((i) => {
+    this.near = new NearViewportObserver(this.scrollRoot, (i) => void this.render(i))
+    this.tracker = new CurrentPageTracker(this.scrollRoot, (i) => {
       this.current = i
       this.onPageChange?.(i, this.pageCount, this.positions)
     })
@@ -109,13 +110,12 @@ export class ScrollPageView {
 
   setZoom(zoom: number): void {
     // views[0]'s own zoom callback reports the (clamped) change to onZoomChange.
-    const scroller = this.container.parentElement
+    const scroller = this.scrollRoot
     const apply = (): void => {
       this.views.forEach((v) => v.setZoom(zoom))
       this.applyStageSizes()
     }
-    if (scroller) preserveScrollRatio(scroller, apply)
-    else apply()
+    preserveScrollRatio(scroller, apply)
   }
 
   setZoomToWidth(availableWidthPx: number): void {

@@ -3,9 +3,9 @@
  * .mscz, PracticeView's PDF panes): which stage is "current", and which
  * stages are close enough to the viewport to be worth rendering.
  *
- * Both use IntersectionObserver with the implicit (top-level viewport) root —
- * intersection already accounts for the clipping of the `.page-area` scroll
- * container, and works before the stages are attached to the document.
+ * Both observe relative to the scroll container itself (`root`): with the
+ * implicit viewport root, a target is first clipped to its scroll container,
+ * so the look-ahead margin would never reach pages outside it.
  */
 
 const NEAR_MARGIN = '1200px'
@@ -15,7 +15,7 @@ export class NearViewportObserver {
   private readonly observer: IntersectionObserver
   private readonly indexOf = new Map<Element, number>()
 
-  constructor(onNear: (index: number) => void) {
+  constructor(root: Element | null, onNear: (index: number) => void) {
     this.observer = new IntersectionObserver(
       (entries) => {
         for (const entry of entries) {
@@ -23,7 +23,7 @@ export class NearViewportObserver {
           if (entry.isIntersecting && index !== undefined) onNear(index)
         }
       },
-      { rootMargin: NEAR_MARGIN },
+      { root, rootMargin: NEAR_MARGIN },
     )
   }
 
@@ -45,7 +45,7 @@ export class CurrentPageTracker {
   private readonly ratios = new Map<number, number>()
   private current = -1
 
-  constructor(onCurrent: (index: number) => void) {
+  constructor(root: Element | null, onCurrent: (index: number) => void) {
     this.observer = new IntersectionObserver(
       (entries) => {
         for (const entry of entries) {
@@ -65,7 +65,7 @@ export class CurrentPageTracker {
           onCurrent(best)
         }
       },
-      { threshold: [0, 0.1, 0.25, 0.4, 0.5, 0.6, 0.75, 0.9, 1] },
+      { root, threshold: [0, 0.1, 0.25, 0.4, 0.5, 0.6, 0.75, 0.9, 1] },
     )
   }
 

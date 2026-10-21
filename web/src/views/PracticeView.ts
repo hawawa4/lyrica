@@ -1365,7 +1365,7 @@ export class PracticeView {
     let pageView: PageDisplay
     let selectionOverlay: SelectionSource
     if (scrollMode) {
-      const scroll = new ScrollPageView(pageContainer, bookMode, onPageChange, onZoomChange)
+      const scroll = new ScrollPageView(pageContainer, bookMode, this.pageContainerEl, onPageChange, onZoomChange)
       pageView = scroll
       selectionOverlay = scroll
     } else if (bookMode) {
@@ -1843,8 +1843,8 @@ export class PracticeView {
   private observePdfScroll(tab: PdfTabState): void {
     tab.scrollNear?.disconnect()
     tab.scrollTracker?.disconnect()
-    tab.scrollNear = new NearViewportObserver((i) => void this.renderPdfScrollPane(tab, i))
-    tab.scrollTracker = new CurrentPageTracker((i) => {
+    tab.scrollNear = new NearViewportObserver(this.pageContainerEl, (i) => void this.renderPdfScrollPane(tab, i))
+    tab.scrollTracker = new CurrentPageTracker(this.pageContainerEl, (i) => {
       tab.currentPage = i
       this.updatePdfPageIndicator(tab)
     })
