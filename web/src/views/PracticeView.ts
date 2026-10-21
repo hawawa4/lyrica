@@ -37,7 +37,7 @@ import { PiecesIndex } from './PiecesIndex'
 import { RatingStars } from './RatingStars'
 import { TabBar, type TabInfo } from './TabBar'
 import type { CalibrationPoint, KnowledgeLevel, Piece, StaffSystem, Timeline, TimelineEvent } from '../types'
-import { initTheme, applyTheme, THEME_LABELS, type Theme } from '../theme'
+import { initTheme, applyTheme, THEME_LABELS, THEME_ICONS, type Theme } from '../theme'
 
 /**
  * Everything that used to be a single set of global variables/objects,
@@ -205,9 +205,9 @@ export class PracticeView {
   private readonly markerToolsEl: HTMLDivElement
   private readonly textToolBtn: HTMLButtonElement
   private readonly fingeringToolBtn: HTMLButtonElement
-  private readonly themeSelectEl: HTMLSelectElement
+  private readonly themeSwitchEl: HTMLDivElement
   private readonly dropOverlay: HTMLDivElement
-  private readonly openFileBtn: HTMLButtonElement
+  private readonly libraryBtn: HTMLButtonElement
   private readonly loadingOverlayEl: HTMLDivElement
   private readonly loadingTitleEl: HTMLDivElement
   private readonly loadingStepEl: HTMLDivElement
@@ -238,7 +238,7 @@ export class PracticeView {
         <span class="app-title">Lyrica</span>
         <div class="toolbar-group">
           <input id="file-input" type="file" accept=".mscz,.mscx,.pdf" />
-          <button id="open-file-btn" class="primary" style="display:none;">Open file&hellip;</button>
+          <button id="back-to-library-btn" class="primary" style="display:none;" title="Back to library">&#128193; Library</button>
         </div>
         <div id="nav" class="toolbar-group" style="display:none;">
           <button id="prev-page" class="icon-btn" title="Previous page">&larr;</button>
@@ -280,10 +280,7 @@ export class PracticeView {
         </div>
         <div class="toolbar-spacer"></div>
         <div class="toolbar-group">
-          <button id="back-to-library-btn" class="icon-btn" title="Back to library">&#128193; Library</button>
-        </div>
-        <div class="toolbar-group">
-          <select id="theme-select" class="theme-select" title="Theme"></select>
+          <div id="theme-switch" class="theme-switch" role="radiogroup" aria-label="Theme"></div>
         </div>
       </div>
 
@@ -364,24 +361,39 @@ export class PracticeView {
     this.markerToolsEl = this.root.querySelector('#marker-tools')!
     this.textToolBtn = this.root.querySelector('#text-tool-btn')!
     this.fingeringToolBtn = this.root.querySelector('#fingering-tool-btn')!
-    this.themeSelectEl = this.root.querySelector('#theme-select')!
+    this.themeSwitchEl = this.root.querySelector('#theme-switch')!
     this.dropOverlay = this.root.querySelector('#drop-overlay')!
-    this.openFileBtn = this.root.querySelector('#open-file-btn')!
+    this.libraryBtn = this.root.querySelector('#back-to-library-btn')!
     this.loadingOverlayEl = this.root.querySelector('#loading-overlay')!
     this.loadingTitleEl = this.root.querySelector('.loading-title')!
     this.loadingStepEl = this.root.querySelector('.loading-step')!
 
-    for (const theme of Object.keys(THEME_LABELS) as Theme[]) {
-      const opt = document.createElement('option')
-      opt.value = theme
-      opt.textContent = THEME_LABELS[theme]
-      this.themeSelectEl.appendChild(opt)
+    // Three icon buttons, exactly one pressed (radio semantics).
+    const themeButtons = new Map<Theme, HTMLButtonElement>()
+    const syncThemeButtons = (): void => {
+      const current = document.documentElement.getAttribute('data-theme') ?? 'light'
+      for (const [theme, btn] of themeButtons) {
+        btn.classList.toggle('active', theme === current)
+        btn.setAttribute('aria-checked', String(theme === current))
+      }
     }
-    this.themeSelectEl.value = document.documentElement.getAttribute('data-theme') ?? 'light'
-    this.themeSelectEl.addEventListener('change', () => applyTheme(this.themeSelectEl.value as Theme))
+    for (const theme of Object.keys(THEME_LABELS) as Theme[]) {
+      const btn = document.createElement('button')
+      btn.type = 'button'
+      btn.className = 'icon-btn theme-btn'
+      btn.setAttribute('role', 'radio')
+      btn.title = `${THEME_LABELS[theme]} theme`
+      btn.innerHTML = THEME_ICONS[theme]
+      btn.addEventListener('click', () => {
+        applyTheme(theme)
+        syncThemeButtons()
+      })
+      themeButtons.set(theme, btn)
+      this.themeSwitchEl.appendChild(btn)
+    }
+    syncThemeButtons()
 
-    const backToLibraryBtn = this.root.querySelector<HTMLButtonElement>('#back-to-library-btn')!
-    backToLibraryBtn.addEventListener('click', () => {
+    this.libraryBtn.addEventListener('click', () => {
       location.hash = '#/library'
     })
 
@@ -592,19 +604,7 @@ export class PracticeView {
       // when opened via this picker rather than drag-drop. The dialog plugin's
       // `open()` returns the real path, same as a dropped file's path.
       this.fileInput.style.display = 'none'
-      this.openFileBtn.style.display = 'inline-block'
-      this.openFileBtn.addEventListener('click', async () => {
-        const { open } = await import('@tauri-apps/plugin-dialog')
-        const { readFile } = await import('@tauri-apps/plugin-fs')
-        const path = await open({
-          multiple: false,
-          filters: [{ name: 'Scores', extensions: ['mscz', 'mscx', 'pdf'] }],
-        })
-        if (!path || Array.isArray(path)) return
-        const bytes = await readFile(path)
-        const filename = path.split(/[/\\]/).pop() ?? path
-        await this.openBytes(bytes, filename, path)
-      })
+      this.libraryBtn.style.display = 'inline-block'
     } else {
       this.fileInput.addEventListener('change', async () => {
         const file = this.fileInput.files?.[0]

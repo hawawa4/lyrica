@@ -465,8 +465,15 @@
   color: var(--danger);
 }
 
-.theme-select {
-  min-width: 90px;
+.theme-switch {
+  display: flex;
+  gap: 2px;
+}
+
+.theme-btn.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-text);
 }
 
 .zoom-control {
