@@ -3,6 +3,8 @@ import { loadPdf, renderPdfPage, canvasToPngBytes, type PdfDocument } from '../p
 import { PageView, ZOOM_STEP, MIN_ZOOM, MAX_ZOOM, PAGE_RENDERED_EVENT } from '../render/PageView'
 import { SelectionOverlay, type MeasureRange } from '../render/SelectionOverlay'
 import { BookPageView } from '../render/BookPageView'
+import { ScrollPageView } from '../render/ScrollPageView'
+import { NearViewportObserver, CurrentPageTracker, preserveScrollRatio } from '../render/scroll-utils'
 import { CalibrationOverlay, type PointRange } from './CalibrationOverlay'
 import { Cursor } from '../render/Cursor'
 import { PlaybackHeadMarker } from '../render/PlaybackHeadMarker'
@@ -118,6 +120,8 @@ interface MsczTabState {
   headMs: number
   /** Whether this tab is currently showing a single page or a two-page "book" spread — toggled by the book-mode button, persisted per tab (not globally) since different open scores may suit different modes. */
   bookMode: boolean
+  /** Scroll mode (all pages in one continuous strip) — vertical, or horizontal when `bookMode` is also on. */
+  scrollMode: boolean
 }
 
 /** One rendered PDF page's own container + measure overlay — `PdfTabState`'s `canvasContainer`/`calibrationOverlay`/`currentPage` fields are exactly this shape; book mode adds a second one (`rightPane`) rather than duplicating these three fields inline. */
@@ -139,9 +143,19 @@ interface PdfTabState {
   canvasContainer: HTMLDivElement
   calibrationOverlay: CalibrationOverlay
   /** Book mode's second page-stage, alongside this tab's own primary `canvasContainer`/`calibrationOverlay`/`currentPage` (which always plays the "left" role) — `null` outside book mode. Both panes' `CalibrationOverlay`s are independently interactive (drag-select, double-click-seek) and are kept showing the same underlying `points` array; only the primary one owns persistence (`onChange` -> `saveCalibrationPoints`), since both views are always in sync on the same data, not independent copies. */
-  rightPane: PdfPane | null
+  extraPanes: PdfPane[]
+  /** The page the primary pane shows — equals `currentPage` except in scroll mode, where `currentPage` is whichever page is most in view while the primary pane stays on page 0. */
+  primaryPage: number
   /** Whether this tab is currently showing a single page or a two-page "book" spread — mirrors `MsczTabState.bookMode`. */
   bookMode: boolean
+  /** Scroll mode: `extraPanes` holds every page after the first, rendered lazily as they near the viewport. */
+  scrollMode: boolean
+  /** width/height of each page, filled in when scroll mode is first entered (placeholders need it before a page renders). */
+  aspects: number[] | null
+  /** Scroll mode's zoom each page was last rendered at — a page is re-rendered when this differs from the current zoom. */
+  scrollRendered: Map<number, number>
+  scrollNear: NearViewportObserver | null
+  scrollTracker: CurrentPageTracker | null
   points: CalibrationPoint[]
   selectedRange: PointRange | null
   numerator: number
@@ -202,6 +216,7 @@ export class PracticeView {
   private readonly fitHeightBtn: HTMLButtonElement
   private readonly zoomResetBtn: HTMLButtonElement
   private readonly bookModeBtn: HTMLButtonElement
+  private readonly scrollModeBtn: HTMLButtonElement
   private readonly markerToolsEl: HTMLDivElement
   private readonly textToolBtn: HTMLButtonElement
   private readonly fingeringToolBtn: HTMLButtonElement
@@ -273,6 +288,7 @@ export class PracticeView {
           <button id="fit-height-btn" title="Fit to height">Fit height</button>
           <button id="zoom-reset-btn" title="Reset zoom to 100%">100%</button>
           <button id="book-mode-btn" class="book-mode-btn" title="Book mode: show two pages side by side">&#128214; Book mode</button>
+          <button id="scroll-mode-btn" class="book-mode-btn" title="Scroll mode: all pages in one continuous strip (with Book mode: scrolls sideways)">&#8597; Scroll mode</button>
         </div>
         <div id="marker-tools" class="toolbar-group marker-tools" style="display:none;">
           <button id="marker-tools-toggle" class="marker-tools-header" aria-expanded="true" title="Collapse/expand the markers panel"><span class="collapsible-disclosure">&#9660;</span> Markers</button>
@@ -364,6 +380,7 @@ export class PracticeView {
     this.fitHeightBtn = this.root.querySelector('#fit-height-btn')!
     this.zoomResetBtn = this.root.querySelector('#zoom-reset-btn')!
     this.bookModeBtn = this.root.querySelector('#book-mode-btn')!
+    this.scrollModeBtn = this.root.querySelector('#scroll-mode-btn')!
     this.markerToolsEl = this.root.querySelector('#marker-tools')!
     this.textToolBtn = this.root.querySelector('#text-tool-btn')!
     this.fingeringToolBtn = this.root.querySelector('#fingering-tool-btn')!
@@ -422,6 +439,7 @@ export class PracticeView {
       this.cursorBoxEl.style.width = `${(event.bbox.sx / width) * 100}%`
       this.cursorBoxEl.style.height = `${(event.bbox.sy / height) * 100}%`
       this.headMarker.setPosition((event.bbox.x / width) * 100, (event.bbox.y / height) * 100)
+      this.revealIfOffscreen(active, this.cursorBoxEl)
       active.headMs = event.time_ms
     })
 
@@ -448,6 +466,7 @@ export class PracticeView {
       // target.x/y are already a 0-1 fraction of the page (see
       // CalibrationOverlay's module docs) — no canvas-size division needed.
       this.headMarker.setPosition(target.x * 100, target.y * 100)
+      this.revealIfOffscreen(active, this.headMarker.el)
       active.headMs = target.time_ms
     })
 
@@ -570,7 +589,8 @@ export class PracticeView {
     this.fitWidthBtn.addEventListener('click', () => this.fitActiveTabToWidth())
     this.fitHeightBtn.addEventListener('click', () => this.fitActiveTabToHeight())
     this.zoomResetBtn.addEventListener('click', () => this.resetActiveTabZoom())
-    this.bookModeBtn.addEventListener('click', () => void this.toggleBookModeForActiveTab())
+    this.bookModeBtn.addEventListener('click', () => void this.setDisplayModeForActiveTab({ book: !this.activeTab()?.bookMode }))
+    this.scrollModeBtn.addEventListener('click', () => void this.setDisplayModeForActiveTab({ scroll: !this.activeTab()?.scrollMode }))
 
     /** Ctrl/Cmd+scroll zooms the active tab's page, like a PDF viewer or image editor — matches the gesture users expect instead of scrolling the page area. */
     this.pageContainerEl.addEventListener(
@@ -797,25 +817,29 @@ export class PracticeView {
     return { width: parseFloat(viewBox[2]) || 1, height: parseFloat(viewBox[3]) || 1 }
   }
 
-  /** Whichever of `tab`'s panes (primary, or `rightPane` in book mode) is currently showing `page` — mirrors `.mscz`'s `PageDisplay.stageFor`, needed for exactly the same reason: book mode's two panes are never on the same page as each other. */
-  private pdfPaneFor(tab: PdfTabState, page: number): PdfPane | null {
-    if (tab.currentPage === page) return { canvasContainer: tab.canvasContainer, calibrationOverlay: tab.calibrationOverlay, currentPage: tab.currentPage }
-    if (tab.rightPane?.currentPage === page) return tab.rightPane
-    return null
+  /** Every pane currently mounted for `tab`: the primary one, then `extraPanes` (book mode's right page, or scroll mode's remaining pages). */
+  private pdfPanes(tab: PdfTabState): PdfPane[] {
+    return [{ canvasContainer: tab.canvasContainer, calibrationOverlay: tab.calibrationOverlay, currentPage: tab.primaryPage }, ...tab.extraPanes]
   }
 
-  /** Sets the "currently playing" highlight on whichever pane holds `page`, clearing it on the other pane if book mode has one — a point only ever plays on one page at a time. */
+  /** The pane showing `page`, if any — mirrors `.mscz`'s `PageDisplay.stageFor`; panes are never on the same page as each other. */
+  private pdfPaneFor(tab: PdfTabState, page: number): PdfPane | null {
+    return this.pdfPanes(tab).find((p) => p.currentPage === page) ?? null
+  }
+
+  /** Sets the "currently playing" highlight on whichever pane holds `page`, clearing it on every other pane — a point only ever plays on one page at a time. */
   private setPdfPlayingIndex(tab: PdfTabState, page: number, itemIndex: number | null): void {
-    if (tab.currentPage === page) {
-      tab.calibrationOverlay.setPlayingIndex(itemIndex)
-      tab.rightPane?.calibrationOverlay.setPlayingIndex(null)
-    } else if (tab.rightPane?.currentPage === page) {
-      tab.rightPane.calibrationOverlay.setPlayingIndex(itemIndex)
-      tab.calibrationOverlay.setPlayingIndex(null)
-    } else {
-      tab.calibrationOverlay.setPlayingIndex(null)
-      tab.rightPane?.calibrationOverlay.setPlayingIndex(null)
-    }
+    for (const pane of this.pdfPanes(tab)) pane.calibrationOverlay.setPlayingIndex(pane.currentPage === page ? itemIndex : null)
+  }
+
+  /** Scroll mode only: brings `el` (the playback cursor/head marker) into view if it has drifted out of the visible part of the page area. */
+  private revealIfOffscreen(tab: TabState, el: HTMLElement): void {
+    if (!tab.scrollMode) return
+    const area = this.pageContainerEl.getBoundingClientRect()
+    const r = el.getBoundingClientRect()
+    const m = 60
+    if (r.top >= area.top + m && r.bottom <= area.bottom - m && r.left >= area.left + m && r.right <= area.right - m) return
+    el.scrollIntoView({ block: 'center', inline: 'center' })
   }
 
   private renderTabBar(): void {
@@ -950,6 +974,11 @@ export class PracticeView {
     this.pageContainerEl.innerHTML = ''
     this.pageContainerEl.appendChild(tab.pageContainer)
     this.emptyStateEl.style.display = 'none'
+    // A remounted scroll-mode strip starts at scrollTop 0 — return to the page the user was on.
+    if (tab.scrollMode) {
+      if (tab.kind === 'pdf') void this.showPdfScrollPage(tab, tab.currentPage)
+      else void tab.pageView.showPage(tab.pageView.page)
+    }
 
     this.statusEl.textContent = tab.title
     this.calibrationStatusEl.textContent = ''
@@ -958,6 +987,8 @@ export class PracticeView {
     this.zoomGroupEl.style.display = 'flex'
     this.bookModeBtn.style.display = 'inline-block'
     this.bookModeBtn.classList.toggle('active', tab.bookMode)
+    this.scrollModeBtn.style.display = 'inline-block'
+    this.scrollModeBtn.classList.toggle('active', tab.scrollMode)
     void this.loadRatingForTab(tab)
     // "untracked-" tabs have no stable file_hash (desktop hashing failed, or
     // running outside Tauri), so there's nothing to persist markers under.
@@ -1116,7 +1147,8 @@ export class PracticeView {
     this.setZoomIndicator(tab.zoom)
     this.zoomOutBtn.disabled = tab.zoom <= PDF_MIN_ZOOM
     this.zoomInBtn.disabled = tab.zoom >= PDF_MAX_ZOOM
-    void this.showPdfPage(tab, tab.currentPage)
+    if (tab.scrollMode) this.relayoutPdfScroll(tab)
+    else void this.showPdfPage(tab, tab.currentPage)
   }
 
   /** Zooms the active tab (either kind) by `delta` (positive = in, negative = out) — shared by the +/- buttons and ctrl+wheel. */
@@ -1151,7 +1183,7 @@ export class PracticeView {
    */
   private pdfNativeAspectRatio(tab: PdfTabState): number | null {
     const canvas = tab.canvasContainer.querySelector('canvas')
-    if (!canvas || canvas.width <= 0 || canvas.height <= 0) return null
+    if (!canvas || canvas.width <= 0 || canvas.height <= 0) return tab.aspects?.[0] ?? null
     return canvas.width / canvas.height
   }
 
@@ -1165,7 +1197,7 @@ export class PracticeView {
       // Book mode shows two pages side by side, so each gets half the
       // available width — same halving BookPageView.setZoomToWidth does
       // for .mscz's own book mode.
-      const availableWidth = active.bookMode ? width / 2 : width
+      const availableWidth = active.bookMode ? width / 2 : width // scroll+book (horizontal strip) also shows ~two pages across
       this.setPdfZoom(active, availableWidth / PDF_BASE_WIDTH)
     }
   }
@@ -1207,7 +1239,7 @@ export class PracticeView {
       tab.score.destroy()
     } else {
       tab.calibrationOverlay.destroy()
-      tab.rightPane?.calibrationOverlay.destroy()
+      this.teardownPdfExtras(tab)
     }
     this.tabs.delete(fileHash)
 
@@ -1311,6 +1343,7 @@ export class PracticeView {
   private createMsczPageDisplay(
     pageContainer: HTMLDivElement,
     bookMode: boolean,
+    scrollMode: boolean,
     getTabState: () => MsczTabState,
   ): { pageView: PageDisplay; selectionOverlay: SelectionSource } {
     const onPageChange = (page: number, pages: number): void => {
@@ -1331,7 +1364,11 @@ export class PracticeView {
 
     let pageView: PageDisplay
     let selectionOverlay: SelectionSource
-    if (bookMode) {
+    if (scrollMode) {
+      const scroll = new ScrollPageView(pageContainer, bookMode, onPageChange, onZoomChange)
+      pageView = scroll
+      selectionOverlay = scroll
+    } else if (bookMode) {
       const book = new BookPageView(pageContainer, onPageChange, onZoomChange)
       pageView = book
       selectionOverlay = book
@@ -1458,7 +1495,7 @@ export class PracticeView {
     const pageContainer = document.createElement('div')
     pageContainer.className = 'page-stage'
 
-    const { pageView, selectionOverlay } = this.createMsczPageDisplay(pageContainer, false, () => tabState)
+    const { pageView, selectionOverlay } = this.createMsczPageDisplay(pageContainer, false, false, () => tabState)
 
     const tabState: MsczTabState = {
       kind: 'mscz',
@@ -1478,6 +1515,7 @@ export class PracticeView {
       transportState: 'stopped',
       headMs: 0,
       bookMode: false,
+      scrollMode: false,
     }
 
     this.setLoadingStep('Laying out pages…')
@@ -1603,8 +1641,14 @@ export class PracticeView {
       pageContainer,
       canvasContainer,
       calibrationOverlay,
-      rightPane: null,
+      extraPanes: [],
+      primaryPage: 0,
       bookMode: false,
+      scrollMode: false,
+      aspects: null,
+      scrollRendered: new Map(),
+      scrollNear: null,
+      scrollTracker: null,
       points: [],
       selectedRange: null,
       numerator: PDF_DEFAULT_NUMERATOR,
@@ -1616,7 +1660,7 @@ export class PracticeView {
 
     calibrationOverlay.onSelect((range) => {
       tabState.selectedRange = range
-      tabState.rightPane?.calibrationOverlay.setSelection(range)
+      for (const pane of tabState.extraPanes) pane.calibrationOverlay.setSelection(range)
       void this.setPdfLoop(range)
       if (range) {
         const loopRegion = this.loopRegionForPointRange(calibrationOverlay.getPoints(), range)
@@ -1717,31 +1761,98 @@ export class PracticeView {
    */
   private async showPdfPage(tab: PdfTabState, pageNumber: number): Promise<void> {
     if (pageNumber < 0 || pageNumber >= tab.pageCount) return
+    if (tab.scrollMode) return this.showPdfScrollPage(tab, pageNumber)
     const spreadStart = tab.bookMode ? pageNumber - (pageNumber % 2) : pageNumber
 
     tab.currentPage = spreadStart
+    tab.primaryPage = spreadStart
     await this.renderPdfPane(tab, { canvasContainer: tab.canvasContainer, calibrationOverlay: tab.calibrationOverlay, currentPage: tab.currentPage }, spreadStart, () => tab.currentPage === spreadStart)
     if (tab.currentPage !== spreadStart) return // stale: navigated elsewhere while this render was in flight
 
-    if (tab.bookMode && tab.rightPane) {
+    const right = tab.bookMode ? tab.extraPanes[0] : undefined
+    if (right) {
       const rightPage = spreadStart + 1
       if (rightPage >= tab.pageCount) {
-        tab.rightPane.canvasContainer.querySelector('canvas')?.remove()
-        tab.rightPane.currentPage = rightPage
-        setStagePage(tab.rightPane.canvasContainer, null)
+        right.canvasContainer.querySelector('canvas')?.remove()
+        right.currentPage = rightPage
+        setStagePage(right.canvasContainer, null)
       } else {
-        tab.rightPane.currentPage = rightPage
-        await this.renderPdfPane(tab, tab.rightPane, rightPage, () => tab.rightPane?.currentPage === rightPage)
+        right.currentPage = rightPage
+        await this.renderPdfPane(tab, right, rightPage, () => right.currentPage === rightPage)
       }
     }
 
-    if (this.activeHash === tab.fileHash) {
-      this.pageIndicatorEl.textContent = tab.bookMode
-        ? `Pages ${spreadStart + 1}-${Math.min(spreadStart + 2, tab.pageCount)} / ${tab.pageCount}`
-        : `Page ${spreadStart + 1} / ${tab.pageCount}`
-      this.prevBtn.disabled = spreadStart <= 0
-      this.nextBtn.disabled = spreadStart >= tab.pageCount - (tab.bookMode ? 2 : 1)
+    this.updatePdfPageIndicator(tab)
+  }
+
+  private updatePdfPageIndicator(tab: PdfTabState): void {
+    if (this.activeHash !== tab.fileHash) return
+    const start = tab.currentPage
+    const spread = tab.bookMode && !tab.scrollMode
+    this.pageIndicatorEl.textContent = spread
+      ? `Pages ${start + 1}-${Math.min(start + 2, tab.pageCount)} / ${tab.pageCount}`
+      : `Page ${start + 1} / ${tab.pageCount}`
+    this.prevBtn.disabled = start <= 0
+    this.nextBtn.disabled = start >= tab.pageCount - (spread ? 2 : 1)
+  }
+
+  /** Scroll mode's `showPdfPage`: scrolls to the page (its placeholder is already the right size) and makes sure it's rendered. */
+  private async showPdfScrollPage(tab: PdfTabState, pageNumber: number): Promise<void> {
+    tab.currentPage = pageNumber
+    tab.scrollTracker?.setCurrent(pageNumber)
+    this.pdfPanes(tab)[pageNumber]?.canvasContainer.scrollIntoView({ block: 'start', inline: 'start' })
+    this.updatePdfPageIndicator(tab)
+    await this.renderPdfScrollPane(tab, pageNumber)
+  }
+
+  /** Renders scroll-mode page `pageNumber` at the tab's current zoom unless it already is. */
+  private async renderPdfScrollPane(tab: PdfTabState, pageNumber: number): Promise<void> {
+    const pane = this.pdfPanes(tab)[pageNumber]
+    if (!pane || !tab.scrollMode) return
+    const zoom = tab.zoom
+    if (tab.scrollRendered.get(pageNumber) === zoom) return
+    tab.scrollRendered.set(pageNumber, zoom)
+    try {
+      const canvas = await renderPdfPage(tab.doc, pageNumber + 1, PDF_BASE_WIDTH * zoom)
+      if (!tab.scrollMode || tab.scrollRendered.get(pageNumber) !== zoom) return // mode or zoom changed mid-render
+      pane.canvasContainer.querySelector('canvas')?.remove()
+      pane.canvasContainer.insertBefore(canvas, pane.canvasContainer.firstChild)
+    } catch (e) {
+      tab.scrollRendered.delete(pageNumber)
+      console.error(`Failed to render page ${pageNumber + 1}:`, e)
     }
+  }
+
+  /** Sizes every scroll-mode pane to its page's footprint at the current zoom, so unrendered pages reserve the right room. */
+  private sizePdfScrollPanes(tab: PdfTabState): void {
+    const width = PDF_BASE_WIDTH * tab.zoom
+    this.pdfPanes(tab).forEach((pane, i) => {
+      const aspect = tab.aspects?.[i] ?? tab.aspects?.[0] ?? 0.77
+      pane.canvasContainer.style.width = `${width}px`
+      pane.canvasContainer.style.height = `${width / aspect}px`
+    })
+  }
+
+  /** Zoom change in scroll mode: resize all placeholders, keep the reading position, and re-render whatever is near the viewport. */
+  private relayoutPdfScroll(tab: PdfTabState): void {
+    preserveScrollRatio(this.pageContainerEl, () => this.sizePdfScrollPanes(tab))
+    this.observePdfScroll(tab)
+  }
+
+  /** (Re)starts the near-viewport render observer and current-page tracker over scroll mode's panes. */
+  private observePdfScroll(tab: PdfTabState): void {
+    tab.scrollNear?.disconnect()
+    tab.scrollTracker?.disconnect()
+    tab.scrollNear = new NearViewportObserver((i) => void this.renderPdfScrollPane(tab, i))
+    tab.scrollTracker = new CurrentPageTracker((i) => {
+      tab.currentPage = i
+      this.updatePdfPageIndicator(tab)
+    })
+    tab.scrollTracker.setCurrent(tab.currentPage)
+    this.pdfPanes(tab).forEach((pane, i) => {
+      tab.scrollNear!.observe(pane.canvasContainer, i)
+      tab.scrollTracker!.observe(pane.canvasContainer, i)
+    })
   }
 
   /** Renders `pageNumber` into one pane (left or right), guarded by `stillCurrent` against a stale response landing after the user navigated elsewhere while this render was in flight — same race `showPdfPage` itself already guarded against before book mode gave it two panes to manage instead of one. */
@@ -1824,7 +1935,7 @@ export class PracticeView {
     } else {
       tab.selectedRange = null
       tab.calibrationOverlay.setSelection(null)
-      tab.rightPane?.calibrationOverlay.setSelection(null)
+      for (const pane of tab.extraPanes) pane.calibrationOverlay.setSelection(null)
     }
     if (this.activeHash !== tab.fileHash) return
     this.selectionStatusEl.textContent = ''
@@ -1926,7 +2037,7 @@ export class PracticeView {
     this.cursorBoxEl.style.display = 'none'
     if (active.kind === 'pdf') {
       active.calibrationOverlay.setPlayingIndex(null)
-      active.rightPane?.calibrationOverlay.setPlayingIndex(null)
+      for (const pane of active.extraPanes) pane.calibrationOverlay.setPlayingIndex(null)
     }
     active.transportState = 'stopped'
     // Head resets to the active loop's start if one is set (loop stays
@@ -1958,63 +2069,118 @@ export class PracticeView {
   }
 
   /**
-   * Rebuilds the active tab's page display in the other mode (single-page
-   * vs. two-page "book" spread), preserving the current page and zoom.
+   * Switches the active tab's page display between single page, two-page
+   * "book" spread, vertical scroll (all pages in one strip) and — scroll +
+   * book — a horizontal strip, preserving the current page and zoom.
    *
-   * `.mscz`: a full tear-down/rebuild of `pageView`/`selectionOverlay` rather
-   * than mutating in place — `PageView` and `BookPageView` each own their
-   * own DOM subtree (`score-svg-layer`/measure boxes), so swapping modes
-   * cleanly means destroying the old subtree and constructing the new one
-   * fresh, the same way opening a brand-new tab already does.
+   * `.mscz`: a full tear-down/rebuild of `pageView`/`selectionOverlay` — each
+   * display owns its own DOM subtree, so swapping cleanly means destroying
+   * the old one and constructing the new one, as opening a new tab does.
    *
-   * PDF: toggles `rightPane` between `null` (single-page) and a second
-   * `PdfPane` (book), then re-renders via `showPdfPage` — the primary pane's
-   * `canvasContainer`/`calibrationOverlay` are reused as-is (unlike `.mscz`,
-   * nothing about them needs rebuilding for either mode).
+   * PDF: the primary pane is reused; `extraPanes` is rebuilt (the book
+   * spread's right page, or every other page in scroll mode).
    */
-  private async toggleBookModeForActiveTab(): Promise<void> {
+  private async setDisplayModeForActiveTab(change: { book?: boolean; scroll?: boolean }): Promise<void> {
     const active = this.activeTab()
     if (!active) return
-    if (active.kind === 'mscz') {
-      await this.toggleMsczBookMode(active)
-    } else {
-      await this.togglePdfBookMode(active)
-    }
+    const book = change.book ?? active.bookMode
+    const scroll = change.scroll ?? active.scrollMode
+    if (active.kind === 'mscz') await this.setMsczDisplayMode(active, book, scroll)
+    else await this.setPdfDisplayMode(active, book, scroll)
+    this.bookModeBtn.classList.toggle('active', book)
+    this.scrollModeBtn.classList.toggle('active', scroll)
   }
 
-  private async toggleMsczBookMode(active: MsczTabState): Promise<void> {
+  private async setMsczDisplayMode(active: MsczTabState, book: boolean, scroll: boolean): Promise<void> {
     const currentPage = active.pageView.page
     const currentZoom = active.pageView.getZoom()
     const pageCount = active.pageView.pages
-    const nextBookMode = !active.bookMode
 
     active.selectionOverlay.destroy()
     active.pageContainer.innerHTML = ''
-    active.pageContainer.classList.toggle('book-spread', nextBookMode)
+    active.pageContainer.className = scroll ? '' : book ? 'page-stage book-spread' : 'page-stage'
 
-    const { pageView, selectionOverlay } = this.createMsczPageDisplay(active.pageContainer, nextBookMode, () => active)
+    const { pageView, selectionOverlay } = this.createMsczPageDisplay(active.pageContainer, book, scroll, () => active)
     active.pageView = pageView
     active.selectionOverlay = selectionOverlay
-    active.bookMode = nextBookMode
+    active.bookMode = book
+    active.scrollMode = scroll
 
     this.cursorBoxEl.style.display = 'none'
 
     await pageView.setScore(active.score, pageCount)
     // setScore resets to page 0 / zoom 1 internally (see PageView.setScore) —
     // restore what the user actually had showing before the mode switch.
-    await pageView.showPage(currentPage)
+    // Zoom first: in scroll mode it sets the page footprints showPage scrolls to.
     pageView.setZoom(currentZoom)
+    await pageView.showPage(currentPage)
     this.mountOverlaysOnPage(active, pageView.page)
-
-    this.bookModeBtn.classList.toggle('active', nextBookMode)
   }
 
-  private async togglePdfBookMode(active: PdfTabState): Promise<void> {
-    const currentPage = active.currentPage
-    const nextBookMode = !active.bookMode
-    active.pageContainer.classList.toggle('book-spread', nextBookMode)
+  /** Removes every extra pane (and scroll observers/sizing), leaving just the primary pane, unstyled for any mode. */
+  private teardownPdfExtras(tab: PdfTabState): void {
+    tab.scrollNear?.disconnect()
+    tab.scrollTracker?.disconnect()
+    tab.scrollNear = null
+    tab.scrollTracker = null
+    tab.scrollRendered.clear()
+    for (const pane of tab.extraPanes) {
+      pane.calibrationOverlay.destroy()
+      pane.canvasContainer.remove()
+    }
+    tab.extraPanes = []
+    tab.canvasContainer.classList.remove('book-page', 'scroll-page')
+    tab.canvasContainer.style.width = ''
+    tab.canvasContainer.style.height = ''
+  }
 
-    if (nextBookMode) {
+  private async ensurePdfAspects(tab: PdfTabState): Promise<number[]> {
+    if (tab.aspects) return tab.aspects
+    const aspects: number[] = []
+    for (let i = 1; i <= tab.pageCount; i++) {
+      const vp = (await tab.doc.getPage(i)).getViewport({ scale: 1 })
+      aspects.push(vp.width / vp.height)
+    }
+    tab.aspects = aspects
+    return aspects
+  }
+
+  private async setPdfDisplayMode(active: PdfTabState, book: boolean, scroll: boolean): Promise<void> {
+    const currentPage = active.currentPage
+    this.teardownPdfExtras(active)
+    active.bookMode = book
+    active.scrollMode = scroll
+    active.pageContainer.classList.remove('scroll-spread', 'scroll-vertical', 'scroll-horizontal')
+    active.pageContainer.classList.toggle('book-spread', book && !scroll)
+    this.headMarker.el.remove()
+
+    if (scroll) {
+      await this.ensurePdfAspects(active)
+      active.pageContainer.classList.add('scroll-spread', book ? 'scroll-horizontal' : 'scroll-vertical')
+      active.canvasContainer.classList.add('scroll-page')
+      active.primaryPage = 0
+      active.calibrationOverlay.setPage(0)
+      setStagePage(active.canvasContainer, 0)
+      active.canvasContainer.querySelector('canvas')?.remove()
+      for (let i = 1; i < active.pageCount; i++) {
+        const container = this.createPdfCanvasContainer()
+        container.classList.add('scroll-page')
+        active.pageContainer.appendChild(container)
+        const overlay = new CalibrationOverlay(container)
+        overlay.setPoints(active.points)
+        overlay.setPage(i)
+        this.wirePdfPaneInteractions(active, overlay)
+        setStagePage(container, i)
+        active.extraPanes.push({ canvasContainer: container, calibrationOverlay: overlay, currentPage: i })
+      }
+      active.currentPage = Math.min(currentPage, active.pageCount - 1)
+      this.sizePdfScrollPanes(active)
+      this.observePdfScroll(active)
+      await this.showPdfScrollPage(active, active.currentPage)
+      return
+    }
+
+    if (book) {
       active.canvasContainer.classList.add('book-page')
       const rightCanvasContainer = this.createPdfCanvasContainer()
       rightCanvasContainer.classList.add('book-page', 'book-page-right')
@@ -2022,18 +2188,9 @@ export class PracticeView {
       const rightCalibrationOverlay = new CalibrationOverlay(rightCanvasContainer)
       rightCalibrationOverlay.setPoints(active.points)
       this.wirePdfPaneInteractions(active, rightCalibrationOverlay)
-      active.rightPane = { canvasContainer: rightCanvasContainer, calibrationOverlay: rightCalibrationOverlay, currentPage: currentPage + 1 }
-    } else if (active.rightPane) {
-      active.canvasContainer.classList.remove('book-page')
-      active.rightPane.calibrationOverlay.destroy()
-      active.rightPane.canvasContainer.remove()
-      active.rightPane = null
+      active.extraPanes = [{ canvasContainer: rightCanvasContainer, calibrationOverlay: rightCalibrationOverlay, currentPage: currentPage + 1 }]
     }
-    active.bookMode = nextBookMode
-
-    this.headMarker.el.remove()
     await this.showPdfPage(active, currentPage)
-    this.bookModeBtn.classList.toggle('active', nextBookMode)
   }
 
   /** Wires a `CalibrationOverlay` (the right pane's — the primary/left one is already wired at tab construction) into the same selection/seek handling every pane shares, minus persistence (the primary pane alone owns `onChange` -> `saveCalibrationPoints`, since both panes always show the same underlying point list rather than independent copies — see `PdfTabState.rightPane`'s docs). */
@@ -2057,7 +2214,7 @@ export class PracticeView {
 
   /** Re-pushes the primary pane's point list into `rightPane`'s independent `CalibrationOverlay` instance — call after any mutation (`addPointsFromBarlines*`, `clearAllPoints`) made through the primary pane, so book mode's second pane doesn't silently go stale relative to it. No-op outside book mode. */
   private syncRightPanePoints(tab: PdfTabState): void {
-    tab.rightPane?.calibrationOverlay.setPoints(tab.calibrationOverlay.getPoints())
+    for (const pane of tab.extraPanes) pane.calibrationOverlay.setPoints(tab.calibrationOverlay.getPoints())
   }
 
   /** Picks up `tool`, or puts it down if it's already the active one. */
@@ -2125,7 +2282,7 @@ export class PracticeView {
     if (active.kind === 'mscz') {
       void active.pageView.prev()
     } else {
-      const step = active.bookMode ? 2 : 1
+      const step = active.bookMode && !active.scrollMode ? 2 : 1
       void this.showPdfPage(active, active.currentPage - step)
     }
   }
@@ -2136,7 +2293,7 @@ export class PracticeView {
     if (active.kind === 'mscz') {
       void active.pageView.next()
     } else {
-      const step = active.bookMode ? 2 : 1
+      const step = active.bookMode && !active.scrollMode ? 2 : 1
       void this.showPdfPage(active, active.currentPage + step)
     }
   }

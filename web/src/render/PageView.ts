@@ -5,7 +5,7 @@ export const MIN_ZOOM = 0.3
 export const MAX_ZOOM = 3
 
 /** CSS px width at 100% zoom — the SVG is sized in absolute px (not a %) so it has a real intrinsic size inside a flex-centered `.page-stage`, instead of a 0-width collapse (a percentage width has nothing to resolve against there). */
-const BASE_WIDTH_PX = 700
+export const BASE_WIDTH_PX = 700
 
 /** Bubbling DOM event fired on a page-stage whenever it starts showing a different page (or none) — the stage's `data-page` attribute holds the new 0-based page, absent when empty. */
 export const PAGE_RENDERED_EVENT = 'lyrica:pagerendered'
@@ -66,6 +66,12 @@ export class PageView {
     return { width: parseFloat(viewBox[2]), height: parseFloat(viewBox[3]) }
   }
 
+  /** Width / height of the rendered page, or `null` before the first render. */
+  nativeAspect(): number | null {
+    const native = this.nativeSize()
+    return native && native.height > 0 ? native.width / native.height : null
+  }
+
   /** Sets zoom so the rendered page's width exactly fills `availableWidthPx`. */
   setZoomToWidth(availableWidthPx: number): void {
     if (!this.nativeSize()) return
@@ -89,13 +95,13 @@ export class PageView {
    * score — pure derived data, cheap to
    * keep in memory, safe to re-fetch if ever needed since it's read-only).
    */
-  async setScore(score: WebMscore, pageCount: number): Promise<void> {
+  async setScore(score: WebMscore, pageCount: number, positions?: Positions): Promise<void> {
     this.score = score
     this.pageCount = pageCount
     this.currentPage = 0
     this.cache.clear()
     this.zoom = 1
-    this.positions = await getMeasurePositions(score)
+    this.positions = positions ?? (await getMeasurePositions(score))
   }
 
   async showPage(index: number): Promise<void> {
@@ -156,6 +162,11 @@ export class PageView {
 
   get pages(): number {
     return this.pageCount
+  }
+
+  /** Whether a page is currently drawn into this view's stage. */
+  get rendered(): boolean {
+    return this.container.dataset.page !== undefined
   }
 
   /** `container` if it's currently showing `page`, else `null` — lets a caller mount a single shared overlay element (cursor box, head marker) into whichever concrete page-stage actually holds a given page, rather than assuming there's only ever one. See `BookPageView.stageFor` for why this needs to exist at all. */

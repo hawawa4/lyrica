@@ -185,6 +185,32 @@
   flex-shrink: 0;
 }
 
+/* Scroll mode: every page butted against the next in one strip — a column, or (with book mode) a row. Auto margins rather than centering keep an over-wide strip scrollable from its start. */
+.scroll-spread {
+  display: flex;
+  height: fit-content;
+  flex-shrink: 0;
+  margin-inline: auto;
+}
+
+.scroll-vertical {
+  flex-direction: column;
+}
+
+.scroll-vertical > .scroll-page {
+  margin-inline: auto;
+}
+
+.scroll-horizontal {
+  flex-direction: row;
+  align-items: flex-start;
+}
+
+.scroll-page {
+  box-shadow: none;
+  border-radius: 0;
+}
+
 /* Book mode: two page-stages side by side — see BookPageView's module docs. */
 .book-spread {
   display: flex;
