@@ -9,4 +9,4 @@ homepage.workspace = true
 [dependencies]
 image = { version = "0.25", default-features = false, features = ["png"] }
 serde = { version = "1", features = ["derive"] }
-thiserror = "1"
+thiserror = "2"
