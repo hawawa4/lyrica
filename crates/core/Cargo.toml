@@ -26,5 +26,5 @@ default = []
 desktop-audio = ["dep:cpal"]
 
 [dependencies.cpal]
-version = "0.15"
+version = "0.18"
 optional = true
