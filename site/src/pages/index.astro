@@ -1,133 +1,114 @@
 ---
 import Layout from '../layouts/Layout.astro'
-import Demo from '../components/Demo.astro'
 
 const repo = 'https://github.com/hawawa4/lyrica'
 const releases = `${repo}/releases/latest`
 
-const features = [
+const showcase = [
   {
-    title: 'Loop any passage',
-    body: 'Drag across measures to select them, and just that range repeats until you stop. The loop follows the music as written, so it stays correct through repeats and D.C./D.S. jumps.',
+    title: 'Library',
+    body: 'Browse a folder of scores, pin the ones you’re working on, and give each a 1–5 knowledge rating. Filter by rating to pick what to practise next.',
+    image: '/media/LibraryView.webp',
   },
   {
-    title: 'Slow it down',
-    body: 'Play at 0.5×, 0.75× or full speed. The cursor and the audio stay locked together at every speed.',
+    title: 'Themes',
+    body: 'Light, dark and paper. The score is recoloured along with the interface.',
+    video: '/media/themeselector.webm',
   },
   {
-    title: 'A click that knows the piece',
-    body: 'The metronome is generated from the score’s own time signatures and tempo changes, with the downbeat accented. Toggle it with M.',
-  },
-  {
-    title: 'Markers on measures',
-    body: 'Select a measure, type a note (“watch the fingering”, “slow here”) and it’s pinned there. Notes are saved per score.',
-  },
-  {
-    title: 'Pieces inside one file',
-    body: 'Soundtrack albums and collections are often one giant score. Lyrica finds the titles inside and gives you an index to jump between pieces.',
-  },
-  {
-    title: 'A library that tracks progress',
-    body: 'Browse a folder of scores, pin favourites, and rate each piece from 1 (never seen it) to 5 (can play it anytime). Filter by level to decide what to practise next.',
+    title: 'Page modes',
+    body: 'Zoom, fit to width or height, two-page book mode, continuous scroll (vertical, or horizontal with book mode) and a distraction-free view (F).',
+    video: '/media/pagemodes.webm',
   },
   {
     title: 'PDFs too',
-    body: 'No .mscz? Open a PDF, mark where each measure sits (with an optional barline-detection assist) and practise with the metronome and loops. No audio of the notes, since a PDF has none.',
+    body: 'No .mscz? Open a PDF and mark where the measures are (barline detection can help). Loops and the metronome work the same way.',
+    video: '/media/alsopdf.webm',
   },
   {
-    title: 'A reader, not an editor',
-    body: 'Zoom, fit-to-width or height, two-page book mode, a distraction-free view (F), and Light, Dark and Paper themes. Your original files are never modified.',
+    title: 'Several tunes in one file',
+    body: 'Soundtrack albums and collections are often a single .mscz. Lyrica finds the titles inside and lists them, so you can jump between pieces.',
+    video: '/media/tuneselection.webm',
   },
 ]
 
+const features = [
+  'Select bars and loop them. The loop follows repeats and D.C./D.S. jumps.',
+  'Play at 0.5×, 0.75× or full speed.',
+  'Metronome built from the score’s time signatures and tempo changes. M toggles it.',
+  'Attach a note to a measure. Notes are saved per score.',
+]
+
 const keys = [
-  ['Space', 'Play / pause'],
-  ['Esc', 'Stop'],
-  ['M', 'Metronome'],
-  ['F', 'Distraction-free view'],
-  ['← →', 'Previous / next page'],
+  ['Space', 'play/pause'],
+  ['Esc', 'stop'],
+  ['M', 'metronome'],
+  ['F', 'distraction-free'],
+  ['← →', 'page'],
+]
+
+const limits = [
+  'It isn’t an editor. You can’t change notes.',
+  'PDFs have no note data, so PDF mode only has the click and loops, no audio of the music.',
+  'Playback uses a General MIDI soundfont, so it sounds like MIDI.',
+  'Linux only for now. It’s a Tauri app, so other platforms may follow.',
+  'Notes and ratings live in the app’s data folder, keyed by file contents, so renaming or moving a score is fine. Your files are never modified; scores from older MuseScore versions are upgraded in memory after you confirm.',
 ]
 ---
 
 <Layout
-  title="Lyrica — practice from the score you already have"
-  description="Lyrica opens MuseScore files like a PDF reader and adds loops, slow-down, a metronome, measure notes and a progress-tracking library. Free and open source."
+  title="Lyrica"
+  description="A reader for MuseScore files with loops, slow-down, a metronome, measure notes and a library. Free and open source."
 >
   <header class="hero">
     <div class="wrap">
-      <p class="eyebrow">Free · Open source · Desktop</p>
-      <h1>Practice from the score<br />you already have.</h1>
+      <h1>Lyrica</h1>
       <p class="sub">
-        Lyrica opens your MuseScore files like a PDF reader, and adds the things you actually reach
-        for while learning a piece: loop a hard passage, slow it down, play along with a click, and keep
-        track of what you’ve practised.
+        Opens MuseScore (.mscz) files and PDFs for practice. Select some bars and loop them, slow
+        playback down, play along with a metronome.
       </p>
       <p class="cta">
         <a class="btn primary" href={releases}>Download</a>
-        <a class="btn" href={repo}>View source on GitHub</a>
+        <a class="btn" href={repo}>Source</a>
       </p>
-      <p class="fine">Linux builds (.deb and AppImage) are on the releases page. Opens <code>.mscz</code> and PDF files.</p>
+      <p class="fine">Linux: .deb and AppImage on the releases page.</p>
     </div>
   </header>
 
   <main>
-    <Demo />
+    {
+      showcase.map((f) => (
+        <section class="showcase">
+          <div class="wrap">
+            <h2>{f.title}</h2>
+            <p>{f.body}</p>
+            {f.image ? (
+              <img src={f.image} alt="" width="1920" height="1080" loading="lazy" />
+            ) : (
+              <video src={f.video} width="1920" height="1080" muted loop playsinline preload="none" aria-hidden="true" />
+            )}
+          </div>
+        </section>
+      ))
+    }
 
-    <section class="why">
+    <section>
       <div class="wrap narrow">
-        <h2>Why it exists</h2>
-        <p>
-          MuseScore is great for writing music, but when you’re <em>learning</em> a piece you don’t want an
-          editor: you want to see the page, hear the passage you’re stuck on, and repeat it slowly.
-        </p>
-        <p>
-          Lyrica treats a score as something to read. You open it, select some bars, and practise.
-          There is nothing to edit and nothing to break.
-        </p>
-      </div>
-    </section>
-
-    <section class="features">
-      <div class="wrap">
-        <h2>What it does</h2>
-        <div class="grid">
-          {
-            features.map((f) => (
-              <article>
-                <h3>{f.title}</h3>
-                <p>{f.body}</p>
-              </article>
-            ))
-          }
-        </div>
-      </div>
-    </section>
-
-    <section class="how">
-      <div class="wrap narrow">
-        <h2>How a session goes</h2>
-        <ol>
-          <li><strong>Open a score.</strong> Pick a file or a folder; recent and pinned scores are one click away.</li>
-          <li><strong>Select the hard bars.</strong> Drag across them, or add a marker so you remember why.</li>
-          <li><strong>Loop at half speed.</strong> Press Space, turn on the metronome, and bring the tempo up as it gets easier.</li>
-          <li><strong>Rate it.</strong> Give the piece a 1–5 knowledge level so the library shows what needs work.</li>
-        </ol>
-        <div class="keys">
-          {keys.map(([k, v]) => <span><kbd>{k}</kbd> {v}</span>)}
-        </div>
-      </div>
-    </section>
-
-    <section class="honest">
-      <div class="wrap narrow">
-        <h2>Good to know</h2>
+        <h2>Also</h2>
         <ul>
-          <li><strong>Local-first.</strong> Everything runs on your machine, with no account and no cloud. Your notes, ratings and loops are stored in the app’s data folder, keyed by the file’s contents, so they survive renames and moves.</li>
-          <li><strong>Your files stay untouched.</strong> Scores saved by older MuseScore versions are upgraded in memory after you confirm. The original is never overwritten.</li>
-          <li><strong>Not an editor.</strong> You can’t change notes. For that, use MuseScore.</li>
-          <li><strong>PDF mode is metronome-only.</strong> A PDF has no note data, so there’s a click and loops, but no synthesised audio of the music.</li>
-          <li><strong>Sound is General MIDI.</strong> Playback uses a bundled GM soundfont, so it sounds like a clean MIDI rendition, not a concert recording.</li>
-          <li><strong>Linux first.</strong> Built and tested on Linux. It’s a Tauri app, so other platforms are plausible but not yet released.</li>
+          {features.map((f) => <li>{f}</li>)}
+        </ul>
+        <p class="keys">
+          Keys: {keys.map(([k, v], i) => <><kbd>{k}</kbd> {v}{i < keys.length - 1 ? ', ' : ''}</>)}
+        </p>
+      </div>
+    </section>
+
+    <section>
+      <div class="wrap narrow">
+        <h2>Limitations</h2>
+        <ul>
+          {limits.map((l) => <li>{l}</li>)}
         </ul>
       </div>
     </section>
@@ -135,51 +116,57 @@ const keys = [
 
   <footer>
     <div class="wrap">
-      <span class="disclaimer">Lyrica is an independent project and is not affiliated with, endorsed by or connected to the MuseScore team, the MuseScore project or Muse Group in any way. “MuseScore” is named only to describe the file format Lyrica opens.</span>
-      <span>Lyrica is free software under the <a href={`${repo}/blob/main/LICENSE`}>GNU GPL v3</a>.</span>
-      <span>
-        <a href={repo}>GitHub</a> · <a href={`${repo}/issues`}>Report a problem</a> · <a href={releases}>Latest release</a>
-      </span>
+      <p>
+        Lyrica is an independent project and is not affiliated with, endorsed by or connected to the
+        MuseScore team, the MuseScore project or Muse Group. “MuseScore” is named only to describe the
+        file format Lyrica opens.
+      </p>
+      <p>
+        GPL v3 (<a href={`${repo}/blob/main/LICENSE`}>license</a>) ·
+        <a href={repo}>GitHub</a> · <a href={`${repo}/issues`}>Report a problem</a>
+      </p>
     </div>
   </footer>
 </Layout>
 
+<script>
+  // Videos are silent screen recordings: play them only while on screen.
+  const io = new IntersectionObserver((entries) => {
+    for (const e of entries) {
+      const v = e.target as HTMLVideoElement
+      if (e.isIntersecting) void v.play().catch(() => {})
+      else v.pause()
+    }
+  }, { threshold: 0.4 })
+  document.querySelectorAll('.showcase video').forEach((v) => io.observe(v))
+</script>
+
 <style>
-  .hero { padding: 5rem 0 3rem; }
-  .eyebrow { margin: 0 0 1rem; color: var(--accent); font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; font-size: 0.8rem; }
-  h1 { font-size: clamp(2.3rem, 6vw, 4rem); letter-spacing: -0.01em; }
-  .sub { max-width: 40rem; font-size: 1.15rem; color: var(--muted); margin: 1.25rem 0 0; }
-  .cta { display: flex; flex-wrap: wrap; gap: 0.75rem; margin: 2rem 0 0.75rem; }
+  .hero { padding: 4rem 0 1rem; }
+  h1 { font-size: clamp(2rem, 5vw, 2.75rem); }
+  .sub { max-width: 38rem; color: var(--muted); margin: 0.75rem 0 0; }
+  .cta { display: flex; flex-wrap: wrap; gap: 0.6rem; margin: 1.5rem 0 0.6rem; }
   .btn {
-    display: inline-block; padding: 0.7rem 1.3rem; border-radius: 8px; text-decoration: none; font-weight: 600;
-    border: 1px solid var(--line); color: var(--ink); background: var(--surface);
+    display: inline-block; padding: 0.5rem 1.1rem; border-radius: 4px; text-decoration: none;
+    border: 1px solid var(--line); color: var(--ink);
   }
   .btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
-  .btn:hover { filter: brightness(1.06); }
+  .btn:hover { filter: brightness(1.08); }
   .fine { color: var(--muted); font-size: 0.9rem; margin: 0; }
-  code { font-size: 0.9em; }
 
-  section { padding: 3.5rem 0; }
-  .narrow > * { max-width: 44rem; }
-  h2 { font-size: clamp(1.6rem, 3.5vw, 2.2rem); margin-bottom: 1rem; }
-  .why p, .how li { color: var(--muted); }
-  .why p strong, .how li strong { color: var(--ink); }
+  section { padding: 2rem 0; }
+  .narrow > * { max-width: 42rem; }
+  h2 { font-size: 1.4rem; margin-bottom: 0.75rem; }
+  ul { padding-left: 1.2rem; margin: 0; }
+  li { margin-bottom: 0.4rem; }
+  .keys { color: var(--muted); font-size: 0.95rem; margin-top: 1.25rem; }
 
-  .features { background: var(--surface); border-block: 1px solid var(--line); }
-  .grid { display: grid; gap: 1.25rem; grid-template-columns: repeat(auto-fill, minmax(17rem, 1fr)); margin-top: 1.75rem; }
-  article { padding: 1.25rem; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); }
-  article h3 { font-size: 1.15rem; margin-bottom: 0.4rem; }
-  article p { margin: 0; color: var(--muted); font-size: 0.97rem; }
-
-  ol { padding-left: 1.25rem; }
-  li { margin-bottom: 0.7rem; }
-  .keys { display: flex; flex-wrap: wrap; gap: 0.6rem 1.4rem; margin-top: 1.75rem; color: var(--muted); font-size: 0.95rem; }
-
-  .honest { background: var(--surface); border-top: 1px solid var(--line); }
-  .honest ul { padding-left: 1.2rem; color: var(--muted); }
-  .honest li strong { color: var(--ink); }
+  .showcase p { max-width: 42rem; color: var(--muted); margin: 0 0 1rem; }
+  .showcase img, .showcase video {
+    display: block; width: 100%; height: auto; aspect-ratio: 16 / 9;
+    border: 1px solid var(--line); border-radius: 6px; background: var(--surface);
+  }
 
   footer { padding: 2rem 0 3rem; color: var(--muted); font-size: 0.9rem; }
-  .disclaimer { flex-basis: 100%; max-width: 46rem; }
-  footer .wrap { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 0.75rem; }
+  footer p { max-width: 42rem; margin: 0 0 0.5rem; }
 </style>
