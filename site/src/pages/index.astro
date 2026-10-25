@@ -1,59 +1,59 @@
 ---
-import Layout from '../layouts/Layout.astro'
+import Layout from "../layouts/Layout.astro";
 
-const repo = 'https://github.com/hawawa4/lyrica'
-const releases = `${repo}/releases/latest`
+const repo = "https://github.com/hawawa4/lyrica";
+const releases = `${repo}/releases/latest`;
 
 const showcase = [
   {
-    title: 'Library',
-    body: 'Browse a folder of scores, pin the ones you’re working on, and give each a 1–5 knowledge rating. Filter by rating to pick what to practise next.',
-    image: '/media/LibraryView.webp',
+    title: "Library",
+    body: "Browse a folder of scores, pin the ones you’re working on, and give each a 1–5 knowledge rating. Filter by rating to pick what to practise next.",
+    image: "/media/LibraryView.webp",
   },
   {
-    title: 'Themes',
-    body: 'Light, dark and paper. The score is recoloured along with the interface.',
-    video: '/media/themeselector.webm',
+    title: "Themes",
+    body: "Light, dark and paper. The score is recoloured along with the interface.",
+    video: "/media/themeselector.webm",
   },
   {
-    title: 'Page modes',
-    body: 'Zoom, fit to width or height, two-page book mode, continuous scroll (vertical, or horizontal with book mode) and a distraction-free view (F).',
-    video: '/media/pagemodes.webm',
+    title: "Page modes",
+    body: "Zoom, fit to width or height, two-page book mode, continuous scroll (vertical, or horizontal with book mode) and a distraction-free view (F).",
+    video: "/media/pagemodes.webm",
   },
   {
-    title: 'PDFs too',
-    body: 'No .mscz? Open a PDF and mark where the measures are (barline detection can help). Loops and the metronome work the same way.',
-    video: '/media/alsopdf.webm',
+    title: "PDFs too",
+    body: "No .mscz? Open a PDF and mark where the measures are (barline detection can help). Loops and the metronome work the same way.",
+    video: "/media/alsopdf.webm",
   },
   {
-    title: 'Several tunes in one file',
-    body: 'Soundtrack albums and collections are often a single .mscz. Lyrica finds the titles inside and lists them, so you can jump between pieces.',
-    video: '/media/tuneselection.webm',
+    title: "Several tunes in one file",
+    body: "Soundtrack albums and collections are often a single .mscz. Lyrica finds the titles inside and lists them, so you can jump between pieces.",
+    video: "/media/tuneselection.webm",
   },
-]
+];
 
 const features = [
-  'Select bars and loop them. The loop follows repeats and D.C./D.S. jumps.',
-  'Play at 0.5×, 0.75× or full speed.',
-  'Metronome built from the score’s time signatures and tempo changes. M toggles it.',
-  'Attach a note to a measure. Notes are saved per score.',
-]
+  "Select bars and loop them. The loop follows repeats and D.C./D.S. jumps.",
+  "Play at 0.5×, 0.75× or full speed.",
+  "Metronome built from the score’s time signatures and tempo changes. M toggles it.",
+  "Attach a note to a measure. Notes are saved per score.",
+];
 
 const keys = [
-  ['Space', 'play/pause'],
-  ['Esc', 'stop'],
-  ['M', 'metronome'],
-  ['F', 'distraction-free'],
-  ['← →', 'page'],
-]
+  ["Space", "play/pause"],
+  ["Esc", "stop"],
+  ["M", "metronome"],
+  ["F", "distraction-free"],
+  ["← →", "page"],
+];
 
 const limits = [
-  'It isn’t an editor. You can’t change notes.',
-  'PDFs have no note data, so PDF mode only has the click and loops, no audio of the music.',
-  'Playback uses a General MIDI soundfont, so it sounds like MIDI.',
-  'Linux only for now. It’s a Tauri app, so other platforms may follow.',
-  'Notes and ratings live in the app’s data folder, keyed by file contents, so renaming or moving a score is fine. Your files are never modified; scores from older MuseScore versions are upgraded in memory after you confirm.',
-]
+  "It isn’t an editor. You can’t change notes.",
+  "PDFs have no note data, so PDF mode only has the click and loops, no audio of the music.",
+  "Playback uses a General MIDI soundfont, so it sounds like MIDI.",
+  "Linux only for now. It’s a Tauri app, so other platforms may follow.",
+  "Notes and ratings live in the app’s data folder, keyed by file contents, so renaming or moving a score is fine. Your files are never modified; scores from older MuseScore versions are upgraded in memory after you confirm.",
+];
 ---
 
 <Layout
@@ -64,8 +64,8 @@ const limits = [
     <div class="wrap">
       <h1>Lyrica</h1>
       <p class="sub">
-        Opens MuseScore (.mscz) files and PDFs for practice. Select some bars and loop them, slow
-        playback down, play along with a metronome.
+        Opens MuseScore (.mscz) files and PDFs for practice. Select some bars
+        and loop them, slow playback down, play along with a metronome.
       </p>
       <p class="cta">
         <a class="btn primary" href={releases}>Download</a>
@@ -76,6 +76,30 @@ const limits = [
   </header>
 
   <main>
+    <section>
+      <div class="wrap">
+        <h2>Human disclaimer</h2>
+        <p class="sub">
+          Lyrica will remain free and open source. This is not a micro-SaaS,
+          this is not a get rich fast scheme. I made this for myself and my own
+          piano practice.<br /><br /> The vast majority of the code is AI generated.
+          Want to fork it and make something better? Please go ahead.<br /><br
+          /> PDF support is relatively limited, there's no proper PDF to MSCZ conversion
+          If you're looking for a much better PDF experience and practice log, I can
+          highly recomment <a href="https://soundslice.com">Soundslice</a> (no affiliation
+          with them)
+        </p>
+        <br />
+        <h3>Contact</h3>
+        <p class="sub">
+          If you are actually using this, and have ideas or suggestions that
+          you'd like to see, feel free to <a
+            href="https://github.com/hawawa4/lyrica/issues/new/choose"
+            >Open a new issue on Github</a
+          >
+        </p>
+      </div>
+    </section>
     {
       showcase.map((f) => (
         <section class="showcase">
@@ -83,9 +107,24 @@ const limits = [
             <h2>{f.title}</h2>
             <p>{f.body}</p>
             {f.image ? (
-              <img src={f.image} alt="" width="1920" height="1080" loading="lazy" />
+              <img
+                src={f.image}
+                alt=""
+                width="1920"
+                height="1080"
+                loading="lazy"
+              />
             ) : (
-              <video src={f.video} width="1920" height="1080" muted loop playsinline preload="none" aria-hidden="true" />
+              <video
+                src={f.video}
+                width="1920"
+                height="1080"
+                muted
+                loop
+                playsinline
+                preload="none"
+                aria-hidden="true"
+              />
             )}
           </div>
         </section>
@@ -99,7 +138,14 @@ const limits = [
           {features.map((f) => <li>{f}</li>)}
         </ul>
         <p class="keys">
-          Keys: {keys.map(([k, v], i) => <><kbd>{k}</kbd> {v}{i < keys.length - 1 ? ', ' : ''}</>)}
+          Keys: {
+            keys.map(([k, v], i) => (
+              <>
+                <kbd>{k}</kbd> {v}
+                {i < keys.length - 1 ? ", " : ""}
+              </>
+            ))
+          }
         </p>
       </div>
     </section>
@@ -117,13 +163,15 @@ const limits = [
   <footer>
     <div class="wrap">
       <p>
-        Lyrica is an independent project and is not affiliated with, endorsed by or connected to the
-        MuseScore team, the MuseScore project or Muse Group. “MuseScore” is named only to describe the
-        file format Lyrica opens.
+        Lyrica is an independent project and is not affiliated with, endorsed by
+        or connected to the MuseScore team, the MuseScore project or Muse Group.
+        “MuseScore” is named only to describe the file format Lyrica opens.
       </p>
       <p>
         GPL v3 (<a href={`${repo}/blob/main/LICENSE`}>license</a>) ·
-        <a href={repo}>GitHub</a> · <a href={`${repo}/issues`}>Report a problem</a>
+        <a href={repo}>GitHub</a> · <a href={`${repo}/issues`}
+          >Report a problem</a
+        >
       </p>
     </div>
   </footer>
@@ -131,42 +179,105 @@ const limits = [
 
 <script>
   // Videos are silent screen recordings: play them only while on screen.
-  const io = new IntersectionObserver((entries) => {
-    for (const e of entries) {
-      const v = e.target as HTMLVideoElement
-      if (e.isIntersecting) void v.play().catch(() => {})
-      else v.pause()
-    }
-  }, { threshold: 0.4 })
-  document.querySelectorAll('.showcase video').forEach((v) => io.observe(v))
+  const io = new IntersectionObserver(
+    (entries) => {
+      for (const e of entries) {
+        const v = e.target as HTMLVideoElement;
+        if (e.isIntersecting) void v.play().catch(() => {});
+        else v.pause();
+      }
+    },
+    { threshold: 0.4 },
+  );
+  document.querySelectorAll(".showcase video").forEach((v) => io.observe(v));
 </script>
 
 <style>
-  .hero { padding: 4rem 0 1rem; }
-  h1 { font-size: clamp(2rem, 5vw, 2.75rem); }
-  .sub { max-width: 38rem; color: var(--muted); margin: 0.75rem 0 0; }
-  .cta { display: flex; flex-wrap: wrap; gap: 0.6rem; margin: 1.5rem 0 0.6rem; }
+  .hero {
+    padding: 4rem 0 1rem;
+  }
+  h1 {
+    font-size: clamp(2rem, 5vw, 2.75rem);
+  }
+  .sub {
+    max-width: 38rem;
+    color: var(--muted);
+    margin: 0.75rem 0 0;
+  }
+  .cta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.6rem;
+    margin: 1.5rem 0 0.6rem;
+  }
   .btn {
-    display: inline-block; padding: 0.5rem 1.1rem; border-radius: 4px; text-decoration: none;
-    border: 1px solid var(--line); color: var(--ink);
+    display: inline-block;
+    padding: 0.5rem 1.1rem;
+    border-radius: 4px;
+    text-decoration: none;
+    border: 1px solid var(--line);
+    color: var(--ink);
   }
-  .btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
-  .btn:hover { filter: brightness(1.08); }
-  .fine { color: var(--muted); font-size: 0.9rem; margin: 0; }
-
-  section { padding: 2rem 0; }
-  .narrow > * { max-width: 42rem; }
-  h2 { font-size: 1.4rem; margin-bottom: 0.75rem; }
-  ul { padding-left: 1.2rem; margin: 0; }
-  li { margin-bottom: 0.4rem; }
-  .keys { color: var(--muted); font-size: 0.95rem; margin-top: 1.25rem; }
-
-  .showcase p { max-width: 42rem; color: var(--muted); margin: 0 0 1rem; }
-  .showcase img, .showcase video {
-    display: block; width: 100%; height: auto; aspect-ratio: 16 / 9;
-    border: 1px solid var(--line); border-radius: 6px; background: var(--surface);
+  .btn.primary {
+    background: var(--accent);
+    color: var(--accent-ink);
+    border-color: var(--accent);
+  }
+  .btn:hover {
+    filter: brightness(1.08);
+  }
+  .fine {
+    color: var(--muted);
+    font-size: 0.9rem;
+    margin: 0;
   }
 
-  footer { padding: 2rem 0 3rem; color: var(--muted); font-size: 0.9rem; }
-  footer p { max-width: 42rem; margin: 0 0 0.5rem; }
+  section {
+    padding: 2rem 0;
+  }
+  .narrow > * {
+    max-width: 42rem;
+  }
+  h2 {
+    font-size: 1.4rem;
+    margin-bottom: 0.75rem;
+  }
+  ul {
+    padding-left: 1.2rem;
+    margin: 0;
+  }
+  li {
+    margin-bottom: 0.4rem;
+  }
+  .keys {
+    color: var(--muted);
+    font-size: 0.95rem;
+    margin-top: 1.25rem;
+  }
+
+  .showcase p {
+    max-width: 42rem;
+    color: var(--muted);
+    margin: 0 0 1rem;
+  }
+  .showcase img,
+  .showcase video {
+    display: block;
+    width: 100%;
+    height: auto;
+    aspect-ratio: 16 / 9;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: var(--surface);
+  }
+
+  footer {
+    padding: 2rem 0 3rem;
+    color: var(--muted);
+    font-size: 0.9rem;
+  }
+  footer p {
+    max-width: 42rem;
+    margin: 0 0 0.5rem;
+  }
 </style>
