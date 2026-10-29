@@ -1,14 +1,19 @@
 # Lyrica
 
+[![CI](https://img.shields.io/github/actions/workflow/status/hawawa4/lyrica/ci.yml?branch=main&label=CI&logo=githubactions&logoColor=white)](https://github.com/hawawa4/lyrica/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/hawawa4/lyrica?logo=github)](https://github.com/hawawa4/lyrica/releases)
+[![License: GPL-3.0-only](https://img.shields.io/badge/license-GPL--3.0--only-blue)](LICENSE)
+[![Built with Tauri 2](https://img.shields.io/badge/built%20with-Tauri%202-24C8DB?logo=tauri&logoColor=white)](https://tauri.app)
+[![Rust](https://img.shields.io/badge/rust-2021-orange?logo=rust&logoColor=white)](https://www.rust-lang.org)
+[![Platform: Linux](https://img.shields.io/badge/platform-Linux-informational?logo=linux&logoColor=white)](https://lyrica.hawawa.org)
+[![Website](https://img.shields.io/badge/website-lyrica.hawawa.org-8A2BE2)](https://lyrica.hawawa.org)
+
 **Practice from the score you already have.**  
 [lyrica.hawawa.org](https://lyrica.hawawa.org)
 
 Lyrica opens your [MuseScore](https://musescore.org) `.mscz` files like a PDF reader (not an editor) and adds the things you reach for while learning a piece: loop a hard passage, slow it down, play along with a click, and keep track of what you've practised.
 
 > **Not affiliated with MuseScore.** Lyrica is an independent project. It has no affiliation, association, endorsement or connection of any kind with the MuseScore team, the MuseScore project, or Muse Group. "MuseScore" is a trademark of its respective owners and is used here only to say which file format Lyrica can open.
-
-[![CI](https://github.com/hawawa4/lyrica/actions/workflows/ci.yml/badge.svg)](https://github.com/hawawa4/lyrica/actions/workflows/ci.yml)
-[![License: GPL v3](https://img.shields.io/badge/license-GPLv3-blue.svg)](LICENSE)
 
 ## Features
 
