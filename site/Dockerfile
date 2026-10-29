@@ -2,7 +2,7 @@
 #   docker build -t lyrica-site site/
 #   docker run --rm -p 8080:8080 lyrica-site
 
-FROM node:22-alpine AS build
+FROM node:25-alpine AS build
 WORKDIR /site
 COPY package.json package-lock.json ./
 RUN npm ci
