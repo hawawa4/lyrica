@@ -62,7 +62,10 @@ const limits = [
 >
   <header class="hero">
     <div class="wrap">
-      <h1>Lyrica</h1>
+      <h1>
+        <img class="logo" src="/lyrica-hat.png" alt="" width="64" height="64" />
+        Lyrica
+      </h1>
       <p class="sub">
         Opens MuseScore (.mscz) files and PDFs for practice. Select some bars
         and loop them, slow playback down, play along with a metronome.
@@ -198,6 +201,14 @@ const limits = [
   }
   h1 {
     font-size: clamp(2rem, 5vw, 2.75rem);
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+  }
+  .logo {
+    /* Source is 128px pixel art: a fixed 64px is an exact 2:1 downscale. */
+    width: 64px;
+    height: 64px;
   }
   .sub {
     max-width: 38rem;

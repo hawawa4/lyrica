@@ -67,6 +67,18 @@ web-build:
 dev:
     cargo tauri dev
 
+# Install a hidden .desktop entry + icon under ~/.local/share so dev builds get
+# the app icon. Wayland has no per-window icon API: the compositor matches the
+# window's app_id ("lyrica", the binary name) to lyrica.desktop, and shows its
+# generic fallback (KDE: the Wayland "W") when there is none. The .deb ships its
+# own entry, so this is only needed when running unpackaged binaries.
+install-dev-desktop:
+    install -Dm644 crates/desktop/icons/128x128.png ~/.local/share/icons/hicolor/128x128/apps/lyrica.png
+    install -Dm644 crates/desktop/icons/icon.png ~/.local/share/icons/hicolor/512x512/apps/lyrica.png
+    printf '%s\n' '[Desktop Entry]' 'Type=Application' 'Name=Lyrica' 'Exec=lyrica' 'Icon=lyrica' 'NoDisplay=true' > ~/.local/share/applications/lyrica.desktop
+    -gtk-update-icon-cache -q -t ~/.local/share/icons/hicolor
+    -kbuildsycoca6 --noincremental
+
 # Build a debug desktop binary without packaging installers.
 build-debug:
     cargo tauri build --debug --no-bundle
