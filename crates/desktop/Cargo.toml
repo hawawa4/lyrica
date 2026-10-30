@@ -15,7 +15,7 @@ path = "src/main.rs"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-mp-core = { path = "../core", features = ["desktop-audio"] }
+mp-core = { path = "../core", features = ["desktop-audio", "updater"] }
 cpal = "0.15"
 tauri = { version = "2.12.3", features = [] }
 tauri-plugin-dialog = "2"

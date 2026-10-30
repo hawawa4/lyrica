@@ -2,6 +2,7 @@
 
 mod audio_state;
 mod commands;
+mod updates;
 
 use audio_state::AudioState;
 use tauri::Manager;
@@ -43,6 +44,7 @@ fn main() {
                 ),
             }
             app.manage(audio_state);
+            app.manage(updates::UpdateState::default());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -82,6 +84,9 @@ fn main() {
             commands::save_calibration_points,
             commands::pdf_tempo_map,
             commands::detect_barlines,
+            updates::check_for_update,
+            updates::install_update,
+            updates::restart_app,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

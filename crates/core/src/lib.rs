@@ -11,3 +11,5 @@ pub mod rating;
 pub mod recent_files;
 pub mod sidecar;
 pub mod timeline;
+#[cfg(feature = "updater")]
+pub mod updater;

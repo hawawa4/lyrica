@@ -17,6 +17,9 @@ blake3 = "1"
 oxisynth = { version = "0.1.0", features = ["sf3"] }
 midly = { version = "0.5.3", default-features = false, features = ["std"] }
 walkdir = "2.5.0"
+ureq = { version = "3", optional = true }
+sha2 = { version = "0.10", optional = true }
+tempfile = { version = "3", optional = true }
 
 [dev-dependencies]
 tempfile = "3"
@@ -24,6 +27,8 @@ tempfile = "3"
 [features]
 default = []
 desktop-audio = ["dep:cpal"]
+# GitHub-release update check + in-place install (see `updater`).
+updater = ["dep:ureq", "dep:sha2", "dep:tempfile"]
 
 [dependencies.cpal]
 version = "0.15"
