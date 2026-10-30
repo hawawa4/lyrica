@@ -12,7 +12,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
 zip = "9.0.2"
-quick-xml = "0.36"
+quick-xml = "0.42"
 blake3 = "1"
 oxisynth = { version = "0.1.0", features = ["sf3"] }
 midly = { version = "0.5.3", default-features = false, features = ["std"] }
