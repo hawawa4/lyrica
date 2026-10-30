@@ -851,7 +851,7 @@ dependencies = [
 
 [[package]]
 name = "cv-barline"
-version = "2.4.0"
+version = "2.5.0"
 dependencies = [
  "image",
  "serde",
@@ -978,7 +978,7 @@ dependencies = [
 
 [[package]]
 name = "desktop"
-version = "2.4.0"
+version = "2.5.0"
 dependencies = [
  "cpal",
  "mp-core",
@@ -2474,7 +2474,7 @@ dependencies = [
 
 [[package]]
 name = "mp-core"
-version = "2.4.0"
+version = "2.5.0"
 dependencies = [
  "blake3",
  "cpal",
@@ -3743,7 +3743,7 @@ dependencies = [
 
 [[package]]
 name = "server"
-version = "2.4.0"
+version = "2.5.0"
 dependencies = [
  "mp-core",
 ]
