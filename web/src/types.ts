@@ -91,3 +91,23 @@ export interface StaffSystem {
   bottom: number
   barline_xs: number[]
 }
+
+/** Mirrors `mp_core::updater::UpdateInfo`. */
+export interface UpdateInfo {
+  current: string
+  latest: string
+  available: boolean
+  page_url: string
+  /** How this copy was installed, which decides how an update is applied. */
+  kind: 'appimage' | 'deb' | 'binary' | 'unsupported'
+  /** Whether the app can apply the update itself; `reason` says why not otherwise (the release page is then the way to update). */
+  can_install: boolean
+  reason: string | null
+}
+
+/** Mirrors `mp_core::updater::Progress`. `done`/`total` are bytes while downloading (`total` is 0 when unknown). */
+export interface UpdateProgress {
+  phase: 'downloading' | 'installing' | 'done'
+  done: number
+  total: number
+}

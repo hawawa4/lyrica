@@ -31,6 +31,12 @@ The `.sf3` is decoded to raw samples at load time: ~2s on a desktop CPU, and the
 
 oxisynth's AllNotesOff respects the sustain pedal, so `Player` lifts the pedal around it on pause/seek/loop-wrap (`release_all_notes`) — otherwise pedalled notes keep ringing.
 
+## Updates
+
+The library view (`web/src/views/UpdateNotice.ts`) shows a small non-modal "Lyrica X.Y.Z is available" chip bottom-right — no dialogs/toasts. It checks GitHub's `releases/latest` **once per launch**, silently (failures only hit the console), and installs only when the user clicks it. `crates/core/src/updater/` (behind the `updater` feature, enabled by the desktop crate) holds all the logic; `crates/desktop/src/updates.rs` is the thin Tauri wrapper (`check_for_update`, `install_update` streaming progress over a `Channel`, `restart_app`).
+
+How it installs depends on `Install::detect()`: an AppImage (`$APPIMAGE`) is downloaded next to itself and atomically renamed over; a `.deb` (exe under `/usr/`, not `/usr/local/`) is downloaded and installed with `pkexec apt-get install` (polkit password dialog — a GUI has no tty for sudo). Anything else (`cargo run`, `/usr/local/bin`) has no release artifact to update from, so the chip just opens the release page. Every download is verified against the release's `SHA256SUMS.txt` and refused without one. Both depend on `release.yml`: the asset names are Tauri's `Lyrica_<version>_amd64.{AppImage,deb}`, and the running version is `CARGO_PKG_VERSION`, which `release.yml`'s `prepare` job already requires to equal the tag — keep both in sync if the release job changes.
+
 ## Known gotchas
 
 - **webmscore in Node vs. browser**: webmscore 1.2.1's Node-targeted glue code breaks under Node 22 (read-only `navigator`, global `fetch` misdetection) — it should never be needed in `web/` itself, which always runs in a real browser or Tauri webview.

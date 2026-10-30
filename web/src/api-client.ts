@@ -12,6 +12,8 @@ import type {
   Piece,
   RecentFile,
   StaffSystem,
+  UpdateInfo,
+  UpdateProgress,
 } from './types'
 
 /** True when running inside the Tauri desktop webview, false in a plain browser tab. */
@@ -348,4 +350,35 @@ export async function detectBarlines(pngBytes: Uint8Array): Promise<StaffSystem[
   if (!isTauri()) throw new Error('detectBarlines: desktop-only for now')
   const { invoke } = await import('@tauri-apps/api/core')
   return invoke<StaffSystem[]>('detect_barlines', { pngBytes: Array.from(pngBytes) })
+}
+
+/**
+ * Asks GitHub whether a newer release exists. Desktop-only; the Rust side
+ * does the request (and reports how this copy was installed, which decides
+ * whether `installUpdate` can apply it).
+ */
+export async function checkForUpdate(): Promise<UpdateInfo> {
+  if (!isTauri()) throw new Error('checkForUpdate: desktop-only')
+  const { invoke } = await import('@tauri-apps/api/core')
+  return invoke<UpdateInfo>('check_for_update')
+}
+
+/**
+ * Downloads, verifies and installs the latest release (replacing the
+ * AppImage in place, or handing a `.deb` to apt behind the system's password
+ * prompt). The running app is untouched until `restartApp`.
+ */
+export async function installUpdate(onProgress: (progress: UpdateProgress) => void): Promise<void> {
+  if (!isTauri()) throw new Error('installUpdate: desktop-only')
+  const { invoke, Channel } = await import('@tauri-apps/api/core')
+  const channel = new Channel<UpdateProgress>()
+  channel.onmessage = onProgress
+  await invoke('install_update', { onProgress: channel })
+}
+
+/** Relaunches into the version `installUpdate` put on disk. */
+export async function restartApp(): Promise<void> {
+  if (!isTauri()) throw new Error('restartApp: desktop-only')
+  const { invoke } = await import('@tauri-apps/api/core')
+  await invoke('restart_app')
 }

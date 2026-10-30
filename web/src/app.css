@@ -935,3 +935,109 @@
   font-size: 13px;
   overflow-wrap: anywhere;
 }
+
+/* Library view: "new version available" chip, bottom-right (see UpdateNotice). Non-modal, never blocks the lists. */
+.update-notice {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 10;
+  max-width: min(420px, calc(100vw - 32px));
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--bg-elevated);
+  color: var(--text);
+  box-shadow: var(--shadow);
+  font-size: 13px;
+}
+
+.update-notice[hidden] {
+  display: none;
+}
+
+.update-notice[data-state='installed'] {
+  border-color: var(--success);
+}
+
+.update-notice[data-state='error'] {
+  border-color: var(--danger);
+}
+
+.update-notice-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.update-notice-text {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.update-notice-link,
+.update-notice-dismiss {
+  flex-shrink: 0;
+  border: none;
+  background: none;
+  padding: 2px 4px;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.update-notice-action {
+  flex-shrink: 0;
+}
+
+.update-notice-link {
+  font-size: 12px;
+  text-decoration: underline;
+}
+
+.update-notice-dismiss {
+  font-size: 18px;
+  line-height: 1;
+}
+
+.update-notice-link:hover,
+.update-notice-dismiss:hover {
+  color: var(--text);
+}
+
+.update-notice-bar {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--border);
+  overflow: hidden;
+}
+
+.update-notice-bar-fill {
+  height: 100%;
+  width: 0;
+  background: var(--accent);
+  transition: width 0.1s linear;
+}
+
+.update-notice-bar.indeterminate .update-notice-bar-fill {
+  width: 35%;
+  animation: update-notice-slide 1.2s ease-in-out infinite;
+}
+
+@keyframes update-notice-slide {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(300%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .update-notice-bar.indeterminate .update-notice-bar-fill {
+    animation: none;
+  }
+}

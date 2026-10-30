@@ -15,6 +15,7 @@ import type { KnowledgeLevel, PinnedFile, RecentFile } from '../types'
 import { FileListPanel } from './FileListPanel'
 import { FolderTree } from './FolderTree'
 import { LevelFilterBar } from './LevelFilterBar'
+import { UpdateNotice } from './UpdateNotice'
 
 /**
  * Landing screen: pick a root folder to browse for scores, see what's
@@ -109,6 +110,9 @@ export class LibraryView {
     this.folderTree.onRatingChange((path, _title, level) => void this.setRatingByPath(path, level))
 
     this.levelFilterBar.onChange((levels) => this.folderTree.setLevelFilter(levels))
+
+    // Pinned to the corner, outside the lists; checks GitHub once per launch.
+    void new UpdateNotice(this.root).checkOnce()
 
     this.searchInput.addEventListener('input', () => {
       this.folderTree.setSearchQuery(this.searchInput.value)
