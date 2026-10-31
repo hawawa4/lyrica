@@ -1,110 +1,117 @@
 # Lyrica
 
-[![CI](https://img.shields.io/github/actions/workflow/status/hawawa4/lyrica/ci.yml?branch=main&label=CI&logo=githubactions&logoColor=white)](https://github.com/hawawa4/lyrica/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/hawawa4/lyrica?logo=github)](https://github.com/hawawa4/lyrica/releases)
-[![License: GPL-3.0-only](https://img.shields.io/badge/license-GPL--3.0--only-blue)](LICENSE)
-[![Built with Tauri 2](https://img.shields.io/badge/built%20with-Tauri%202-24C8DB?logo=tauri&logoColor=white)](https://tauri.app)
-[![Rust](https://img.shields.io/badge/rust-2021-orange?logo=rust&logoColor=white)](https://www.rust-lang.org)
-[![Platform: Linux](https://img.shields.io/badge/platform-Linux-informational?logo=linux&logoColor=white)](https://lyrica.hawawa.org)
-[![Website](https://img.shields.io/badge/website-lyrica.hawawa.org-8A2BE2)](https://lyrica.hawawa.org)
+A sheet-music practice app for Linux. It opens MuseScore `.mscz` files the way a PDF reader opens PDFs (you read and play them, you don't edit them) and adds the tools you need while learning a piece: loop a passage, slow it down, play with a click, write on the score.
 
-**Practice from the score you already have.**  
-[lyrica.hawawa.org](https://lyrica.hawawa.org)
+Website: [lyrica.hawawa.org](https://lyrica.hawawa.org) · [Releases](https://github.com/hawawa4/lyrica/releases/latest) · [GPL-3.0](LICENSE)
 
-Lyrica opens your [MuseScore](https://musescore.org) `.mscz` files like a PDF reader (not an editor) and adds the things you reach for while learning a piece: loop a hard passage, slow it down, play along with a click, and keep track of what you've practised.
+> Lyrica is an independent project and is not affiliated with or endorsed by MuseScore or Muse Group. "MuseScore" is a trademark of its owners and is used only to name the file format Lyrica opens.
 
-> **Not affiliated with MuseScore.** Lyrica is an independent project. It has no affiliation, association, endorsement or connection of any kind with the MuseScore team, the MuseScore project, or Muse Group. "MuseScore" is a trademark of its respective owners and is used here only to say which file format Lyrica can open.
+## Using Lyrica
 
-## Features
+### Install
 
-- **Loop selection.** Drag across measures and just that range repeats. Loops follow the music as performed, so they're correct through repeats and D.C./D.S. jumps.
-- **Speed control.** 0.5×, 0.75× or 1×, with the cursor staying in sync with the audio.
-- **Metronome.** A click generated from the score's time signatures and tempo changes, with the downbeat accented.
-- **Markers.** Attach a short note to a measure ("watch the fingering"). Saved per score.
-- **Pieces index.** Detects when one file contains several pieces (soundtrack albums, collections) and lets you jump between them.
-- **Library.** Browse a folder of scores, pin favourites, see recents, and rate each piece 1 (never seen it) to 5 (can play it anytime), then filter by level.
-- **PDF mode.** For scores you only have as a PDF: mark where each measure sits (with an optional barline-detection assist) to get loops and a metronome. There's no audio of the notes, since a PDF has no note data.
-- **Reader niceties.** Multiple tabs, zoom / fit width / fit height, two-page book mode, a distraction-free view, and Light / Dark / Paper themes.
+Download a `.deb` or an `.AppImage` from the [latest release](https://github.com/hawawa4/lyrica/releases/latest).
 
-Your original files are never modified. Scores saved by an older MuseScore are upgraded in memory, after you confirm.
+```sh
+# Debian / Ubuntu
+sudo apt install ./Lyrica_*.deb
+
+# Any other distro
+chmod +x Lyrica_*.AppImage && ./Lyrica_*.AppImage
+```
+
+Only Linux x86_64 builds are published. Other platforms haven't been tried.
+
+Lyrica checks GitHub for a newer release once per launch. If there is one, a small chip appears in the bottom-right of the library. Nothing is downloaded until you click it. The AppImage replaces itself, the `.deb` installs through a polkit password prompt, and any other install (for example a build from source) just opens the release page. Downloads are checked against the release's `SHA256SUMS.txt`.
+
+### Opening music
+
+Drop a `.mscz` file (or a PDF) onto the window, use the file picker, or pick a score from the library. Your files are never modified. The score is rendered with [webmscore](https://github.com/LibreScore/webmscore), which is based on MuseScore 4.0, so it's possible for a score saved by a newer MuseScore to render slightly differently from how it looks there. If a score needs it, Lyrica offers to upgrade it in memory first.
+
+### Practice tools
+
+- **Loop.** Drag across measures to repeat just that range. Loops follow the music as played, so they're correct through repeats and D.C./D.S. jumps.
+- **Speed.** 0.5×, 0.75× or 1×. The cursor stays in sync with the audio.
+- **Metronome.** A click derived from the score's time signatures and tempo changes, with an accented downbeat.
+- **Markers.** Write directly on the sheet: text notes (`T`) and fingerings (`G`). Click to place one, click again to edit, drag to move. They're saved per score and scale with zoom.
+- **Pieces index.** If a file holds several pieces (a collection, a soundtrack), Lyrica detects them and lets you jump between them.
+- **Library.** Browse a folder of scores, pin favourites, see recents, and rate each piece from 1 (never seen it) to 5 (can play it any time) to filter by level.
+- **PDF mode.** For music you only have as a PDF. You mark where each measure sits (an optional barline detector helps), which gives you loops and a metronome. A PDF has no note data, so there is no audio of the notes.
+- **Reader.** Tabs, zoom / fit width / fit height, two-page book view, a distraction-free view, and Light / Dark / Paper themes.
+
+Audio is synthesized with MuseScore's General soundfont. It takes a couple of seconds to load at startup. Until then you'll only hear the metronome.
 
 ### Keyboard shortcuts
 
 | Key | Action |
 | --- | --- |
 | `Space` | Play / pause |
-| `Esc` | Stop |
-| `M` | Toggle metronome |
+| `Esc` | Put down the marker tool, otherwise stop |
+| `M` | Metronome on / off |
+| `T` / `G` | Text / fingering marker tool |
 | `F` | Distraction-free view |
 | `←` `→` | Previous / next page |
 
-## Install
+### Your data
 
-Download the latest `.deb` or `.AppImage` from the [releases page](https://github.com/hawawa4/lyrica/releases/latest).
+Everything stays on your machine, with no account and no network use apart from the update check. Markers, ratings, pieces indexes and PDF calibrations live in the app data directory (`~/.local/share/org.hawawa.lyrica` on Linux). They're keyed by a hash of the file's contents, so renaming or moving a score doesn't lose them. Editing a score does.
 
-```sh
-# Debian / Ubuntu
-sudo apt install ./Lyrica_*.deb
+## Developing Lyrica
 
-# Any distro
-chmod +x Lyrica_*.AppImage && ./Lyrica_*.AppImage
-```
+### Layout
 
-Only Linux builds are published for now. The app is built on [Tauri](https://tauri.app), so other platforms should be feasible but haven't been tested.
-
-## Where your data lives
-
-Everything is local: no account, no cloud. Markers, ratings, pieces indexes and PDF calibrations are stored in the app's data directory, keyed by a hash of the file's contents, so they survive renaming or moving a score.
-
-## Building from source
-
-You need [Rust](https://rustup.rs), Node.js 22+, [`just`](https://github.com/casey/just), the [Tauri CLI](https://tauri.app/reference/cli/) (`cargo install tauri-cli --version '^2'`) and the [Tauri system libraries](https://tauri.app/start/prerequisites/#linux) plus ALSA headers (`libasound2-dev`).
-
-```sh
-just fetch-soundfont     # GM soundfont for playback (~40 MB, not in git)
-just fetch-cjk-font      # so Japanese/Chinese/Korean titles render
-(cd web && npm install)
-
-just dev                 # run the desktop app with hot reload
-just test                # Rust test suite
-just release             # build the .deb and .AppImage into target/release/bundle/
-```
-
-Run `just` with no arguments to list every recipe.
-
-### How it's put together
-
-| Path | What |
+| Path | What it is |
 | --- | --- |
-| `web/` | Vite + TypeScript frontend. [webmscore](https://github.com/LibreScore/webmscore) renders scores and exports measure positions and MIDI in the webview; PDFs render via pdf.js. |
-| `crates/core` | Shared Rust logic: playback timeline, audio synthesis ([oxisynth](https://github.com/PolyMeilex/oxisynth)), markers, library, persistence. |
-| `crates/desktop` | The Tauri 2 shell: thin commands over `crates/core`. |
-| `crates/cv-barline` | Classical computer-vision barline detection for PDF mode. |
-| `crates/server` | Placeholder for a future web-server shell. Not functional. |
-| `site/` | The [landing page](site/) (Astro), shipped as a Docker image. |
+| `web/` | Vite + TypeScript frontend, which runs in the Tauri webview. Score and PDF rendering happens here: webmscore (WASM) renders `.mscz` and exports measure positions and MIDI, and pdf.js renders PDFs. Rust never parses `.mscz` or MIDI itself. |
+| `crates/core` (`mp-core`) | Shared Rust logic with no Tauri or axum imports: playback timeline, audio synthesis ([oxisynth](https://github.com/PolyMeilex/oxisynth)), markers and library persistence, the updater. |
+| `crates/desktop` | The Tauri 2 shell. Thin `#[tauri::command]` wrappers over `mp-core`, plus the audio output thread. |
+| `crates/cv-barline` | Classical (non-ML) barline detection for PDF mode. |
+| `crates/server` | Placeholder for a future axum shell. Not functional. |
+| `site/` | The landing page (Astro), built into a Docker image. Independent of the app. |
+| `scripts/` | One-off asset tooling (e.g. cutting the metronome clicks). |
 
-See [CLAUDE.md](CLAUDE.md) for the non-obvious gotchas (webmscore quirks, soundfont choice, etc.).
+How a score becomes playable: webmscore lays out the score and reports measure positions and a MIDI export. `mp-core` combines those into a `Timeline` (what's played when, with repeats unrolled), and the synth plays the MIDI through the soundfont while the frontend moves the cursor from the timeline.
 
-### Landing page
+### Prerequisites
+
+[Rust](https://rustup.rs), Node.js 22+, [`just`](https://github.com/casey/just), the [Tauri CLI](https://tauri.app/reference/cli/) (`cargo install tauri-cli --version '^2'`), the [Tauri Linux system libraries](https://tauri.app/start/prerequisites/#linux), and ALSA headers (`libasound2-dev`).
+
+### Run it
 
 ```sh
-cd site && npm install && npm run dev                  # develop
-docker build -t lyrica-site site/                # static site in nginx
-docker run --rm -p 8080:8080 lyrica-site
+(cd web && npm install)
+just fetch-soundfont     # ~40 MB GM soundfont, sha256-checked, not in git
+just fetch-cjk-font      # Noto Sans JP, so CJK titles render (not in git)
+just dev                 # desktop app with hot-reloading frontend
 ```
 
-Tagged releases also publish the image to `ghcr.io/hawawa4/lyrica-site`.
+The soundfont and font are needed even to build or lint the desktop crate, so fetch them first.
 
-## Releasing
+### Common tasks
 
-CI (`.github/workflows/ci.yml`) runs `cargo fmt`, `clippy -D warnings`, the Rust tests, the frontend typecheck/build and the landing-page build on every push and PR.
+| Command | Does |
+| --- | --- |
+| `just test` | Rust test suite. Audio tests skip if no soundfont is present. |
+| `just web-build` | Typecheck and build the frontend. |
+| `just build-release` | Release binary without installers. |
+| `just release` | Build the `.deb` and `.AppImage` into `target/release/bundle/`. |
+| `just install-dev-desktop` | Install a `.desktop` entry so unpackaged builds get the app icon on Wayland. |
 
-To cut a release, bump the version in `Cargo.toml` (`[workspace.package]`), `crates/desktop/tauri.conf.json` and `web/package.json`, merge to `main`, then run the **Release** workflow from the Actions tab (or push a matching `vX.Y.Z` tag). It checks that the versions agree, re-runs CI, builds the bundles, creates the tag and GitHub release with generated notes and checksums, and publishes the landing-page image.
+`just` with no arguments lists every recipe. Landing page: `cd site && npm install && npm run dev`, or `docker build -t lyrica-site site/`.
+
+CI runs on every push and PR: `cargo fmt --check`, `clippy -D warnings`, the Rust tests, the frontend typecheck and build, the landing page build, and an actionlint pass over the workflows.
+
+### Before you change things
+
+Several parts of this codebase depend on non-obvious behaviour of webmscore, the soundfont and the audio stack, such as a stubbed-out `version()`, a crashing `segmentPositions()`, MIDI/measure-time disagreements, and `!Send` audio streams. They're documented in [CLAUDE.md](CLAUDE.md#known-gotchas). Read that before touching the timeline, the score engine or the audio path.
+
+### Releasing
+
+1. Set the same version in `Cargo.toml` (`[workspace.package]`), `crates/desktop/tauri.conf.json` and `web/package.json`. The updater compares against this version, so it must match the tag.
+2. Merge to `main`, then run the **Release** workflow from the Actions tab (or push a matching `vX.Y.Z` tag).
+
+The workflow checks that the versions agree, re-runs CI, builds the bundles, creates the tag and GitHub release with generated notes and `SHA256SUMS.txt`, and publishes the landing-page image to `ghcr.io/hawawa4/lyrica-site`. The updater relies on the asset names (`Lyrica_<version>_amd64.{AppImage,deb}`) and the checksum file, so keep those if you change the workflow.
 
 ## Credits and licence
 
-Lyrica is free software under the [GNU GPL v3](LICENSE). It builds on [webmscore](https://github.com/LibreScore/webmscore) (GPL-3.0), [pdf.js](https://mozilla.github.io/pdf.js/) (Apache-2.0), [oxisynth](https://github.com/PolyMeilex/oxisynth) (LGPL-2.1), and ships the [MuseScore_General soundfont](assets/MuseScore_General_License.md) (MIT) and Noto Sans JP (OFL).
-
-## Disclaimer
-
-Lyrica is an independent, community project. It is not made, sponsored, endorsed or supported by the MuseScore team, the MuseScore project or Muse Group, and has no affiliation with them in any way. "MuseScore" and `.mscz` are mentioned only to describe file compatibility. Lyrica reads the MuseScore file format using the open-source webmscore library.
+Lyrica is free software under the [GNU GPL v3](LICENSE). It builds on [webmscore](https://github.com/LibreScore/webmscore) (GPL-3.0), [pdf.js](https://mozilla.github.io/pdf.js/) (Apache-2.0) and [oxisynth](https://github.com/PolyMeilex/oxisynth) (LGPL-2.1), and bundles the [MuseScore_General soundfont](assets/MuseScore_General_License.md) (MIT) and Noto Sans JP (OFL).
