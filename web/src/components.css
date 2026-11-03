@@ -487,16 +487,10 @@
   color: var(--text-muted);
 }
 
-.empty-state-icon {
-  display: grid;
-  place-items: center;
-  width: 72px;
-  height: 72px;
+.empty-state-logo {
+  width: 64px;
+  height: 64px;
   margin-bottom: 10px;
-  border-radius: 22px;
-  background: var(--bg-elevated);
-  color: var(--accent);
-  box-shadow: var(--shadow-sm);
 }
 
 .empty-state-title {
@@ -804,13 +798,8 @@
 }
 
 .brand-mark {
-  display: grid;
-  place-items: center;
-  width: 32px;
-  height: 32px;
-  border-radius: 10px;
-  background: var(--accent);
-  color: var(--accent-text);
+  width: 40px;
+  height: 40px;
 }
 
 .library-search-row {
@@ -1116,4 +1105,11 @@
 .vol-icon {
   display: flex;
   color: var(--text-faint);
+}
+
+/* In the app bar the pin is a plain toggle beside the stars, always visible (the hover-reveal is for library rows). */
+.appbar .pin-btn {
+  width: 30px;
+  height: 30px;
+  opacity: 1;
 }

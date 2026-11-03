@@ -30,6 +30,9 @@ import {
   loadPdfTempoMap,
   detectBarlines,
   getKnowledgeLevel,
+  listPinnedFiles,
+  pinFile,
+  unpinFile,
   setKnowledgeLevel,
   detectPieces,
   getPlaybackPosition,
@@ -253,6 +256,8 @@ export class PracticeView {
   private readonly calibrationStatusEl: HTMLSpanElement
   private readonly ratingMountEl: HTMLSpanElement
   private readonly ratingStars: RatingStars
+  /** Pin toggle beside the stars — only offered for a tab with a path on disk and a stable hash, same as the library's pin. */
+  private readonly pinBtn: HTMLButtonElement
   private readonly pdfControlsEl: HTMLDivElement
   private readonly rescanMeasuresBtn: HTMLButtonElement
   private readonly zoomOutBtn: HTMLButtonElement
@@ -382,7 +387,7 @@ export class PracticeView {
           </div>
           <div id="page" class="page-area">
             <div class="empty-state" id="empty-state">
-              <div class="empty-state-icon">${icon('music_note', 34)}</div>
+              <img class="empty-state-logo" src="/lyrica-hat.png" alt="" width="64" height="64" />
               <div class="empty-state-title">No sheet open</div>
               <div class="hint">Drag a .mscz or .pdf file onto this window, or pick one from your library.</div>
               <div class="empty-state-actions">
@@ -457,6 +462,12 @@ export class PracticeView {
     this.ratingMountEl = this.root.querySelector('#rating-mount')!
     this.ratingStars = new RatingStars()
     this.ratingMountEl.appendChild(this.ratingStars.el)
+    this.pinBtn = document.createElement('button')
+    this.pinBtn.type = 'button'
+    this.pinBtn.className = 'icon-btn pin-btn'
+    this.pinBtn.hidden = true
+    this.pinBtn.addEventListener('click', () => void this.togglePinForActiveTab())
+    this.ratingMountEl.appendChild(this.pinBtn)
     this.ratingStars.onChange((level) => void this.handleRatingChange(level))
     this.pdfControlsEl = this.root.querySelector('#pdf-controls')!
     this.rescanMeasuresBtn = this.root.querySelector('#rescan-measures-btn')!
@@ -1268,9 +1279,11 @@ export class PracticeView {
   private async loadRatingForTab(tab: TabState): Promise<void> {
     if (!isTauri() || tab.fileHash.startsWith('untracked-')) {
       this.ratingMountEl.style.display = 'none'
+      this.pinBtn.hidden = true
       return
     }
     this.ratingMountEl.style.display = 'inline-flex'
+    void this.loadPinForTab(tab)
     let level: KnowledgeLevel | null = null
     try {
       level = await getKnowledgeLevel(tab.fileHash)
@@ -1279,6 +1292,42 @@ export class PracticeView {
     }
     if (this.activeHash !== tab.fileHash) return // tab switched again while this was in flight
     this.ratingStars.setLevel(level)
+  }
+
+  /** Syncs the pin button to whether `tab` is in the pinned list. */
+  private async loadPinForTab(tab: TabState): Promise<void> {
+    this.pinBtn.hidden = tab.path === null
+    if (tab.path === null) return
+    let pinned = false
+    try {
+      pinned = (await listPinnedFiles()).some((p) => p.file_hash === tab.fileHash)
+    } catch (e) {
+      console.error('Failed to load pinned files:', e)
+    }
+    if (this.activeHash !== tab.fileHash) return // tab switched again while this was in flight
+    this.renderPinButton(pinned)
+  }
+
+  private renderPinButton(pinned: boolean): void {
+    this.pinBtn.classList.toggle('pinned', pinned)
+    this.pinBtn.setAttribute('aria-pressed', String(pinned))
+    this.pinBtn.title = pinned ? 'Unpin from the library' : 'Pin to the top of the library'
+    this.pinBtn.setAttribute('aria-label', this.pinBtn.title)
+    this.pinBtn.innerHTML = icon('push_pin', 18)
+  }
+
+  private async togglePinForActiveTab(): Promise<void> {
+    const active = this.activeTab()
+    if (!active || active.path === null || active.fileHash.startsWith('untracked-')) return
+    const pin = !this.pinBtn.classList.contains('pinned')
+    try {
+      if (pin) await pinFile(active.path, active.fileHash, active.title)
+      else await unpinFile(active.fileHash)
+    } catch (e) {
+      console.error('Failed to toggle pin:', e)
+      return
+    }
+    if (this.activeHash === active.fileHash) this.renderPinButton(pin)
   }
 
   private async handleRatingChange(level: KnowledgeLevel | null): Promise<void> {

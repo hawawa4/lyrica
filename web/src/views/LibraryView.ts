@@ -59,7 +59,7 @@ export class LibraryView {
     this.root.innerHTML = `
       <div class="library-header">
         <div class="brand">
-          <span class="brand-mark">${icon('music_note', 20)}</span>
+          <img class="brand-mark" src="/lyrica-hat.png" alt="" width="40" height="40" />
           <span>Lyrica</span>
         </div>
         <div class="library-search-row">
