@@ -39,6 +39,7 @@ import { PiecesIndex } from './PiecesIndex'
 import { RatingStars } from './RatingStars'
 import { TabBar, type TabInfo } from './TabBar'
 import type { CalibrationPoint, KnowledgeLevel, Piece, StaffSystem, Timeline, TimelineEvent } from '../types'
+import { loopRegionForElidRange } from '../loop-region'
 import { initTheme, applyTheme, THEME_LABELS, THEME_ICONS, type Theme } from '../theme'
 
 /**
@@ -855,25 +856,15 @@ export class PracticeView {
    * loop plays out the full duration of the last selected measure rather than
    * cutting off at its start.
    */
-  private loopRegionForSelection(timeline: Timeline, range: MeasureRange): [number, number] | null {
-    const matching = timeline.events
-      .map((e, index) => ({ e, index }))
-      .filter(({ e }) => e.source_elid >= range.startElid && e.source_elid <= range.endElid)
-    if (matching.length === 0) return null
-
-    const startMs = Math.min(...matching.map(({ e }) => e.time_ms))
-    const lastIndex = Math.max(...matching.map(({ index }) => index))
-    const endMs = timeline.events[lastIndex + 1]?.time_ms ?? timeline.duration_ms
-    return [startMs, endMs]
+  private loopRegionForSelection(timeline: Timeline, range: MeasureRange, headMs: number): [number, number] | null {
+    return loopRegionForElidRange(timeline, range.startElid, range.endElid, headMs)
   }
 
   private async setLoop(range: MeasureRange | null): Promise<void> {
     const active = this.activeTab()
     if (!active || active.kind !== 'mscz') return
-    active.loopRegion = (active.timeline && range && this.loopRegionForSelection(active.timeline, range)) || null
-    this.loopStatusEl.textContent = active.loopRegion
-      ? `Looping measures (elid ${range!.startElid}-${range!.endElid})`
-      : ''
+    active.loopRegion = (active.timeline && range && this.loopRegionForSelection(active.timeline, range, active.headMs)) || null
+    this.loopStatusEl.textContent = active.loopRegion ? 'Looping selected measures' : ''
     await setLoopRegion(active.loopRegion)
   }
 
@@ -1391,7 +1382,7 @@ export class PracticeView {
       tabState.selection = range
       void this.setLoop(range)
       if (range && tabState.timeline) {
-        const loopRegion = this.loopRegionForSelection(tabState.timeline, range)
+        const loopRegion = this.loopRegionForSelection(tabState.timeline, range, tabState.headMs)
         if (loopRegion) void this.seekActive(tabState, loopRegion[0])
       }
       if (this.activeHash !== tabState.fileHash) return

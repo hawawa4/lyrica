@@ -73,6 +73,8 @@ fn youkai_timeline_matches_1to1_when_no_repeats() {
     assert_eq!(actual_elids, expected_elids);
 
     assert_eq!(timeline.duration_ms, 98250.0);
+    // The last measure's end lies past its start — what looping it needs.
+    assert!(timeline.end_ms > timeline.duration_ms);
 
     // A single, constant 160 qpm tempo.
     assert_eq!(timeline.tempo_map.len(), 1);

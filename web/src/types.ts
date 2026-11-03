@@ -18,7 +18,10 @@ export interface TimelineEvent {
 
 export interface Timeline {
   events: TimelineEvent[]
+  /** Start time of the last event — not where its measure ends, see `end_ms`. */
   duration_ms: number
+  /** Where the last measure ends (end of the MIDI) — the end of a loop on the final measure. */
+  end_ms?: number
   tempo_map: [number, number][]
 }
 

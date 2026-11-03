@@ -28,6 +28,13 @@ const MIDI_CHANNELS: u8 = 16;
 /// CC 64, the sustain pedal.
 const SUSTAIN_PEDAL: u8 = 64;
 
+/// How far before a seek/loop-wrap target an event may sit and still count as
+/// "at" it. A measure's start time (from the timeline) and its first notes'
+/// times (from `midi_events`) come from two separate tick->ms walks that can
+/// disagree by a fraction of a tick; without this slack a loop would drop the
+/// first notes of its first measure on every wrap.
+const SEEK_EPSILON_MS: f64 = 2.0;
+
 /// Parses a soundfont (`.sf2`, or Ogg-compressed `.sf3`). This is the slow
 /// part of startup — an `.sf3` decodes every sample up front (~2s for
 /// MuseScore_General.sf3 on a desktop CPU) — so callers that can't block
@@ -224,6 +231,7 @@ impl Player {
         self.position_ms = target_ms;
         self.release_all_notes();
         self.resync_indices_to(target_ms);
+        self.replay_channel_state();
     }
 
     /// Sets (or clears, with `None`) the arbitrary A/B loop region, in
@@ -378,6 +386,7 @@ impl Player {
                 self.position_ms = loop_start_ms;
                 self.release_all_notes();
                 self.resync_indices_to(loop_start_ms);
+                self.replay_channel_state();
             }
         }
     }
@@ -390,10 +399,47 @@ impl Player {
     /// before calling this.
     fn resync_indices_to(&mut self, target_ms: f64) {
         if let Some(midi) = &self.midi {
-            self.next_event_index = midi.events.partition_point(|e| e.time_ms < target_ms);
+            self.next_event_index = midi
+                .events
+                .partition_point(|e| e.time_ms < target_ms - SEEK_EPSILON_MS);
         }
-        self.next_click_index = self.clicks.partition_point(|c| c.time_ms < target_ms);
+        self.next_click_index = self
+            .clicks
+            .partition_point(|c| c.time_ms < target_ms - SEEK_EPSILON_MS);
         self.sounding_clicks.clear();
+    }
+
+    /// After jumping to `next_event_index`, re-sends the program, controller
+    /// and pitch-bend state in effect there (each one's latest event before
+    /// the jump, in their original order so RPN sequences stay intact).
+    /// Skipping over events otherwise loses it: a seek right after `play`
+    /// can land before the setup events at time 0 were dispatched, leaving
+    /// the wrong instrument or no pedal; a loop wrap would also miss
+    /// controller changes made earlier in the piece.
+    fn replay_channel_state(&mut self) {
+        let Some(midi) = self.midi.clone() else {
+            return;
+        };
+        // Latest event index per (channel, kind) where kind is 0 = program,
+        // 1 = pitch bend, 2.. = controller number + 2.
+        let mut latest: std::collections::HashMap<(i32, i32), usize> =
+            std::collections::HashMap::new();
+        for (i, e) in midi.events[..self.next_event_index].iter().enumerate() {
+            let kind = match e.command {
+                0xC0 => 0,
+                0xE0 => 1,
+                0xB0 => 2 + e.data1,
+                _ => continue,
+            };
+            latest.insert((e.channel, kind), i);
+        }
+        let mut indices: Vec<usize> = latest.into_values().collect();
+        indices.sort_unstable();
+        for i in indices {
+            if let Some(event) = to_oxisynth_event(&midi.events[i]) {
+                let _ = self.synthesizer.send_event(event);
+            }
+        }
     }
 
     fn rebuild_clicks(&mut self) {

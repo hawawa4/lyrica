@@ -62,7 +62,13 @@ pub struct TimelineEvent {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Timeline {
     pub events: Vec<TimelineEvent>,
+    /// Start time of the last event (not where its measure ends — see `end_ms`).
     pub duration_ms: f64,
+    /// Where the last measure ends: the end of the MIDI, or the start of the
+    /// last event if that's later. Looping the final measure needs this as
+    /// its end, since there's no following event to borrow a start time from.
+    #[serde(default)]
+    pub end_ms: f64,
     /// (time_ms, quarter-notes-per-minute) breakpoints.
     pub tempo_map: Vec<(f64, f64)>,
 }
@@ -135,10 +141,12 @@ pub fn build_timeline(
 
     let duration_ms = events.last().map(|e| e.time_ms).unwrap_or(0.0);
     let tempo_map = clock.tempo_map_ms();
+    let end_ms = duration_ms.max(clock.tick_to_ms(clock.end_tick));
 
     Ok(Timeline {
         events,
         duration_ms,
+        end_ms,
         tempo_map,
     })
 }
