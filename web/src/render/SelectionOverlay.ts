@@ -13,7 +13,9 @@ const CLICK_SLOP_PX = 4
  * Measure interaction overlaid on a rendered page. Draws a transparent box
  * per measure (from `measurePositions()`'s elements, filtered to the current
  * page) and turns pointer input into:
- * - click on a measure: `onSeek(elid)` (move the playback head there)
+ * - click on a measure: `onSeek(elid, false)` (move the playback head there)
+ * - shift+click on a measure: `onSeek(elid, true)`, asking the caller to
+ *   select everything between the last-clicked measure and this one
  * - click anywhere else: clear the selection, `onSelect(null)`
  * - drag across measures: highlight the ones the drag rectangle overlaps,
  *   `onSelect(range)` (loop them)
@@ -32,9 +34,9 @@ export class SelectionOverlay {
   private readonly dragRectEl: HTMLDivElement
   private elements: PositionElement[] = []
   private selected: MeasureRange | null = null
-  private dragStart: { x: number; y: number } | null = null
+  private dragStart: { x: number; y: number; shift: boolean } | null = null
   private onSelectionChange: ((range: MeasureRange | null) => void) | null = null
-  private onSeekCallback: ((elid: number) => void) | null = null
+  private onSeekCallback: ((elid: number, extend: boolean) => void) | null = null
 
   constructor(private readonly stage: HTMLElement) {
     // `stage` must be position:relative (or similar) so these absolutely
@@ -80,8 +82,8 @@ export class SelectionOverlay {
     this.renderBoxes()
   }
 
-  /** Called with the elid of the measure clicked, for seeking the playback head there. */
-  onSeek(callback: (elid: number) => void): void {
+  /** Called with the elid of the measure clicked and whether shift was held (extend the selection to it, instead of just seeking there). */
+  onSeek(callback: (elid: number, extend: boolean) => void): void {
     this.onSeekCallback = callback
   }
 
@@ -128,8 +130,10 @@ export class SelectionOverlay {
 
   private handleMouseDown = (e: MouseEvent): void => {
     if (e.button !== 0) return
+    // Shift+click is a selection gesture here; don't let it also start a native text selection.
+    if (e.shiftKey) e.preventDefault()
     const rect = this.stage.getBoundingClientRect()
-    this.dragStart = { x: e.clientX - rect.left, y: e.clientY - rect.top }
+    this.dragStart = { x: e.clientX - rect.left, y: e.clientY - rect.top, shift: e.shiftKey }
     this.dragRectEl.style.display = 'block'
     this.dragRectEl.style.left = `${this.dragStart.x}px`
     this.dragRectEl.style.top = `${this.dragStart.y}px`
@@ -160,8 +164,8 @@ export class SelectionOverlay {
     if (Math.hypot(cur.x - start.x, cur.y - start.y) < CLICK_SLOP_PX) {
       const box = this.boxes().find((b) => cur.x >= b.left && cur.x <= b.right && cur.y >= b.top && cur.y <= b.bottom)
       if (box) {
-        this.onSeekCallback?.(box.elid)
-      } else {
+        this.onSeekCallback?.(box.elid, start.shift)
+      } else if (!start.shift) {
         this.setSelection(null)
         this.onSelectionChange?.(null)
       }

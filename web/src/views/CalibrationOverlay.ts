@@ -51,10 +51,11 @@ export class CalibrationOverlay {
   private currentPage = 0
   private dragStart: { x: number; y: number } | null = null
   private selectedRange: PointRange | null = null
+  private dragShift = false
   private playingIndex: number | null = null
   private onChangeCallback: ((points: CalibrationPoint[]) => void) | null = null
   private onSelectCallback: ((range: PointRange | null) => void) | null = null
-  private onSeekCallback: ((pointIndex: number) => void) | null = null
+  private onSeekCallback: ((pointIndex: number, extend: boolean) => void) | null = null
 
   constructor(private readonly stage: HTMLElement) {
     this.dotsLayer = document.createElement('div')
@@ -212,7 +213,8 @@ export class CalibrationOverlay {
   }
 
   /** Called with the index (time-sorted, matches getPoints()) of the calibration point nearest a click, for seeking the playback head there. */
-  onSeek(callback: (pointIndex: number) => void): void {
+  /** `extend` is true for a shift+click: the caller selects everything between its last-clicked measure and this one. */
+  onSeek(callback: (pointIndex: number, extend: boolean) => void): void {
     this.onSeekCallback = callback
   }
 
@@ -231,7 +233,7 @@ export class CalibrationOverlay {
   }
 
   /** Nearest measure on the current page, by on-screen pixel distance from a click (stage-relative px), for seeking the playback head there. */
-  private seekNearest(clickX: number, clickY: number): void {
+  private seekNearest(clickX: number, clickY: number, extend: boolean): void {
     const canvas = this.stage.querySelector('canvas')
     if (!canvas) return
     const rect = this.stage.getBoundingClientRect()
@@ -251,12 +253,15 @@ export class CalibrationOverlay {
         nearestIndex = index
       }
     })
-    if (nearestIndex !== -1) this.onSeekCallback?.(nearestIndex)
+    if (nearestIndex !== -1) this.onSeekCallback?.(nearestIndex, extend)
   }
 
   private handleMouseDown = (e: MouseEvent): void => {
     if (e.button !== 0) return
     if (this.stage.closest('.hide-measure-markers')) return // markers toggled off: the page is view-only
+    // Shift+click is a selection gesture here; don't let it also start a native text selection.
+    if (e.shiftKey) e.preventDefault()
+    this.dragShift = e.shiftKey
     const rect = this.stage.getBoundingClientRect()
     this.dragStart = { x: e.clientX - rect.left, y: e.clientY - rect.top }
     this.dragRectEl.style.display = 'block'
@@ -293,7 +298,7 @@ export class CalibrationOverlay {
     this.dragRectEl.style.display = 'none'
 
     if (Math.hypot(cur.x - start.x, cur.y - start.y) < CLICK_SLOP_PX) {
-      this.seekNearest(cur.x, cur.y)
+      this.seekNearest(cur.x, cur.y, this.dragShift)
       return
     }
 

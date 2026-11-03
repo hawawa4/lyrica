@@ -136,7 +136,7 @@ export class BookPageView {
   }
 
   /** Fires for a click-to-seek on *either* page of the spread. */
-  onSeek(callback: (elid: number) => void): void {
+  onSeek(callback: (elid: number, extend: boolean) => void): void {
     this.leftSelectionOverlay.onSeek(callback)
     this.rightSelectionOverlay.onSeek(callback)
   }

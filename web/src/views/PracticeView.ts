@@ -81,7 +81,7 @@ interface PageDisplay {
 /** Shared shape of `SelectionOverlay` and `BookPageView`'s own onSelect/onSeek facade (see that file's docs). */
 interface SelectionSource {
   onSelect(callback: (range: MeasureRange | null) => void): void
-  onSeek(callback: (elid: number) => void): void
+  onSeek(callback: (elid: number, extend: boolean) => void): void
   /** Highlights `range` without firing `onSelect` — `null` clears the highlight. */
   setSelection(range: MeasureRange | null): void
   destroy(): void
@@ -113,6 +113,8 @@ interface MsczTabState {
   /** Piece boundaries for a multi-piece file (see `PiecesIndex`), detected once at open. Empty/single-entry for an ordinary single-piece file. */
   pieces: Piece[]
   selection: MeasureRange | null
+  /** The measure shift+click extends a selection from: the last one clicked, or where the last drag started. */
+  anchorElid: number | null
   speed: number
   loopRegion: [number, number] | null
   originalBytes: Uint8Array
@@ -159,6 +161,8 @@ interface PdfTabState {
   scrollTracker: CurrentPageTracker | null
   points: CalibrationPoint[]
   selectedRange: PointRange | null
+  /** The measure shift+click extends a selection from — see `MsczTabState.anchorElid`. */
+  anchorIndex: number | null
   numerator: number
   speed: number
   loopRegion: [number, number] | null
@@ -1008,7 +1012,7 @@ export class PracticeView {
       this.prevBtn.disabled = tab.pageView.page <= 0
       this.nextBtn.disabled = tab.pageView.page >= tab.pageView.pages - 1
       this.selectionStatusEl.textContent = tab.selection
-        ? `Selected measures (elid ${tab.selection.startElid}-${tab.selection.endElid})`
+        ? this.msczSelectionText(tab.selection)
         : ''
       this.loopStatusEl.textContent = tab.loopRegion ? 'Looping selected measures' : ''
       this.setZoomIndicator(tab.pageView.getZoom())
@@ -1379,25 +1383,42 @@ export class PracticeView {
 
     selectionOverlay.onSelect((range) => {
       const tabState = getTabState()
-      tabState.selection = range
-      void this.setLoop(range)
-      if (range && tabState.timeline) {
-        const loopRegion = this.loopRegionForSelection(tabState.timeline, range, tabState.headMs)
-        if (loopRegion) void this.seekActive(tabState, loopRegion[0])
-      }
-      if (this.activeHash !== tabState.fileHash) return
-      this.selectionStatusEl.textContent = range
-        ? `Selected measures (elid ${range.startElid}-${range.endElid})`
-        : ''
+      tabState.anchorElid = range?.startElid ?? null
+      this.applyMsczSelection(tabState, range)
     })
 
-    selectionOverlay.onSeek((elid) => {
+    selectionOverlay.onSeek((elid, extend) => {
       const tabState = getTabState()
+      // Shift+click selects from the last-clicked measure (or the start of the current selection) to this one.
+      const anchor = tabState.anchorElid ?? tabState.selection?.startElid ?? null
+      if (extend && anchor !== null) {
+        const range = { startElid: Math.min(anchor, elid), endElid: Math.max(anchor, elid) }
+        tabState.selectionOverlay.setSelection(range)
+        this.applyMsczSelection(tabState, range)
+        return
+      }
+      tabState.anchorElid = elid
       const event = tabState.timeline && this.eventForElidNearHead(tabState.timeline, elid, tabState.headMs)
       if (event) void this.seekActive(tabState, event.time_ms)
     })
 
     return { pageView, selectionOverlay }
+  }
+
+  /** Makes `range` (or nothing) `tab`'s measure selection: arms the loop over it, moves the head to its start and updates the status text. The overlay's own highlight is the caller's business. */
+  private applyMsczSelection(tab: MsczTabState, range: MeasureRange | null): void {
+    tab.selection = range
+    void this.setLoop(range)
+    if (range && tab.timeline) {
+      const loopRegion = this.loopRegionForSelection(tab.timeline, range, tab.headMs)
+      if (loopRegion) void this.seekActive(tab, loopRegion[0])
+    }
+    if (this.activeHash !== tab.fileHash) return
+    this.selectionStatusEl.textContent = range ? this.msczSelectionText(range) : ''
+  }
+
+  private msczSelectionText(range: MeasureRange): string {
+    return `Selected measures (elid ${range.startElid}-${range.endElid})`
   }
 
   private async openMsczBytes(bytes: Uint8Array, filename: string, path: string | null): Promise<void> {
@@ -1500,6 +1521,7 @@ export class PracticeView {
       midiBytes: null,
       pieces: [],
       selection: null,
+      anchorElid: null,
       speed: 1.0,
       loopRegion: null,
       originalBytes,
@@ -1642,6 +1664,7 @@ export class PracticeView {
       scrollTracker: null,
       points: [],
       selectedRange: null,
+      anchorIndex: null,
       numerator: PDF_DEFAULT_NUMERATOR,
       speed: 1.0,
       loopRegion: null,
@@ -1651,6 +1674,7 @@ export class PracticeView {
 
     calibrationOverlay.onSelect((range) => {
       tabState.selectedRange = range
+      tabState.anchorIndex = range?.startIndex ?? null
       for (const pane of tabState.extraPanes) pane.calibrationOverlay.setSelection(range)
       void this.setPdfLoop(range)
       if (range) {
@@ -1663,10 +1687,7 @@ export class PracticeView {
         : ''
     })
 
-    calibrationOverlay.onSeek((pointIndex) => {
-      const point = calibrationOverlay.getPoints()[pointIndex]
-      if (point) void this.seekActive(tabState, point.time_ms)
-    })
+    calibrationOverlay.onSeek((pointIndex, extend) => this.handlePdfSeek(tabState, calibrationOverlay, pointIndex, extend))
 
     calibrationOverlay.onChange((points) => {
       tabState.points = points
@@ -2188,6 +2209,7 @@ export class PracticeView {
   private wirePdfPaneInteractions(tab: PdfTabState, overlay: CalibrationOverlay): void {
     overlay.onSelect((range) => {
       tab.selectedRange = range
+      tab.anchorIndex = range?.startIndex ?? null
       tab.calibrationOverlay.setSelection(range)
       void this.setPdfLoop(range)
       if (range) {
@@ -2197,10 +2219,26 @@ export class PracticeView {
       if (this.activeHash !== tab.fileHash) return
       this.selectionStatusEl.textContent = range ? `Selected measures ${range.startIndex}-${range.endIndex}` : ''
     })
-    overlay.onSeek((pointIndex) => {
-      const point = overlay.getPoints()[pointIndex]
-      if (point) void this.seekActive(tab, point.time_ms)
-    })
+    overlay.onSeek((pointIndex, extend) => this.handlePdfSeek(tab, overlay, pointIndex, extend))
+  }
+
+  /** A click on measure `pointIndex`: seeks there, or with shift selects (and loops) everything from the last-clicked measure (or the start of the current selection) to it. */
+  private handlePdfSeek(tab: PdfTabState, overlay: CalibrationOverlay, pointIndex: number, extend: boolean): void {
+    const anchor = tab.anchorIndex ?? tab.selectedRange?.startIndex ?? null
+    if (extend && anchor !== null) {
+      const range = { startIndex: Math.min(anchor, pointIndex), endIndex: Math.max(anchor, pointIndex) }
+      tab.selectedRange = range
+      tab.calibrationOverlay.setSelection(range)
+      for (const pane of tab.extraPanes) pane.calibrationOverlay.setSelection(range)
+      void this.setPdfLoop(range)
+      const loopRegion = this.loopRegionForPointRange(overlay.getPoints(), range)
+      if (loopRegion) void this.seekActive(tab, loopRegion[0])
+      if (this.activeHash === tab.fileHash) this.selectionStatusEl.textContent = `Selected measures ${range.startIndex}-${range.endIndex}`
+      return
+    }
+    tab.anchorIndex = pointIndex
+    const point = overlay.getPoints()[pointIndex]
+    if (point) void this.seekActive(tab, point.time_ms)
   }
 
   /** Re-pushes the primary pane's point list into `rightPane`'s independent `CalibrationOverlay` instance — call after any mutation (`addPointsFromBarlines*`, `clearAllPoints`) made through the primary pane, so book mode's second pane doesn't silently go stale relative to it. No-op outside book mode. */

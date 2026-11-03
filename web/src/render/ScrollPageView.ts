@@ -174,7 +174,7 @@ export class ScrollPageView {
     for (const overlay of this.overlays) overlay.setSelection(range)
   }
 
-  onSeek(callback: (elid: number) => void): void {
+  onSeek(callback: (elid: number, extend: boolean) => void): void {
     for (const overlay of this.overlays) overlay.onSeek(callback)
   }
 
