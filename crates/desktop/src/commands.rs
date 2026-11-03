@@ -227,9 +227,14 @@ pub fn set_root_folder(
     api::set_root_folder(&base_dir, root_folder).map_err(|e| e.to_string())
 }
 
+/// Async + `spawn_blocking`: a sync command runs on the main thread, and the
+/// library is rescanned in the background every few seconds, so a big folder
+/// walk must never stall the UI.
 #[tauri::command]
-pub fn scan_library(root: String) -> Vec<LibraryEntry> {
-    api::scan_library(std::path::Path::new(&root))
+pub async fn scan_library(root: String) -> Result<Vec<LibraryEntry>, String> {
+    tauri::async_runtime::spawn_blocking(move || api::scan_library(std::path::Path::new(&root)))
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]

@@ -11,7 +11,7 @@ import {
   setRootFolder,
   unpinFile,
 } from '../api-client'
-import type { KnowledgeLevel, PinnedFile, RecentFile } from '../types'
+import type { KnowledgeLevel, LibraryEntry, PinnedFile, RecentFile } from '../types'
 import { FileListPanel } from './FileListPanel'
 import { FolderTree } from './FolderTree'
 import { LevelFilterBar } from './LevelFilterBar'
@@ -27,6 +27,13 @@ import { icon } from '../icons'
  * up via `onOpen` — `main.ts` reads the bytes and switches to the practice
  * view, exactly like today's dialog/drag-drop open flow.
  */
+/** How often the library folder is re-walked in the background to pick up files added or removed while the app is open. */
+const BACKGROUND_RESCAN_MS = 5000
+
+function scanSignature(entries: LibraryEntry[]): string {
+  return entries.map((e) => e.path).sort().join('\n')
+}
+
 export class LibraryView {
   readonly root: HTMLDivElement
   private readonly rootFolderLabel: HTMLSpanElement
@@ -48,6 +55,10 @@ export class LibraryView {
   private scannedRootFolder: string | null = null
   /** Guards against two overlapping `refresh()` calls (e.g. one triggered by `onFileOpened` right before navigating back to `#/library`, racing with the route-change's own `refresh()`) clobbering each other's results — only the call that's still current when it resolves is allowed to render. */
   private refreshToken = 0
+  /** Signature (sorted paths) of the entries the tree currently shows — lets the background rescan skip re-rendering when nothing was added or removed. */
+  private scanSignature = ''
+  /** True while a background rescan is walking the folder, so a slow walk (big library, network mount) never stacks overlapping scans. */
+  private backgroundScanInFlight = false
   /** Every content hash this view currently knows a rating for, by hash — bulk-loaded for pinned/recent (both already carry a hash) and filled in on demand for tree rows as they're rated/pinned (see `resolveHashForPath`). */
   private ratings = new Map<string, KnowledgeLevel>()
   /** `path -> file_hash`, built from pinned/recent entries and anything resolved on demand — lets the folder tree (which only has paths) look up a rating without re-hashing a file it's already seen. */
@@ -127,6 +138,7 @@ export class LibraryView {
     })
 
     if (isTauri()) {
+      window.setInterval(() => void this.backgroundRescan(), BACKGROUND_RESCAN_MS)
       // Up from the very first frame: the remembered folder isn't known until
       // settings load, and scanning it can take a while after that.
       this.setLoading('Loading your library…')
@@ -278,6 +290,7 @@ export class LibraryView {
     }
     if (!force && this.scannedRootFolder === this.rootFolder) {
       this.setLoading(null)
+      void this.backgroundRescan() // returning to the library: catch anything added while it was hidden, without waiting for the next tick
       return
     }
     // A big folder takes a while to walk — say so, naming the remembered
@@ -289,14 +302,45 @@ export class LibraryView {
       const entries = await scanLibrary(scanning)
       if (scanning !== this.rootFolder) return // folder changed mid-scan; that scan owns the UI now
       this.scannedRootFolder = scanning
+      this.scanSignature = scanSignature(entries)
       this.folderTree.setData(entries, scanning)
     } catch (e) {
       console.error('Failed to scan library folder:', e)
       if (scanning !== this.rootFolder) return
       this.scannedRootFolder = null
+      this.scanSignature = ''
       this.folderTree.setData([], scanning)
     }
     this.setLoading(null)
+  }
+
+  /**
+   * Silent periodic rescan: the first scan (`refreshScan`) is the full,
+   * spinner-showing one; after that this picks up files added to or removed
+   * from the folder without any loading UI, and only re-renders the tree when
+   * the set of files actually changed. Does nothing before the first scan
+   * finished, while the library isn't on screen, or while another background
+   * scan is still walking. Failures are ignored — the next tick retries, and
+   * the tree keeps showing what it has.
+   */
+  private async backgroundRescan(): Promise<void> {
+    const root = this.rootFolder
+    if (!root || this.scannedRootFolder !== root || this.backgroundScanInFlight) return
+    if (document.hidden || this.root.style.display === 'none') return
+    this.backgroundScanInFlight = true
+    try {
+      const entries = await scanLibrary(root)
+      // The folder was changed, or a full rescan took over, while we walked.
+      if (root !== this.rootFolder || this.scannedRootFolder !== root) return
+      const signature = scanSignature(entries)
+      if (signature === this.scanSignature) return
+      this.scanSignature = signature
+      this.folderTree.setData(entries, root)
+    } catch (e) {
+      console.warn('Background library rescan failed:', e)
+    } finally {
+      this.backgroundScanInFlight = false
+    }
   }
 
   /** Shows the spinner banner with `message`, or hides it for `null`. */
