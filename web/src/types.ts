@@ -25,8 +25,12 @@ export interface Timeline {
   tempo_map: [number, number][]
 }
 
+/** Which staff of its part a staff is, in MIDI track order — `solo` for a part with a single staff, which the upper/lower choice never mutes. */
+export type StaffRole = 'solo' | 'upper' | 'lower'
+
 export interface ImportTimelineResponse {
   timeline: Timeline
+  staff_roles: StaffRole[]
 }
 
 export type MarkerKind = 'text' | 'fingering'

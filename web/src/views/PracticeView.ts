@@ -19,6 +19,7 @@ import {
   seekMidi,
   setPlaybackSpeed,
   setLoopRegion,
+  setEnabledTracks,
   setMetronomeEnabled,
   setMetronomeVolume,
   contentHash,
@@ -38,7 +39,7 @@ import { MarkerOverlay, type MarkerHost, type MarkerTool } from './MarkerOverlay
 import { PiecesIndex } from './PiecesIndex'
 import { RatingStars } from './RatingStars'
 import { TabBar, type TabInfo } from './TabBar'
-import type { CalibrationPoint, KnowledgeLevel, Piece, StaffSystem, Timeline, TimelineEvent } from '../types'
+import type { CalibrationPoint, KnowledgeLevel, Piece, StaffRole, StaffSystem, Timeline, TimelineEvent } from '../types'
 import { loopRegionForElidRange } from '../loop-region'
 import { initTheme, applyTheme, THEME_LABELS, THEME_ICONS, type Theme } from '../theme'
 
@@ -60,6 +61,21 @@ import { initTheme, applyTheme, THEME_LABELS, THEME_ICONS, type Theme } from '..
  */
 /** stopped: head at rest, no audio engine activity. playing: Cursor is polling. paused: frozen mid-playback, resumable from exactly this position. */
 type TransportState = 'stopped' | 'playing' | 'paused'
+
+/** Which staves of a `.mscz` sound: both, or just the upper/lower one of each multi-staff part (a piano's right/left hand). */
+type StaffMode = 'both' | 'upper' | 'lower'
+
+const STAFF_MODES: { mode: StaffMode; label: string; title: string }[] = [
+  { mode: 'both', label: 'Both', title: 'Play both staves' },
+  { mode: 'upper', label: 'Upper', title: 'Play only the upper staff (right hand) — the lower one is silent' },
+  { mode: 'lower', label: 'Lower', title: 'Play only the lower staff (left hand) — the upper one is silent' },
+]
+
+/** The `set_enabled_tracks` mask for `mode`: `null` (everything) unless a staff is being muted. Single-staff parts always sound. */
+function enabledTracksFor(roles: StaffRole[], mode: StaffMode): boolean[] | null {
+  if (mode === 'both' || roles.length === 0) return null
+  return roles.map((role) => role === 'solo' || role === mode)
+}
 
 /** "Page display" mode: a single rendered page (today's default), or a two-page "book" spread (`BookPageView`). Both expose this exact shape — see `BookPageView`'s module docs for why that's the chosen integration point rather than threading a mode flag through every call site. */
 interface PageDisplay {
@@ -115,6 +131,10 @@ interface MsczTabState {
   selection: MeasureRange | null
   /** The measure shift+click extends a selection from: the last one clicked, or where the last drag started. */
   anchorElid: number | null
+  /** Staff of each MIDI track, from the score — empty when unknown, which leaves the staff selector unavailable. */
+  staffRoles: StaffRole[]
+  /** Which staves sound — per tab, like speed. */
+  staffMode: StaffMode
   speed: number
   loopRegion: [number, number] | null
   originalBytes: Uint8Array
@@ -201,6 +221,8 @@ export class PracticeView {
   private readonly playBtn: HTMLButtonElement
   private readonly stopBtn: HTMLButtonElement
   private readonly speedButtons: Record<number, HTMLButtonElement>
+  private readonly staffGroupEl: HTMLDivElement
+  private readonly staffButtons: Record<StaffMode, HTMLButtonElement>
   private readonly metronomeBtn: HTMLButtonElement
   private readonly metronomeVolumeInput: HTMLInputElement
   /** Whether the click track is on — a global setting (the audio engine has one player), kept across tab switches. */
@@ -273,6 +295,7 @@ export class PracticeView {
           <button id="speed-05" class="speed-btn" disabled>0.5x</button>
           <button id="speed-075" class="speed-btn" disabled>0.75x</button>
           <button id="speed-10" class="speed-btn" disabled>1.0x</button>
+          <div id="staff-group" class="staff-group" role="group" aria-label="Staves to play" style="display:none;"></div>
           <div class="metronome-control">
             <button id="metronome-btn" class="icon-btn metronome-btn" disabled aria-pressed="false" title="Metronome (M)">
               <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
@@ -364,6 +387,18 @@ export class PracticeView {
       0.5: this.root.querySelector('#speed-05')!,
       0.75: this.root.querySelector('#speed-075')!,
       1.0: this.root.querySelector('#speed-10')!,
+    }
+    this.staffGroupEl = this.root.querySelector('#staff-group')!
+    this.staffButtons = {} as Record<StaffMode, HTMLButtonElement>
+    for (const { mode, label, title } of STAFF_MODES) {
+      const btn = document.createElement('button')
+      btn.type = 'button'
+      btn.className = 'speed-btn'
+      btn.textContent = label
+      btn.title = title
+      btn.addEventListener('click', () => void this.setStaffMode(mode))
+      this.staffButtons[mode] = btn
+      this.staffGroupEl.appendChild(btn)
     }
     this.metronomeBtn = this.root.querySelector('#metronome-btn')!
     this.metronomeVolumeInput = this.root.querySelector('#metronome-volume')!
@@ -899,6 +934,31 @@ export class PracticeView {
     await setLoopRegion(active.loopRegion)
   }
 
+  /** Shows the staff selector only for a `.mscz` with a multi-staff part (a single-staff score has nothing to choose), reflecting that tab's choice. */
+  private updateStaffControls(tab: TabState | null): void {
+    const selectable = tab?.kind === 'mscz' && tab.staffRoles.includes('upper') && tab.staffRoles.includes('lower')
+    this.staffGroupEl.style.display = selectable ? 'inline-flex' : 'none'
+    for (const [mode, btn] of Object.entries(this.staffButtons)) {
+      btn.classList.toggle('active', tab?.kind === 'mscz' && tab.staffMode === mode)
+    }
+  }
+
+  private async applyStaffMode(tab: MsczTabState): Promise<void> {
+    try {
+      await setEnabledTracks(enabledTracksFor(tab.staffRoles, tab.staffMode))
+    } catch (e) {
+      console.error('Failed to set the playing staves:', e)
+    }
+  }
+
+  private async setStaffMode(mode: StaffMode): Promise<void> {
+    const active = this.activeTab()
+    if (!active || active.kind !== 'mscz') return
+    active.staffMode = mode
+    this.updateStaffControls(active)
+    await this.applyStaffMode(active)
+  }
+
   private setSpeed(speed: number): void {
     const active = this.activeTab()
     if (active) active.speed = speed
@@ -1034,8 +1094,10 @@ export class PracticeView {
         await loadMidi(tab.midiBytes)
         await setLoopRegion(tab.loopRegion)
         await setMetronomeEnabled(this.metronomeOn)
+        await this.applyStaffMode(tab)
         this.updateMsczHeadMarker(tab)
       }
+      this.updateStaffControls(tab)
     } else {
       tab.canvasContainer.appendChild(this.headMarker.el)
       tab.transportState = 'stopped'
@@ -1070,6 +1132,7 @@ export class PracticeView {
       this.renderTransportButtons(tab.transportState, hasAudio)
       for (const btn of Object.values(this.speedButtons)) btn.disabled = !hasAudio
       this.metronomeBtn.disabled = !hasAudio
+      this.updateStaffControls(null)
 
       if (hasAudio) {
         this.setSpeed(tab.speed)
@@ -1264,6 +1327,7 @@ export class PracticeView {
         this.stopBtn.disabled = true
         for (const btn of Object.values(this.speedButtons)) btn.disabled = true
         this.metronomeBtn.disabled = true
+        this.updateStaffControls(null)
       }
     }
     this.renderTabBar()
@@ -1522,6 +1586,8 @@ export class PracticeView {
       pieces: [],
       selection: null,
       anchorElid: null,
+      staffRoles: [],
+      staffMode: 'both',
       speed: 1.0,
       loopRegion: null,
       originalBytes,
@@ -1541,8 +1607,9 @@ export class PracticeView {
       const positions = pageView.getPositions() ?? (await getMeasurePositions(score))
       tabState.midiBytes = await getMidi(score)
       this.setLoadingStep('Building playback timeline…')
-      const { timeline } = await importTimeline(positions, tabState.midiBytes, loadedBytes)
+      const { timeline, staff_roles } = await importTimeline(positions, tabState.midiBytes, loadedBytes)
       tabState.timeline = timeline
+      tabState.staffRoles = staff_roles
       this.setLoadingStep('Finding pieces…')
       try {
         tabState.pieces = await detectPieces(originalBytes)

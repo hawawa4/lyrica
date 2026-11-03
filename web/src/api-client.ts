@@ -115,6 +115,13 @@ export async function setLoopRegion(region: [number, number] | null): Promise<vo
   await invoke('set_loop_region', { region })
 }
 
+/** `tracks[i]` says whether MIDI track `i` (one per staff) sounds; `null` plays every staff. */
+export async function setEnabledTracks(tracks: boolean[] | null): Promise<void> {
+  if (!isTauri()) throw new Error('setEnabledTracks: desktop-only for now')
+  const { invoke } = await import('@tauri-apps/api/core')
+  await invoke('set_enabled_tracks', { tracks })
+}
+
 export async function setMetronomeEnabled(enabled: boolean): Promise<void> {
   if (!isTauri()) throw new Error('setMetronomeEnabled: desktop-only for now')
   const { invoke } = await import('@tauri-apps/api/core')

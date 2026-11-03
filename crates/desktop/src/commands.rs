@@ -99,6 +99,13 @@ pub fn set_loop_region(audio: State<AudioState>, region: Option<(f64, f64)>) {
     audio.set_loop_region(region)
 }
 
+/// `tracks[i]` says whether MIDI track `i` (one per staff) may sound notes;
+/// `None` plays every track.
+#[tauri::command]
+pub fn set_enabled_tracks(audio: State<AudioState>, tracks: Option<Vec<bool>>) {
+    audio.set_enabled_tracks(tracks)
+}
+
 #[tauri::command]
 pub fn set_metronome_enabled(audio: State<AudioState>, enabled: bool) {
     audio.set_metronome_enabled(enabled)

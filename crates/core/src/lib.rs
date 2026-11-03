@@ -10,6 +10,7 @@ pub mod pieces;
 pub mod rating;
 pub mod recent_files;
 pub mod sidecar;
+pub mod staff_layout;
 pub mod timeline;
 #[cfg(feature = "updater")]
 pub mod updater;

@@ -157,6 +157,10 @@ impl AudioState {
         self.player.lock().unwrap().set_loop_region(region);
     }
 
+    pub fn set_enabled_tracks(&self, tracks: Option<Vec<bool>>) {
+        self.player.lock().unwrap().set_enabled_tracks(tracks);
+    }
+
     pub fn set_metronome_enabled(&self, enabled: bool) {
         self.player.lock().unwrap().set_metronome_enabled(enabled);
     }

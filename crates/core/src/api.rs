@@ -19,6 +19,7 @@ use crate::pieces::{self, Piece, PiecesError};
 use crate::rating::{self, KnowledgeLevel};
 use crate::recent_files::{self, RecentFile, RecentFilesError};
 use crate::sidecar::SidecarError;
+use crate::staff_layout::{self, StaffRole};
 use crate::timeline::{self, Positions, Timeline, TimelineError};
 pub use cv_barline::{CvBarlineError, StaffSystem};
 
@@ -122,6 +123,9 @@ pub struct ImportTimelineRequest {
 #[derive(Debug, Clone, Serialize)]
 pub struct ImportTimelineResponse {
     pub timeline: Timeline,
+    /// One entry per staff, in MIDI track order; empty if the score XML
+    /// couldn't be read (the staff selector is then unavailable).
+    pub staff_roles: Vec<StaffRole>,
 }
 
 #[derive(Debug, Error)]
@@ -135,16 +139,29 @@ pub fn import_timeline(
 ) -> Result<ImportTimelineResponse, ImportTimelineError> {
     // Unreadable/unparseable score bytes only cost timing precision, never
     // the whole timeline — build_timeline falls back without them.
-    let measures = req.score_bytes.as_deref().and_then(|bytes| {
-        let contents = mscz::read_rootfile_contents(Cursor::new(bytes))
+    let contents = req.score_bytes.as_deref().and_then(|bytes| {
+        mscz::read_rootfile_contents(Cursor::new(bytes))
             .map_err(|e| eprintln!("import_timeline: could not read score XML: {e}"))
-            .ok()?;
-        measure_layout::parse_measure_layout(&contents)
+            .ok()
+    });
+    let measures = contents.as_deref().and_then(|contents| {
+        measure_layout::parse_measure_layout(contents)
             .map_err(|e| eprintln!("import_timeline: could not parse measure layout: {e}"))
             .ok()
     });
+    let staff_roles = contents
+        .as_deref()
+        .and_then(|contents| {
+            staff_layout::parse_staff_roles(contents)
+                .map_err(|e| eprintln!("import_timeline: could not parse staff layout: {e}"))
+                .ok()
+        })
+        .unwrap_or_default();
     let timeline = timeline::build_timeline(&req.positions, &req.midi_bytes, measures.as_deref())?;
-    Ok(ImportTimelineResponse { timeline })
+    Ok(ImportTimelineResponse {
+        timeline,
+        staff_roles,
+    })
 }
 
 /// Markers CRUD, all keyed by `file_hash` (from `open_file`'s response) and

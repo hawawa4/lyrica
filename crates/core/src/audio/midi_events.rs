@@ -13,6 +13,9 @@ pub enum MidiEventsError {
 #[derive(Debug, Clone, Copy)]
 pub struct ScheduledEvent {
     pub time_ms: f64,
+    /// Index of the MIDI track it came from. webmscore exports one track per
+    /// staff, which is what lets `Player` mute a single staff's notes.
+    pub track: usize,
     pub channel: i32,
     pub command: i32,
     pub data1: i32,
@@ -32,10 +35,11 @@ pub struct TempoMapEntry {
 /// i.e. already repeats-unrolled) into a flat, time-sorted list of
 /// channel-voice events plus a combined tempo/time-signature map — the data
 /// `Player`'s custom scheduler needs to drive the synth directly (with
-/// seek and arbitrary-region looping; see `Player`'s docs).
+/// seek and arbitrary-region looping; see `Player`'s docs). Also returns how
+/// many tracks the file has, including ones with no channel events.
 pub fn parse_midi_events(
     midi_bytes: &[u8],
-) -> Result<(Vec<ScheduledEvent>, Vec<TempoMapEntry>), MidiEventsError> {
+) -> Result<(Vec<ScheduledEvent>, Vec<TempoMapEntry>, usize), MidiEventsError> {
     let smf = midly::Smf::parse(midi_bytes)?;
     let ticks_per_beat: f64 = match smf.header.timing {
         midly::Timing::Metrical(tpb) => u16::from(tpb) as f64,
@@ -107,7 +111,7 @@ pub fn parse_midi_events(
     // Second pass: convert every channel-voice event to an absolute time_ms,
     // using the same tick-walk/tempo-lookup approach.
     let mut events: Vec<ScheduledEvent> = Vec::new();
-    for track in &smf.tracks {
+    for (track_index, track) in smf.tracks.iter().enumerate() {
         let mut abs_tick: u64 = 0;
         let mut cursor = 0_usize; // index into tempo_map, advanced monotonically per track
         let mut cur_time_ms = 0.0_f64;
@@ -169,6 +173,7 @@ pub fn parse_midi_events(
                 };
                 events.push(ScheduledEvent {
                     time_ms: event_time_ms,
+                    track: track_index,
                     channel,
                     command,
                     data1,
@@ -179,5 +184,5 @@ pub fn parse_midi_events(
     }
     events.sort_by(|a, b| a.time_ms.total_cmp(&b.time_ms));
 
-    Ok((events, tempo_map))
+    Ok((events, tempo_map, smf.tracks.len()))
 }

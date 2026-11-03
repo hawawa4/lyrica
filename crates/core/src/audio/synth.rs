@@ -52,6 +52,9 @@ pub struct LoadedMidi {
     events: Vec<ScheduledEvent>,
     tempo_map: Vec<TempoMapEntry>,
     duration_ms: f64,
+    /// MIDI tracks in the file (one per staff for webmscore's exports); 0 for
+    /// tempo-map-only playback.
+    track_count: usize,
 }
 
 /// Drives an `oxisynth::Synth` via its own event scheduler — oxisynth has no
@@ -76,6 +79,11 @@ pub struct Player {
     playing: bool,
 
     loop_region: Option<(f64, f64)>,
+
+    /// Which MIDI tracks (staves) may sound notes — `None` plays everything.
+    /// Only honoured while its length matches the loaded file's track count,
+    /// so a stale mask from another score can't mute the wrong tracks.
+    enabled_tracks: Option<Vec<bool>>,
 
     metronome_enabled: bool,
     clicks: Vec<ClickEvent>,
@@ -123,6 +131,7 @@ impl Player {
             position_ms: 0.0,
             playing: false,
             loop_region: None,
+            enabled_tracks: None,
             metronome_enabled: false,
             clicks: Vec::new(),
             next_click_index: 0,
@@ -142,12 +151,13 @@ impl Player {
     }
 
     pub fn load_midi(&self, midi_bytes: &[u8]) -> Result<Arc<LoadedMidi>, SynthError> {
-        let (events, tempo_map) = midi_events::parse_midi_events(midi_bytes)?;
+        let (events, tempo_map, track_count) = midi_events::parse_midi_events(midi_bytes)?;
         let duration_ms = events.last().map(|e| e.time_ms).unwrap_or(0.0);
         Ok(Arc::new(LoadedMidi {
             events,
             tempo_map,
             duration_ms,
+            track_count,
         }))
     }
 
@@ -168,6 +178,7 @@ impl Player {
             events: Vec::new(),
             tempo_map,
             duration_ms,
+            track_count: 0,
         })
     }
 
@@ -232,6 +243,22 @@ impl Player {
         self.release_all_notes();
         self.resync_indices_to(target_ms);
         self.replay_channel_state();
+    }
+
+    /// Chooses which MIDI tracks (staves) may sound notes; `None` plays them
+    /// all. Safe mid-playback — notes already sounding are released.
+    pub fn set_enabled_tracks(&mut self, tracks: Option<Vec<bool>>) {
+        self.enabled_tracks = tracks;
+        self.release_all_notes();
+    }
+
+    fn track_is_muted(&self, track: usize) -> bool {
+        match (&self.enabled_tracks, &self.midi) {
+            (Some(mask), Some(midi)) if mask.len() == midi.track_count => {
+                !mask.get(track).copied().unwrap_or(true)
+            }
+            _ => false,
+        }
     }
 
     /// Sets (or clears, with `None`) the arbitrary A/B loop region, in
@@ -326,10 +353,17 @@ impl Player {
                 && midi.events[self.next_event_index].time_ms <= self.position_ms
             {
                 let e = midi.events[self.next_event_index];
-                if let Some(event) = to_oxisynth_event(&e) {
-                    // Only fails on out-of-range values, which a parsed MIDI
-                    // file can't produce; nothing useful to do mid-render.
-                    let _ = self.synthesizer.send_event(event);
+                // Only notes are muted: the staves of a piano share one
+                // channel, and its program change/pedal live on whichever
+                // track happens to come first.
+                let muted_note =
+                    matches!(e.command, 0x80 | 0x90 | 0xA0) && self.track_is_muted(e.track);
+                if !muted_note {
+                    if let Some(event) = to_oxisynth_event(&e) {
+                        // Only fails on out-of-range values, which a parsed MIDI
+                        // file can't produce; nothing useful to do mid-render.
+                        let _ = self.synthesizer.send_event(event);
+                    }
                 }
                 self.next_event_index += 1;
             }

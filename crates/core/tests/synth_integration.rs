@@ -349,3 +349,93 @@ fn pause_releases_pedal_held_notes() {
         "note still ringing 2.5s after pause (peak {tail_peak} vs {playing_peak} while playing)"
     );
 }
+
+/// Format-1 MIDI with one note per track, both sounding for ~1s at once on
+/// the same channel the way a piano's two staves do. Only track 0 carries
+/// the program change, like webmscore's export.
+fn two_staff_midi() -> Vec<u8> {
+    let upper: &[u8] = &[
+        0x00, 0xC0, 0x00, // program 0
+        0x00, 0x90, 0x48, 0x64, // C5 on
+        0x87, 0x40, 0x80, 0x48, 0x40, // off at tick 960
+        0x00, 0xFF, 0x2F, 0x00,
+    ];
+    let lower: &[u8] = &[
+        0x00, 0x90, 0x30, 0x64, // C3 on
+        0x87, 0x40, 0x80, 0x30, 0x40, 0x00, 0xFF, 0x2F, 0x00,
+    ];
+    let mut midi = b"MThd\x00\x00\x00\x06\x00\x01\x00\x02\x01\xE0".to_vec();
+    for track in [upper, lower] {
+        midi.extend_from_slice(b"MTrk");
+        midi.extend_from_slice(&(track.len() as u32).to_be_bytes());
+        midi.extend_from_slice(track);
+    }
+    midi
+}
+
+/// Muting a staff's track silences its notes but not the other staff's, and
+/// muting the track that carries the program change must not lose it.
+#[test]
+fn disabled_tracks_do_not_sound() {
+    let soundfont_path = soundfont_path();
+    if !soundfont_path.exists() {
+        eprintln!("skipping: soundfont not present in this environment");
+        return;
+    }
+    let soundfont_bytes = fs::read(&soundfont_path).unwrap();
+    let sample_rate = 44100;
+
+    let peak_with = |tracks: Option<Vec<bool>>| {
+        let mut player = Player::new(&soundfont_bytes, sample_rate).unwrap();
+        let midi = player.load_midi(&two_staff_midi()).unwrap();
+        player.set_enabled_tracks(tracks);
+        player.play(&midi, false);
+        let mut left = vec![0.0f32; sample_rate as usize / 2];
+        let mut right = left.clone();
+        player.render(&mut left, &mut right);
+        left.iter().fold(0.0f32, |m, v| m.max(v.abs()))
+    };
+
+    let both = peak_with(None);
+    let upper_only = peak_with(Some(vec![true, false]));
+    let lower_only = peak_with(Some(vec![false, true]));
+    let neither = peak_with(Some(vec![false, false]));
+    assert!(both > 0.01, "nothing sounded (peak {both})");
+    assert!(upper_only > 0.01, "upper staff silent (peak {upper_only})");
+    assert!(lower_only > 0.01, "lower staff silent (peak {lower_only})");
+    assert!(
+        neither < 1e-6,
+        "muted staves still sounded (peak {neither})"
+    );
+    // A mask for a different number of tracks (another score's) is ignored.
+    assert!(peak_with(Some(vec![false])) > 0.01);
+}
+
+/// Looping the last measure: its end is past the final MIDI event, which
+/// must still wrap rather than letting playback run off the end.
+#[test]
+fn loop_region_past_the_last_event_still_wraps() {
+    let soundfont_path = soundfont_path();
+    if !soundfont_path.exists() {
+        eprintln!("skipping: soundfont not present in this environment");
+        return;
+    }
+    let soundfont_bytes = fs::read(&soundfont_path).unwrap();
+    let mut player = Player::new(&soundfont_bytes, 44100).unwrap();
+    let midi = player.load_midi(&two_staff_midi()).unwrap(); // last event at 1000ms
+    player.play(&midi, false);
+    player.set_loop_region(Some((500.0, 1500.0)));
+
+    let mut left = vec![0.0f32; 4410];
+    let mut right = left.clone();
+    let mut max_position_ms = 0.0_f64;
+    for _ in 0..60 {
+        player.render(&mut left, &mut right);
+        max_position_ms = max_position_ms.max(player.position_secs() * 1000.0);
+        assert!(!player.end_of_sequence());
+    }
+    assert!(
+        max_position_ms < 1600.0,
+        "ran past the loop end: {max_position_ms}ms"
+    );
+}
