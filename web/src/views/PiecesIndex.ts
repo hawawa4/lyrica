@@ -50,13 +50,18 @@ export class PiecesIndex {
       return
     }
     this.root.style.display = 'block'
-    for (const piece of pieces) {
+    for (const [i, piece] of pieces.entries()) {
       const li = document.createElement('li')
       li.className = 'panel-list-item'
+      const index = document.createElement('span')
+      index.className = 'index'
+      index.textContent = String(i + 1)
+      li.appendChild(index)
       const label = document.createElement('span')
       label.className = 'label'
       label.textContent = piece.title
       li.appendChild(label)
+      li.title = piece.title
       li.addEventListener('click', () => this.onJump?.(piece.start_measure_index))
       this.listEl.appendChild(li)
     }

@@ -37,6 +37,14 @@ The library view (`web/src/views/UpdateNotice.ts`) shows a small non-modal "Lyri
 
 How it installs depends on `Install::detect()`: an AppImage (`$APPIMAGE`) is downloaded next to itself and atomically renamed over; a `.deb` (exe under `/usr/`, not `/usr/local/`) is downloaded and installed with `pkexec apt-get install` (polkit password dialog — a GUI has no tty for sudo). Anything else (`cargo run`, `/usr/local/bin`) has no release artifact to update from, so the chip just opens the release page. Every download is verified against the release's `SHA256SUMS.txt` and refused without one. Both depend on `release.yml`: the asset names are Tauri's `Lyrica_<version>_amd64.{AppImage,deb}`, and the running version is `CARGO_PKG_VERSION`, which `release.yml`'s `prepare` job already requires to equal the tag — keep both in sync if the release job changes.
 
+## UI conventions (`web/`)
+
+- Icons are inline SVG from `web/src/icons.ts` (`icon('play')`, Material glyphs on a 24px grid, `currentColor`) — no emoji or unicode-glyph icons. Add new glyphs there.
+- Styles: `theme.css` (tokens + base controls), `app.css` (shell/page area), `components.css` (toolbar, chips, tab bar, library). Colors come only from theme tokens, in all three themes.
+- Solid accent (`button.primary`) is for the one primary action in a region (Play, "Choose folder" on a fresh install). Toggles and the selected segment use the tonal `.active` state. Related controls share a `.tool-group` pill; one-of-N choices use `.seg-btn`.
+- The practice toolbar is two rows: `.appbar` (title, rating, status chips, zen, theme) and `.controlbar` (grouped controls, hidden when no file is open). `#status` is for errors only; the file name is `#piece-title`.
+- The sidebar column only exists for multi-piece scores (`#app.no-sidebar` otherwise, toggled in `PracticeView.setPieces`).
+
 ## Known gotchas
 
 - **webmscore in Node vs. browser**: webmscore 1.2.1's Node-targeted glue code breaks under Node 22 (read-only `navigator`, global `fetch` misdetection) — it should never be needed in `web/` itself, which always runs in a real browser or Tauri webview.

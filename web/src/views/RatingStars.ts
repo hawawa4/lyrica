@@ -1,4 +1,5 @@
 import type { KnowledgeLevel } from '../types'
+import { icon } from '../icons'
 
 /**
  * A clickable 1-5 star row for "knowledge level" (1 = never seen it before,
@@ -34,13 +35,15 @@ export class RatingStars {
 
   private render(): void {
     this.el.innerHTML = ''
+    this.el.classList.toggle('is-empty', this.level === null)
     for (let i = 1; i <= 5; i++) {
       const star = document.createElement('button')
       star.type = 'button'
       star.className = 'rating-star'
       const filled = this.level !== null && i <= this.level
       star.classList.toggle('filled', filled)
-      star.innerHTML = filled ? '&#9733;' : '&#9734;'
+      star.innerHTML = icon('star', 16)
+      star.setAttribute('aria-label', `Rate ${i} of 5`)
       star.title = `Knowledge level ${i}${i === 1 ? ' (never seen it before)' : ''}${i === 5 ? ' (mastered)' : ''}`
       star.addEventListener('click', (e) => {
         e.stopPropagation()

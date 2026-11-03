@@ -1,4 +1,5 @@
 import { addMarker, deleteMarker, listMarkers, updateMarker } from '../api-client'
+import { icon } from '../icons'
 import type { Marker, MarkerKind, MarkerPosition } from '../types'
 
 /** Which kind of marker a click on the sheet places — `null` means no tool is active and clicks seek/select as usual. */
@@ -270,7 +271,8 @@ export class MarkerOverlay {
       deleteBtn.type = 'button'
       deleteBtn.className = 'marker-editor-delete'
       deleteBtn.title = 'Delete marker'
-      deleteBtn.textContent = '✕'
+      deleteBtn.innerHTML = icon('delete', 14)
+      deleteBtn.setAttribute('aria-label', 'Delete marker')
       // mousedown, not click: keeps focus in the input so its blur-commit doesn't fire first.
       deleteBtn.addEventListener('mousedown', (e) => {
         e.preventDefault()

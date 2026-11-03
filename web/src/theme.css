@@ -16,6 +16,8 @@
   --bg-active: #dde6f7;
   --bg-page: #ffffff;
   --bg-page-area: #d7dae0;
+  --bg-control: #eef0f4;
+  --bg-control-hover: #e1e4ea;
 
   --text: #1c1f24;
   --text-muted: #6b7280;
@@ -59,6 +61,8 @@
   --bg-active: #2a3550;
   --bg-page: #232629;
   --bg-page-area: #0f1013;
+  --bg-control: #262a31;
+  --bg-control-hover: #323741;
 
   --text: #e6e8eb;
   --text-muted: #9aa0ab;
@@ -113,6 +117,8 @@
   --bg-active: #cdbd8e;
   --bg-page: #f3ead3;
   --bg-page-area: #cbbd98;
+  --bg-control: #ddd0ab;
+  --bg-control-hover: #d0c299;
 
   --text: #3a3123;
   --text-muted: #6e6248;
@@ -229,14 +235,39 @@ input {
   color: inherit;
 }
 
+[hidden] {
+  display: none !important;
+}
+
+.icon {
+  display: block;
+  flex-shrink: 0;
+  pointer-events: none;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+input:focus-visible {
+  outline-offset: 0;
+}
+
+/* Default button: a quiet bordered control. Variants: .primary (solid accent — one per screen region), .active (tonal "on" state), .icon-btn (square ghost, see components.css). */
 button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
   background: var(--bg-elevated);
   border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 6px 10px;
+  border-radius: 8px;
+  padding: 6px 12px;
   cursor: pointer;
   color: var(--text);
-  transition: background-color 0.12s, border-color 0.12s;
+  font-weight: 500;
+  transition: background-color 0.12s, border-color 0.12s, color 0.12s, box-shadow 0.12s;
 }
 
 button:hover:not(:disabled) {
@@ -244,7 +275,7 @@ button:hover:not(:disabled) {
 }
 
 button:disabled {
-  opacity: 0.45;
+  opacity: 0.4;
   cursor: default;
 }
 
@@ -255,29 +286,40 @@ button.primary {
 }
 
 button.primary:hover:not(:disabled) {
-  filter: brightness(1.08);
+  background: var(--accent);
+  filter: brightness(1.1);
 }
 
 button.active {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--accent-text);
+  background: var(--accent-soft);
+  border-color: transparent;
+  color: var(--accent);
+}
+
+button.active:hover:not(:disabled) {
+  background: var(--accent-soft);
+  filter: brightness(0.96);
 }
 
 input[type='text'],
 input[type='number'],
+input[type='search'],
 input[type='file'] {
   background: var(--bg-elevated);
   border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 5px 8px;
+  border-radius: 8px;
+  padding: 6px 10px;
   color: var(--text);
+}
+
+input::placeholder {
+  color: var(--text-faint);
 }
 
 select {
   background: var(--bg-elevated);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: 8px;
   padding: 5px 8px;
   color: var(--text);
   font-family: inherit;

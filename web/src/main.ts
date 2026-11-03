@@ -1,5 +1,6 @@
 import './theme.css'
 import './app.css'
+import './components.css'
 import { isTauri } from './api-client'
 import { LibraryView } from './views/LibraryView'
 import { PracticeView } from './views/PracticeView'

@@ -43,6 +43,7 @@ import type { CalibrationPoint, KnowledgeLevel, Piece, StaffRole, StaffSystem, T
 import { loopRegionForElidRange } from '../loop-region'
 import { saveSession, type Session } from '../session'
 import { initTheme, applyTheme, THEME_LABELS, THEME_ICONS, type Theme } from '../theme'
+import { icon } from '../icons'
 
 /**
  * Everything that used to be a single set of global variables/objects,
@@ -62,6 +63,12 @@ import { initTheme, applyTheme, THEME_LABELS, THEME_ICONS, type Theme } from '..
  */
 /** stopped: head at rest, no audio engine activity. playing: Cursor is polling. paused: frozen mid-playback, resumable from exactly this position. */
 type TransportState = 'stopped' | 'playing' | 'paused'
+
+/** Toggle-button "on" state: the tonal highlight plus the matching ARIA state. */
+function setPressed(el: HTMLElement, on: boolean): void {
+  el.classList.toggle('active', on)
+  el.setAttribute('aria-pressed', String(on))
+}
 
 /** Which staves of a `.mscz` sound: both, or just the upper/lower one of each multi-staff part (a piano's right/left hand). */
 type StaffMode = 'both' | 'upper' | 'lower'
@@ -213,7 +220,15 @@ export class PracticeView {
   readonly root: HTMLDivElement
 
   private readonly fileInput: HTMLInputElement
+  /** Errors/warnings only (a chip that hides itself when empty) — the open file's name lives in `titleEl`. */
   private readonly statusEl: HTMLSpanElement
+  private readonly titleEl: HTMLSpanElement
+  private readonly controlbarEl: HTMLDivElement
+  private readonly zenBtn: HTMLButtonElement
+  private readonly zenExitBtn: HTMLButtonElement
+  private readonly openFileBtn: HTMLButtonElement
+  private readonly emptyLibraryBtn: HTMLButtonElement
+  private readonly emptyOpenBtn: HTMLButtonElement
   private readonly navEl: HTMLDivElement
   private readonly transportEl: HTMLDivElement
   private readonly zoomGroupEl: HTMLDivElement
@@ -282,84 +297,98 @@ export class PracticeView {
     this.root = document.createElement('div')
     this.root.id = 'app'
     this.root.innerHTML = `
-      <div class="toolbar">
-        <span class="app-title">Lyrica</span>
-        <div class="toolbar-group">
-          <input id="file-input" type="file" accept=".mscz,.mscx,.pdf" />
-          <button id="back-to-library-btn" class="primary" style="display:none;" title="Back to library">&#128193; Library</button>
-        </div>
-        <div id="nav" class="toolbar-group" style="display:none;">
-          <button id="prev-page" class="icon-btn" title="Previous page">&larr;</button>
-          <span id="page-indicator"></span>
-          <button id="next-page" class="icon-btn" title="Next page">&rarr;</button>
-          <input id="goto-measure-input" type="number" min="1" placeholder="Measure" class="goto-measure-input" />
-          <button id="goto-measure-btn" title="Go to measure">Go</button>
-        </div>
-        <div id="transport" class="toolbar-group" style="display:none;">
-          <button id="play-btn" class="icon-btn primary" disabled title="Play">&#9654;</button>
-          <button id="stop-btn" class="icon-btn" disabled title="Stop">&#9632;</button>
-          <button id="speed-05" class="speed-btn" disabled>0.5x</button>
-          <button id="speed-075" class="speed-btn" disabled>0.75x</button>
-          <button id="speed-10" class="speed-btn" disabled>1.0x</button>
-          <div id="staff-group" class="staff-group" role="group" aria-label="Staves to play" style="display:none;"></div>
-          <div class="metronome-control">
-            <button id="metronome-btn" class="icon-btn metronome-btn" disabled aria-pressed="false" title="Metronome (M)">
-              <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M9 3h6l4 18H5L9 3z" />
-                <path d="M5.9 17h12.2" />
-                <path d="M12 17l5-11" />
-                <circle cx="15.6" cy="9.1" r="1.3" fill="currentColor" />
-              </svg>
-            </button>
-            <input id="metronome-volume" type="range" min="0" max="100" step="1" class="metronome-volume" title="Metronome volume" aria-label="Metronome volume" />
+      <header class="toolbar">
+        <div class="appbar">
+          <button id="back-to-library-btn" class="tool-btn" hidden title="Back to library">${icon('arrow_back', 18)}<span>Library</span></button>
+          <button id="open-file-btn" class="tool-btn" hidden title="Open a .mscz or .pdf file">${icon('folder_open', 18)}<span>Open file</span></button>
+          <input id="file-input" type="file" accept=".mscz,.mscx,.pdf" hidden />
+          <div class="appbar-title">
+            <span id="piece-title" class="piece-title"></span>
+            <span id="rating-mount" class="rating-mount" style="display:none;"></span>
+          </div>
+          <div class="appbar-status">
+            <span id="selection-status" class="chip"></span>
+            <span id="loop-status" class="chip chip-loop"></span>
+            <span id="calibration-status" class="chip chip-info"></span>
+            <span id="status" class="chip chip-notice" role="status" title="Click to dismiss"></span>
+          </div>
+          <div class="appbar-actions">
+            <button id="zen-btn" class="icon-btn" title="Zen mode: hide everything but the sheet (F)" aria-label="Zen mode">${icon('fullscreen')}</button>
+            <div id="theme-switch" class="tool-group theme-switch" role="radiogroup" aria-label="Theme"></div>
           </div>
         </div>
-        <div id="zoom-group" class="toolbar-group zoom-control" style="display:none;">
-          <button id="zoom-out" class="icon-btn" title="Zoom out">&minus;</button>
-          <input id="zoom-indicator" class="zoom-indicator" type="text" inputmode="numeric" value="100%" title="Zoom level — click and type a percentage, then press Enter" aria-label="Zoom percentage" />
-          <button id="zoom-in" class="icon-btn" title="Zoom in">+</button>
-          <button id="fit-width-btn" title="Fit to width">Fit width</button>
-          <button id="fit-height-btn" title="Fit to height">Fit height</button>
-          <button id="zoom-reset-btn" title="Reset zoom to 100%">100%</button>
-          <button id="book-mode-btn" class="book-mode-btn" title="Book mode: show two pages side by side">&#128214; Book mode</button>
-          <button id="scroll-mode-btn" class="book-mode-btn" title="Scroll mode: all pages in one continuous strip (with Book mode: scrolls sideways)">&#8597; Scroll mode</button>
-        </div>
-        <div id="marker-tools" class="toolbar-group marker-tools" style="display:none;">
-          <button id="marker-tools-toggle" class="marker-tools-header" aria-expanded="true" title="Collapse/expand the markers panel"><span class="collapsible-disclosure">&#9660;</span> Markers</button>
-          <div id="marker-tools-body" class="marker-tools-body">
-            <button id="text-tool-btn" class="marker-tool-btn" title="Text marker (T): click a measure to write a note above it">&#9998; Text</button>
-            <button id="fingering-tool-btn" class="marker-tool-btn" title="Fingering (G): click where the numbers go, type digits 1-5">Fingering</button>
+
+        <div id="controlbar" class="controlbar" hidden>
+          <div id="transport" class="transport" style="display:none;">
+            <button id="play-btn" class="play-btn primary" disabled title="Play (Space)" aria-label="Play">${icon('play', 26)}</button>
+            <div class="tool-group">
+              <button id="stop-btn" class="icon-btn" disabled title="Stop (Esc)" aria-label="Stop">${icon('stop')}</button>
+              <span class="tool-sep"></span>
+              <button id="speed-05" class="seg-btn" disabled title="Half speed">0.5&times;</button>
+              <button id="speed-075" class="seg-btn" disabled title="Three-quarter speed">0.75&times;</button>
+              <button id="speed-10" class="seg-btn" disabled title="Full speed">1&times;</button>
+            </div>
+            <div id="staff-group" class="tool-group" role="group" aria-label="Staves to play" style="display:none;">
+              <span class="tool-caption">Staff</span>
+            </div>
+            <div class="tool-group">
+              <button id="metronome-btn" class="icon-btn metronome-btn" disabled aria-pressed="false" title="Metronome (M)" aria-label="Metronome">${icon('metronome')}</button>
+              <input id="metronome-volume" type="range" min="0" max="100" step="1" class="metronome-volume" title="Metronome volume" aria-label="Metronome volume" />
+            </div>
+          </div>
+
+          <div id="nav" class="tool-group" style="display:none;">
+            <button id="prev-page" class="icon-btn" title="Previous page (&larr;)" aria-label="Previous page">${icon('chevron_left')}</button>
+            <span id="page-indicator" class="page-indicator"></span>
+            <button id="next-page" class="icon-btn" title="Next page (&rarr;)" aria-label="Next page">${icon('chevron_right')}</button>
+            <span class="tool-sep"></span>
+            <label class="goto-field" title="Jump to a measure number">
+              <input id="goto-measure-input" type="number" min="1" placeholder="Measure" class="goto-measure-input" aria-label="Go to measure" />
+              <button id="goto-measure-btn" class="icon-btn" title="Go to measure (Enter)" aria-label="Go to measure">${icon('arrow_forward', 18)}</button>
+            </label>
+          </div>
+
+          <div class="controlbar-spacer"></div>
+
+          <div id="zoom-group" class="tool-group zoom-control" style="display:none;">
+            <button id="zoom-out" class="icon-btn" title="Zoom out (Ctrl + scroll)" aria-label="Zoom out">${icon('remove')}</button>
+            <input id="zoom-indicator" class="zoom-indicator" type="text" inputmode="numeric" value="100%" title="Zoom level: click and type a percentage, then press Enter" aria-label="Zoom percentage" />
+            <button id="zoom-in" class="icon-btn" title="Zoom in (Ctrl + scroll)" aria-label="Zoom in">${icon('add')}</button>
+            <span class="tool-sep"></span>
+            <button id="fit-width-btn" class="icon-btn" title="Fit to width" aria-label="Fit to width">${icon('fit_width')}</button>
+            <button id="fit-height-btn" class="icon-btn" title="Fit to height" aria-label="Fit to height">${icon('fit_height')}</button>
+            <button id="zoom-reset-btn" class="icon-btn zoom-reset" title="Reset zoom to 100%" aria-label="Reset zoom">1:1</button>
+            <span class="tool-sep"></span>
+            <button id="book-mode-btn" class="icon-btn" title="Book mode: show two pages side by side" aria-label="Book mode">${icon('book')}</button>
+            <button id="scroll-mode-btn" class="icon-btn" title="Scroll mode: all pages in one continuous strip (with Book mode: scrolls sideways)" aria-label="Scroll mode">${icon('scroll')}</button>
+          </div>
+
+          <div id="marker-tools" class="tool-group" role="group" aria-label="Markers" style="display:none;">
+            <button id="text-tool-btn" class="icon-btn marker-tool-btn" title="Text marker: click a measure to write a note above it (T)" aria-label="Text marker">${icon('text', 20)}</button>
+            <button id="fingering-tool-btn" class="icon-btn marker-tool-btn" title="Fingering: click where the numbers go, then type digits 1-5 (G)" aria-label="Fingering marker">${icon('fingering', 22)}</button>
           </div>
         </div>
-        <div class="toolbar-spacer"></div>
-        <div class="toolbar-group">
-          <div id="theme-switch" class="theme-switch" role="radiogroup" aria-label="Theme"></div>
-        </div>
-      </div>
+      </header>
 
       <div class="sidebar">
         <div id="pieces-index" class="sidebar-section"></div>
       </div>
 
       <div class="main-area">
-        <div class="status-bar">
-          <span id="status"></span>
-          <span id="selection-status"></span>
-          <span id="loop-status" class="loop-status"></span>
-          <span id="calibration-status" class="calibration-status"></span>
-          <span id="rating-mount" class="rating-mount" style="display:none;"></span>
-        </div>
         <div class="page-area-wrap">
           <div id="pdf-controls" class="pdf-overlay-controls" style="display:none;">
             <button id="toggle-measure-markers-btn" class="icon-btn" aria-pressed="true" title="Show/hide measure markers"></button>
-            <button id="rescan-measures-btn" class="icon-btn" title="Rescan measures (clears and re-detects all measure markers)">
-              <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/></svg>
-            </button>
+            <button id="rescan-measures-btn" class="icon-btn" title="Rescan measures (clears and re-detects all measure markers)" aria-label="Rescan measures">${icon('refresh', 18)}</button>
           </div>
           <div id="page" class="page-area">
             <div class="empty-state" id="empty-state">
-              <div>No file open</div>
-              <div class="hint">Open a .mscz or .pdf file, or drag one onto this window</div>
+              <div class="empty-state-icon">${icon('music_note', 34)}</div>
+              <div class="empty-state-title">No sheet open</div>
+              <div class="hint">Drag a .mscz or .pdf file onto this window, or pick one from your library.</div>
+              <div class="empty-state-actions">
+                <button id="empty-library-btn" class="primary" hidden>${icon('folder_open', 18)}<span>Browse library</span></button>
+                <button id="empty-open-btn" class="primary" hidden>${icon('folder_open', 18)}<span>Open file</span></button>
+              </div>
             </div>
           </div>
           <div id="loading-overlay" class="loading-overlay" style="display:none;" role="status" aria-live="polite">
@@ -373,12 +402,24 @@ export class PracticeView {
       </div>
 
       <div id="tab-bar" class="tab-bar"></div>
+      <button id="zen-exit-btn" class="zen-exit" title="Exit zen mode (F)">${icon('close', 16)}<span>Exit zen mode</span></button>
       <div id="drop-overlay" class="drop-overlay" style="display:none;">Drop to open</div>
     `
+    this.root.classList.add('no-sidebar') // until a multi-piece score is opened
     container.appendChild(this.root)
 
     this.fileInput = this.root.querySelector('#file-input')!
     this.statusEl = this.root.querySelector('#status')!
+    this.statusEl.addEventListener('click', () => {
+      this.statusEl.textContent = ''
+    })
+    this.titleEl = this.root.querySelector('#piece-title')!
+    this.controlbarEl = this.root.querySelector('#controlbar')!
+    this.zenBtn = this.root.querySelector('#zen-btn')!
+    this.zenExitBtn = this.root.querySelector('#zen-exit-btn')!
+    this.openFileBtn = this.root.querySelector('#open-file-btn')!
+    this.emptyLibraryBtn = this.root.querySelector('#empty-library-btn')!
+    this.emptyOpenBtn = this.root.querySelector('#empty-open-btn')!
     this.navEl = this.root.querySelector('#nav')!
     this.transportEl = this.root.querySelector('#transport')!
     this.zoomGroupEl = this.root.querySelector('#zoom-group')!
@@ -399,7 +440,7 @@ export class PracticeView {
     for (const { mode, label, title } of STAFF_MODES) {
       const btn = document.createElement('button')
       btn.type = 'button'
-      btn.className = 'speed-btn'
+      btn.className = 'seg-btn'
       btn.textContent = label
       btn.title = title
       btn.addEventListener('click', () => void this.setStaffMode(mode))
@@ -462,14 +503,21 @@ export class PracticeView {
     }
     syncThemeButtons()
 
-    this.libraryBtn.addEventListener('click', () => {
+    const goToLibrary = (): void => {
       location.hash = '#/library'
-    })
+    }
+    this.libraryBtn.addEventListener('click', goToLibrary)
+    this.emptyLibraryBtn.addEventListener('click', goToLibrary)
+    this.zenBtn.addEventListener('click', () => this.toggleZenMode())
+    this.zenExitBtn.addEventListener('click', () => this.toggleZenMode())
 
     const tabBarEl = this.root.querySelector<HTMLDivElement>('#tab-bar')!
     this.tabBar = new TabBar(tabBarEl)
     this.tabBar.onSwitch((hash) => void this.switchToTab(hash))
     this.tabBar.onClose((hash) => this.closeTab(hash))
+    this.tabBar.onAdd(() => {
+      location.hash = '#/library'
+    })
 
     this.msczCursor = new Cursor<TimelineEvent>((event) => {
       const active = this.activeTab()
@@ -548,7 +596,7 @@ export class PracticeView {
     for (const [value, btn] of Object.entries(this.speedButtons)) {
       btn.addEventListener('click', () => this.setSpeed(Number(value)))
     }
-    this.speedButtons[1.0].classList.add('active')
+    setPressed(this.speedButtons[1.0], true)
 
     this.metronomeBtn.addEventListener('click', () => this.setMetronomeOn(!this.metronomeOn))
     this.metronomeVolumeInput.value = String(Math.round(loadMetronomeVolume() * 100))
@@ -561,12 +609,13 @@ export class PracticeView {
 
     const MARKERS_KEY = 'lyrica-measure-markers-visible'
     const markersToggle = this.root.querySelector<HTMLButtonElement>('#toggle-measure-markers-btn')!
-    const EYE_OPEN = '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M1.5 12S5.5 5 12 5s10.5 7 10.5 7-4 7-10.5 7S1.5 12 1.5 12z"/><circle cx="12" cy="12" r="3"/></svg>'
-    const EYE_OFF = '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17.9 17.9A10.8 10.8 0 0 1 12 19C5.5 19 1.5 12 1.5 12a19 19 0 0 1 4.6-5.4M9.9 5.2A10 10 0 0 1 12 5c6.5 0 10.5 7 10.5 7a19 19 0 0 1-2.2 3.2M14.1 14.1A3 3 0 0 1 9.9 9.9M2 2l20 20"/></svg>'
+    const EYE_OPEN = icon('eye', 18)
+    const EYE_OFF = icon('eye_off', 18)
     const setMarkersVisible = (visible: boolean): void => {
       this.pageContainerEl.classList.toggle('hide-measure-markers', !visible)
       markersToggle.innerHTML = visible ? EYE_OPEN : EYE_OFF
       markersToggle.setAttribute('aria-pressed', String(visible))
+      markersToggle.title = visible ? 'Hide measure markers' : 'Show measure markers'
       markersToggle.classList.toggle('active', visible)
     }
     let markersVisible = true
@@ -584,15 +633,6 @@ export class PracticeView {
       } catch {
         // Best-effort persistence only.
       }
-    })
-
-    const markerToolsToggle = this.root.querySelector<HTMLButtonElement>('#marker-tools-toggle')!
-    const markerToolsBody = this.root.querySelector<HTMLDivElement>('#marker-tools-body')!
-    markerToolsToggle.addEventListener('click', () => {
-      const collapsed = markerToolsBody.style.display !== 'none'
-      markerToolsBody.style.display = collapsed ? 'none' : ''
-      markerToolsToggle.setAttribute('aria-expanded', String(!collapsed))
-      markerToolsToggle.querySelector('.collapsible-disclosure')!.innerHTML = collapsed ? '&#9654;' : '&#9660;'
     })
 
     this.rescanMeasuresBtn.addEventListener('click', async () => {
@@ -731,9 +771,13 @@ export class PracticeView {
       // confirmed as the cause of PDFs (and .mscz files) never showing up there
       // when opened via this picker rather than drag-drop. The dialog plugin's
       // `open()` returns the real path, same as a dropped file's path.
-      this.fileInput.style.display = 'none'
-      this.libraryBtn.style.display = 'inline-block'
+      this.libraryBtn.hidden = false
+      this.emptyLibraryBtn.hidden = false
     } else {
+      this.openFileBtn.hidden = false
+      this.emptyOpenBtn.hidden = false
+      this.openFileBtn.addEventListener('click', () => this.fileInput.click())
+      this.emptyOpenBtn.addEventListener('click', () => this.fileInput.click())
       this.fileInput.addEventListener('change', async () => {
         const file = this.fileInput.files?.[0]
         if (!file) return
@@ -886,6 +930,12 @@ export class PracticeView {
     this.root.style.display = visible ? '' : 'none'
   }
 
+  /** Shows the pieces list, and the sidebar column only while there is something in it — a single-piece score has no use for an empty 260px gutter. */
+  private setPieces(pieces: Piece[] | null): void {
+    this.piecesIndex.setPieces(pieces)
+    this.root.classList.toggle('no-sidebar', (pieces?.length ?? 0) <= 1)
+  }
+
   private activeTab(): TabState | null {
     return this.activeHash ? this.tabs.get(this.activeHash) ?? null : null
   }
@@ -940,7 +990,7 @@ export class PracticeView {
   }
 
   private renderTabBar(): void {
-    const tabInfos: TabInfo[] = Array.from(this.tabs.values()).map((t) => ({ fileHash: t.fileHash, title: t.title }))
+    const tabInfos: TabInfo[] = Array.from(this.tabs.values()).map((t) => ({ fileHash: t.fileHash, title: t.title, kind: t.kind }))
     this.tabBar.setTabs(tabInfos, this.activeHash)
   }
 
@@ -996,7 +1046,7 @@ export class PracticeView {
     const selectable = tab?.kind === 'mscz' && tab.staffRoles.includes('upper') && tab.staffRoles.includes('lower')
     this.staffGroupEl.style.display = selectable ? 'inline-flex' : 'none'
     for (const [mode, btn] of Object.entries(this.staffButtons)) {
-      btn.classList.toggle('active', tab?.kind === 'mscz' && tab.staffMode === mode)
+      setPressed(btn, tab?.kind === 'mscz' && tab.staffMode === mode)
     }
   }
 
@@ -1020,7 +1070,7 @@ export class PracticeView {
     const active = this.activeTab()
     if (active) active.speed = speed
     for (const [value, btn] of Object.entries(this.speedButtons)) {
-      btn.classList.toggle('active', Number(value) === speed)
+      setPressed(btn, Number(value) === speed)
     }
     void setPlaybackSpeed(speed)
   }
@@ -1092,15 +1142,16 @@ export class PracticeView {
       else void tab.pageView.showPage(tab.pageView.page)
     }
 
-    this.statusEl.textContent = tab.title
+    this.titleEl.textContent = tab.title
+    this.titleEl.title = tab.title
+    this.statusEl.textContent = ''
+    this.controlbarEl.hidden = false
     this.calibrationStatusEl.textContent = ''
     this.pdfControlsEl.style.display = tab.kind === 'pdf' ? 'flex' : 'none'
     this.transportEl.style.display = 'flex'
     this.zoomGroupEl.style.display = 'flex'
-    this.bookModeBtn.style.display = 'inline-block'
-    this.bookModeBtn.classList.toggle('active', tab.bookMode)
-    this.scrollModeBtn.style.display = 'inline-block'
-    this.scrollModeBtn.classList.toggle('active', tab.scrollMode)
+    setPressed(this.bookModeBtn, tab.bookMode)
+    setPressed(this.scrollModeBtn, tab.scrollMode)
     void this.loadRatingForTab(tab)
     // "untracked-" tabs have no stable file_hash (desktop hashing failed, or
     // running outside Tauri), so there's nothing to persist markers under.
@@ -1138,7 +1189,7 @@ export class PracticeView {
 
       this.msczCursor.setItems(tab.timeline?.events ?? null)
       this.pdfCursor.setItems(null)
-      this.piecesIndex.setPieces(tab.pieces)
+      this.setPieces(tab.pieces)
 
       const hasAudio = tab.timeline !== null
       this.renderTransportButtons(tab.transportState, hasAudio)
@@ -1169,7 +1220,7 @@ export class PracticeView {
 
       this.msczCursor.setItems(null)
       this.pdfCursor.setItems(tab.calibrationOverlay.getPoints())
-      this.piecesIndex.setPieces(null) // pieces index is .mscz-only — no raw XML to detect boundaries from in a PDF
+      this.setPieces(null) // pieces index is .mscz-only — no raw XML to detect boundaries from in a PDF
 
       this.navEl.style.display = tab.pageCount > 1 ? 'flex' : 'none'
       this.pageIndicatorEl.textContent = `Page ${tab.currentPage + 1} / ${tab.pageCount}`
@@ -1374,13 +1425,16 @@ export class PracticeView {
         this.zoomGroupEl.style.display = 'none'
         this.pdfControlsEl.style.display = 'none'
         this.statusEl.textContent = ''
+        this.titleEl.textContent = ''
+        this.titleEl.title = ''
+        this.controlbarEl.hidden = true
         this.selectionStatusEl.textContent = ''
         this.loopStatusEl.textContent = ''
         this.calibrationStatusEl.textContent = ''
         this.ratingMountEl.style.display = 'none'
         void this.markerOverlay.setTab(null, null, null)
         this.markerToolsEl.style.display = 'none'
-        this.piecesIndex.setPieces(null)
+        this.setPieces(null)
         this.playBtn.disabled = true
         this.stopBtn.disabled = true
         for (const btn of Object.values(this.speedButtons)) btn.disabled = true
@@ -2015,8 +2069,10 @@ export class PracticeView {
   /** Updates the Play button's icon/title and both buttons' disabled state to match `state` — called every time a tab's transportState changes, including on tab (re)activation. */
   private renderTransportButtons(state: TransportState, hasAudio: boolean): void {
     this.playBtn.disabled = !hasAudio
-    this.playBtn.innerHTML = state === 'playing' ? '&#9208;' : '&#9654;'
-    this.playBtn.title = state === 'playing' ? 'Pause' : state === 'paused' ? 'Resume' : 'Play'
+    this.playBtn.innerHTML = state === 'playing' ? icon('pause', 26) : icon('play', 26)
+    const label = state === 'playing' ? 'Pause' : state === 'paused' ? 'Resume' : 'Play'
+    this.playBtn.title = `${label} (Space)`
+    this.playBtn.setAttribute('aria-label', label)
     this.stopBtn.disabled = !hasAudio || state === 'stopped'
   }
 
@@ -2230,8 +2286,8 @@ export class PracticeView {
     const scroll = change.scroll ?? active.scrollMode
     if (active.kind === 'mscz') await this.setMsczDisplayMode(active, book, scroll)
     else await this.setPdfDisplayMode(active, book, scroll)
-    this.bookModeBtn.classList.toggle('active', book)
-    this.scrollModeBtn.classList.toggle('active', scroll)
+    setPressed(this.bookModeBtn, book)
+    setPressed(this.scrollModeBtn, scroll)
   }
 
   private async setMsczDisplayMode(active: MsczTabState, book: boolean, scroll: boolean): Promise<void> {
@@ -2383,8 +2439,8 @@ export class PracticeView {
   }
 
   private renderMarkerToolButtons(tool: MarkerTool | null): void {
-    this.textToolBtn.classList.toggle('active', tool === 'text')
-    this.fingeringToolBtn.classList.toggle('active', tool === 'fingering')
+    setPressed(this.textToolBtn, tool === 'text')
+    setPressed(this.fingeringToolBtn, tool === 'fingering')
   }
 
   /**
