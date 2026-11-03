@@ -41,6 +41,7 @@ import { RatingStars } from './RatingStars'
 import { TabBar, type TabInfo } from './TabBar'
 import type { CalibrationPoint, KnowledgeLevel, Piece, StaffRole, StaffSystem, Timeline, TimelineEvent } from '../types'
 import { loopRegionForElidRange } from '../loop-region'
+import { saveSession, type Session } from '../session'
 import { initTheme, applyTheme, THEME_LABELS, THEME_ICONS, type Theme } from '../theme'
 
 /**
@@ -118,6 +119,8 @@ interface SelectionSource {
 interface MsczTabState {
   kind: 'mscz'
   fileHash: string
+  /** Where the file was read from, for restoring the session — `null` when opened without a path (drag-drop in a browser). */
+  path: string | null
   title: string
   score: WebMscore
   pageView: PageDisplay
@@ -157,6 +160,7 @@ interface PdfPane {
 interface PdfTabState {
   kind: 'pdf'
   fileHash: string
+  path: string | null
   title: string
   doc: PdfDocument
   pageCount: number
@@ -257,6 +261,8 @@ export class PracticeView {
   private loadingCount = 0
 
   private readonly tabs = new Map<string, TabState>()
+  /** True while `restoreSession` is still reopening files — see `persistSession`. */
+  private restoringSession = false
   private activeHash: string | null = null
 
   private readonly tabBar: TabBar
@@ -825,6 +831,53 @@ export class PracticeView {
     return this.tabs.size > 0
   }
 
+  /** Where `tab`'s head is, in `SessionTab.position` terms. */
+  private sessionPosition(tab: TabState): number {
+    const times =
+      tab.kind === 'mscz' ? (tab.timeline?.events ?? []).map((e) => e.time_ms) : tab.calibrationOverlay.getPoints().map((p) => p.time_ms)
+    let index = 0
+    for (let i = 0; i < times.length && times[i] <= tab.headMs; i++) index = i
+    return index
+  }
+
+  /** Writes the open files and their head positions to storage — a no-op while a restore is still opening them, which would otherwise save a partial list. */
+  private persistSession(): void {
+    if (!isTauri() || this.restoringSession) return
+    const withPath = Array.from(this.tabs.values()).filter((t) => t.path !== null)
+    const active = this.activeTab()
+    saveSession({
+      tabs: withPath.map((t) => ({ path: t.path!, position: this.sessionPosition(t) })),
+      activePath: active?.path ?? null,
+    })
+  }
+
+  /**
+   * Reopens the files (and head positions) the app was last closed with,
+   * showing the one that was active. Files that no longer open are skipped.
+   * Returns how many tabs came back.
+   */
+  async restoreSession(session: Session): Promise<number> {
+    this.restoringSession = true
+    try {
+      for (const saved of session.tabs) {
+        await this.openPath(saved.path)
+        const tab = Array.from(this.tabs.values()).find((t) => t.path === saved.path)
+        if (!tab) continue
+        const times =
+          tab.kind === 'mscz' ? (tab.timeline?.events ?? []).map((e) => e.time_ms) : tab.calibrationOverlay.getPoints().map((p) => p.time_ms)
+        const ms = times[saved.position]
+        if (ms !== undefined && this.activeHash === tab.fileHash) await this.seekActive(tab, ms)
+        else if (ms !== undefined) tab.headMs = ms
+      }
+      const active = Array.from(this.tabs.values()).find((t) => t.path === session.activePath)
+      if (active) await this.switchToTab(active.fileHash)
+    } finally {
+      this.restoringSession = false
+      this.persistSession()
+    }
+    return this.tabs.size
+  }
+
   private isVisible(): boolean {
     return this.root.style.display !== 'none'
   }
@@ -1291,6 +1344,7 @@ export class PracticeView {
     if (!tab) return
     await this.stopAudioForTabSwitch(this.activeTab() ?? undefined)
     await this.activateTab(tab)
+    this.persistSession()
   }
 
   private closeTab(fileHash: string): void {
@@ -1335,6 +1389,7 @@ export class PracticeView {
       }
     }
     this.renderTabBar()
+    this.persistSession()
   }
 
   async openBytes(bytes: Uint8Array, filename: string, path: string | null): Promise<void> {
@@ -1580,6 +1635,7 @@ export class PracticeView {
     const tabState: MsczTabState = {
       kind: 'mscz',
       fileHash: fileHash ?? `untracked-${Date.now()}`,
+      path,
       title,
       score,
       pageView,
@@ -1629,6 +1685,7 @@ export class PracticeView {
     this.setLoadingStep('Loading audio…')
     this.tabs.set(tabState.fileHash, tabState)
     await this.activateTab(tabState)
+    this.persistSession()
   }
 
   /** Records the file in the recent-files list and tells the library view to refresh (it owns the visible recent-files UI now). */
@@ -1717,6 +1774,7 @@ export class PracticeView {
     const tabState: PdfTabState = {
       kind: 'pdf',
       fileHash: fileHash ?? `untracked-${Date.now()}`,
+      path,
       title,
       doc,
       pageCount: doc.numPages,
@@ -2008,6 +2066,7 @@ export class PracticeView {
     }
     if (this.activeHash === tab.fileHash) await seekMidi(targetMs)
     this.updateHeadMarker(tab)
+    this.persistSession()
   }
 
   /** Clears `tab`'s measure selection — its highlight on every pane, the status text, and the loop it armed. */
@@ -2130,6 +2189,7 @@ export class PracticeView {
     active.headMs = active.loopRegion?.[0] ?? (active.kind === 'mscz' ? this.pieceStartMs(active, positionMs) : 0)
     this.updateHeadMarker(active)
     this.renderTransportButtons('stopped', true)
+    this.persistSession()
   }
 
   private togglePlayPause(): void {

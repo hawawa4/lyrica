@@ -3,6 +3,7 @@ import './app.css'
 import { isTauri } from './api-client'
 import { LibraryView } from './views/LibraryView'
 import { PracticeView } from './views/PracticeView'
+import { loadSession } from './session'
 
 /**
  * Two-screen app: a hash router (`#/library` / `#/practice`) toggling which
@@ -55,7 +56,15 @@ function render(): void {
 }
 
 window.addEventListener('hashchange', render)
-if (!location.hash) location.hash = '#/library'
+// A fresh launch goes back to the sheets that were open last time (desktop
+// only — they're re-read from disk by path), else to the library.
+const previousSession = !location.hash && isTauri() ? loadSession() : null
+if (!location.hash) location.hash = previousSession ? '#/practice' : '#/library'
 render()
+if (previousSession) {
+  void practiceView.restoreSession(previousSession).then((restored) => {
+    if (restored === 0) location.hash = '#/library'
+  })
+}
 
 
