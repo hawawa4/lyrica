@@ -821,6 +821,10 @@ export class PracticeView {
     this.onFileOpenedCallback = callback
   }
 
+  hasTabs(): boolean {
+    return this.tabs.size > 0
+  }
+
   private isVisible(): boolean {
     return this.root.style.display !== 'none'
   }

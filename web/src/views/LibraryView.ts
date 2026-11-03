@@ -30,6 +30,7 @@ export class LibraryView {
   readonly root: HTMLDivElement
   private readonly rootFolderLabel: HTMLSpanElement
   private readonly chooseFolderBtn: HTMLButtonElement
+  private readonly backToSheetsBtn: HTMLButtonElement
   private readonly searchInput: HTMLInputElement
   private readonly loadingEl: HTMLDivElement
   private readonly loadingTextEl: HTMLSpanElement
@@ -38,6 +39,7 @@ export class LibraryView {
   private readonly folderTree: FolderTree
   private readonly levelFilterBar: LevelFilterBar
   private onOpenCallback: ((path: string) => void) | null = null
+  private onBackToSheetsCallback: (() => void) | null = null
   private pinnedFiles: PinnedFile[] = []
   private recentFiles: RecentFile[] = []
   private rootFolder: string | null = null
@@ -56,6 +58,7 @@ export class LibraryView {
     this.root.innerHTML = `
       <div class="library-header">
         <span class="app-title">Lyrica</span>
+        <button id="back-to-sheets-btn" class="primary" style="display:none;" title="Back to the sheets you have open">&larr; Open sheets</button>
         <div class="library-folder-row">
           <button id="choose-folder-btn" class="primary">Choose folder&hellip;</button>
           <span class="library-folder-path" id="root-folder-label">Loading&hellip;</span>
@@ -79,6 +82,8 @@ export class LibraryView {
 
     this.rootFolderLabel = this.root.querySelector('#root-folder-label')!
     this.chooseFolderBtn = this.root.querySelector('#choose-folder-btn')!
+    this.backToSheetsBtn = this.root.querySelector('#back-to-sheets-btn')!
+    this.backToSheetsBtn.addEventListener('click', () => this.onBackToSheetsCallback?.())
     this.searchInput = this.root.querySelector('#library-search')!
     this.loadingEl = this.root.querySelector('#library-loading')!
     this.loadingTextEl = this.root.querySelector('.library-loading-text')!
@@ -128,6 +133,15 @@ export class LibraryView {
       this.chooseFolderBtn.disabled = true
       this.chooseFolderBtn.title = 'Library browsing is desktop-only for now'
     }
+  }
+
+  /** Shows the "back to open sheets" button — only meaningful while the practice view has something open. */
+  setBackToSheetsVisible(visible: boolean): void {
+    this.backToSheetsBtn.style.display = visible ? '' : 'none'
+  }
+
+  onBackToSheets(callback: () => void): void {
+    this.onBackToSheetsCallback = callback
   }
 
   onOpen(callback: (path: string) => void): void {

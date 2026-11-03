@@ -36,6 +36,10 @@ async function openFromLibrary(path: string): Promise<void> {
   await practiceView.openPath(path)
 }
 
+libraryView.onBackToSheets(() => {
+  location.hash = '#/practice'
+})
+
 function currentRoute(): Route {
   return location.hash === '#/practice' ? 'practice' : 'library'
 }
@@ -44,7 +48,10 @@ function render(): void {
   const route = currentRoute()
   libraryView.root.style.display = route === 'library' ? '' : 'none'
   practiceView.setVisible(route === 'practice')
-  if (route === 'library') void libraryView.refresh()
+  if (route === 'library') {
+    libraryView.setBackToSheetsVisible(practiceView.hasTabs())
+    void libraryView.refresh()
+  }
 }
 
 window.addEventListener('hashchange', render)
