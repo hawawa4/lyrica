@@ -16,6 +16,7 @@ import { FileListPanel } from './FileListPanel'
 import { FolderTree } from './FolderTree'
 import { LevelFilterBar } from './LevelFilterBar'
 import { UpdateNotice } from './UpdateNotice'
+import { icon } from '../icons'
 
 /**
  * Landing screen: pick a root folder to browse for scores, see what's
@@ -57,14 +58,17 @@ export class LibraryView {
     this.root.className = 'library-view'
     this.root.innerHTML = `
       <div class="library-header">
-        <span class="app-title">Lyrica</span>
-        <button id="back-to-sheets-btn" class="primary" style="display:none;" title="Back to the sheets you have open">&larr; Open sheets</button>
-        <div class="library-folder-row">
-          <button id="choose-folder-btn" class="primary">Choose folder&hellip;</button>
-          <span class="library-folder-path" id="root-folder-label">Loading&hellip;</span>
+        <div class="brand">
+          <span class="brand-mark">${icon('music_note', 20)}</span>
+          <span>Lyrica</span>
         </div>
         <div class="library-search-row">
-          <input id="library-search" type="search" placeholder="Search your library&hellip;" />
+          <span class="search-icon">${icon('search', 20)}</span>
+          <input id="library-search" type="search" placeholder="Search your library&hellip;" aria-label="Search your library" />
+        </div>
+        <div class="library-actions">
+          <button id="back-to-sheets-btn" class="primary" hidden title="Back to the sheets you have open">${icon('arrow_back', 18)}<span>Open sheets</span></button>
+          <button id="choose-folder-btn" class="folder-chip" title="Choose your scores folder">${icon('folder_open', 18)}<span class="label" id="root-folder-label">Loading&hellip;</span></button>
         </div>
       </div>
       <div class="library-lists">
@@ -72,7 +76,6 @@ export class LibraryView {
           <div class="spinner spinner-sm"></div>
           <span class="library-loading-text"></span>
         </div>
-        <div id="level-filter-bar"></div>
         <div id="pinned-list"></div>
         <div id="recent-list"></div>
         <div id="tree-list"></div>
@@ -88,10 +91,10 @@ export class LibraryView {
     this.loadingEl = this.root.querySelector('#library-loading')!
     this.loadingTextEl = this.root.querySelector('.library-loading-text')!
 
-    this.pinnedPanel = new FileListPanel<PinnedFile>(this.root.querySelector('#pinned-list')!, 'Pinned')
-    this.recentPanel = new FileListPanel<RecentFile>(this.root.querySelector('#recent-list')!, 'Recent files')
+    this.pinnedPanel = new FileListPanel<PinnedFile>(this.root.querySelector('#pinned-list')!, 'Pinned', 'push_pin')
+    this.recentPanel = new FileListPanel<RecentFile>(this.root.querySelector('#recent-list')!, 'Recent files', 'history')
     this.folderTree = new FolderTree(this.root.querySelector('#tree-list')!)
-    this.levelFilterBar = new LevelFilterBar(this.root.querySelector('#level-filter-bar')!)
+    this.levelFilterBar = new LevelFilterBar(this.folderTree.toolbarEl)
 
     this.pinnedPanel.setIsPinned(() => true)
     this.recentPanel.setIsPinned((e) => this.isPinned(e.file_hash))
@@ -137,7 +140,7 @@ export class LibraryView {
 
   /** Shows the "back to open sheets" button — only meaningful while the practice view has something open. */
   setBackToSheetsVisible(visible: boolean): void {
-    this.backToSheetsBtn.style.display = visible ? '' : 'none'
+    this.backToSheetsBtn.hidden = !visible
   }
 
   onBackToSheets(callback: () => void): void {
@@ -305,7 +308,11 @@ export class LibraryView {
   /** Applies a newly-loaded `LibrarySettings` to this view's state and label — shared by `chooseFolder` and `refresh` so the two don't duplicate the same assignment. */
   private applyRootFolder(rootFolder: string | null): void {
     this.rootFolder = rootFolder
-    this.rootFolderLabel.textContent = rootFolder ?? 'No folder selected'
+    // Show just the folder's name; the full path is in the tooltip. With nothing chosen yet, this button is the thing to press.
+    const name = rootFolder?.split(/[/\\]/).filter(Boolean).pop() ?? rootFolder
+    this.rootFolderLabel.textContent = rootFolder ? (name ?? rootFolder) : 'Choose folder\u2026'
+    this.chooseFolderBtn.title = rootFolder ? `${rootFolder}\nClick to choose a different folder` : 'Choose your scores folder'
+    this.chooseFolderBtn.classList.toggle('primary', !rootFolder)
   }
 
   private async chooseFolder(): Promise<void> {

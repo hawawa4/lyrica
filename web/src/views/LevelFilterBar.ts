@@ -1,4 +1,5 @@
 import type { KnowledgeLevel } from '../types'
+import { icon } from '../icons'
 
 /**
  * Multi-select filter chips for "knowledge level" — click a level (or
@@ -33,6 +34,11 @@ export class LevelFilterBar {
   private render(): void {
     this.el.innerHTML = ''
 
+    const label = document.createElement('span')
+    label.className = 'level-filter-label'
+    label.textContent = 'Level'
+    this.el.appendChild(label)
+
     for (let level = 1; level <= 5; level++) {
       this.el.appendChild(this.renderChip(level as KnowledgeLevel, `${level}`, `Knowledge level ${level}`))
     }
@@ -57,7 +63,9 @@ export class LevelFilterBar {
     chip.type = 'button'
     chip.className = 'level-filter-chip'
     chip.classList.toggle('active', this.active.has(level))
-    chip.textContent = label
+    chip.innerHTML = level === null ? '' : icon('star', 12)
+    chip.append(label)
+    chip.setAttribute('aria-pressed', String(this.active.has(level)))
     chip.title = title
     chip.addEventListener('click', () => this.toggle(level))
     return chip

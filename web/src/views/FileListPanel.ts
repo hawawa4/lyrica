@@ -1,6 +1,7 @@
 import { isTauri } from '../api-client'
 import type { KnowledgeLevel } from '../types'
 import { CollapsibleSection } from './CollapsibleSection'
+import { icon, fileTypeIcon, type IconName } from '../icons'
 import { RatingStars } from './RatingStars'
 
 /**
@@ -35,8 +36,8 @@ export class FileListPanel<T extends FileListEntry> {
   private isPinnedFn: (entry: T) => boolean = () => false
   private ratingFn: (entry: T) => KnowledgeLevel | null = () => null
 
-  constructor(container: HTMLElement, title: string) {
-    this.section = new CollapsibleSection(container, title)
+  constructor(container: HTMLElement, title: string, glyph?: IconName) {
+    this.section = new CollapsibleSection(container, title, glyph)
     this.section.setVisible(false)
     this.listEl = document.createElement('ul')
     this.listEl.className = 'panel-list'
@@ -77,9 +78,13 @@ export class FileListPanel<T extends FileListEntry> {
   render(entries: T[]): void {
     this.listEl.innerHTML = ''
     this.section.setVisible(entries.length > 0)
+    this.section.setCount(entries.length)
     for (const entry of entries) {
       const li = document.createElement('li')
       li.className = 'panel-list-item'
+
+      li.insertAdjacentHTML('beforeend', fileTypeIcon(entry.path))
+      li.title = entry.path
 
       const label = document.createElement('span')
       label.className = 'label'
@@ -99,8 +104,10 @@ export class FileListPanel<T extends FileListEntry> {
         const pinBtn = document.createElement('button')
         pinBtn.className = 'pin-btn'
         pinBtn.classList.toggle('pinned', pinned)
+        pinBtn.type = 'button'
         pinBtn.title = pinned ? 'Unpin' : 'Pin to top'
-        pinBtn.innerHTML = '&#128204;' // pushpin — distinct from the rating stars sitting right next to it
+        pinBtn.setAttribute('aria-label', pinned ? 'Unpin' : 'Pin to top')
+        pinBtn.innerHTML = icon('push_pin', 18)
         pinBtn.addEventListener('click', (e) => {
           e.stopPropagation()
           this.onTogglePinCallback?.(entry, !pinned)
@@ -124,7 +131,7 @@ export class FileListPanel<T extends FileListEntry> {
 
     const revealItem = document.createElement('button')
     revealItem.className = 'context-menu-item'
-    revealItem.textContent = 'Open in file manager'
+    revealItem.innerHTML = `${icon('folder_open', 16)}<span>Open in file manager</span>`
     revealItem.addEventListener('click', () => {
       this.hideContextMenu()
       void this.revealInFileManager(entry.path)

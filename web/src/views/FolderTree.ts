@@ -1,6 +1,7 @@
 import type { KnowledgeLevel, LibraryEntry } from '../types'
 import { CollapsibleSection } from './CollapsibleSection'
 import { RatingStars } from './RatingStars'
+import { icon, fileTypeIcon } from '../icons'
 
 interface TreeNode {
   name: string
@@ -84,12 +85,14 @@ export class FolderTree {
   private pendingHashPaths = new Set<string>()
 
   constructor(container: HTMLElement) {
-    this.section = new CollapsibleSection(container, 'Library')
+    this.section = new CollapsibleSection(container, 'Library', 'folder')
     this.section.root.classList.add('folder-tree-section')
     this.section.bodyEl.innerHTML = `
+      <div class="folder-tree-toolbar"></div>
       <div class="folder-tree"></div>
       <div class="folder-tree-empty" style="display:none;">No folder selected</div>
     `
+    this.toolbarEl = this.section.bodyEl.querySelector('.folder-tree-toolbar')!
     this.treeEl = this.section.bodyEl.querySelector('.folder-tree')!
     this.emptyEl = this.section.bodyEl.querySelector('.folder-tree-empty')!
   }
@@ -118,6 +121,9 @@ export class FolderTree {
     this.requestHashFn = fn
   }
 
+  /** Slot above the tree for controls that act on it (the level filter), so they sit inside the section they filter. */
+  readonly toolbarEl: HTMLDivElement
+
   setSearchQuery(query: string): void {
     this.searchQuery = query.trim().toLowerCase()
     this.render()
@@ -142,9 +148,10 @@ export class FolderTree {
 
   private render(): void {
     this.treeEl.innerHTML = ''
+    this.section.setCount(this.entries.filter((e) => !e.is_dir).length || null)
     if (!this.rootFolder) {
       this.emptyEl.style.display = 'block'
-      this.emptyEl.textContent = 'No folder selected'
+      this.emptyEl.textContent = 'No folder selected yet. Use the folder button at the top to choose where your scores live.'
       this.treeEl.style.display = 'none'
       return
     }
@@ -201,8 +208,8 @@ export class FolderTree {
     row.className = 'tree-row tree-folder-row'
     row.style.paddingLeft = `${depth * 16 + 7}px`
     row.innerHTML = `
-      <span class="tree-disclosure">${isOpen ? '&#9660;' : '&#9654;'}</span>
-      <span class="tree-folder-icon">&#128193;</span>
+      <span class="tree-disclosure${isOpen ? ' open' : ''}">${icon('chevron_right', 18)}</span>
+      <span class="tree-folder-icon">${icon(isOpen ? 'folder_open' : 'folder', 20)}</span>
       <span class="label">${escapeHtml(node.name)}</span>
     `
     row.addEventListener('click', () => {
@@ -227,6 +234,8 @@ export class FolderTree {
     row.className = 'tree-row tree-file-row'
     row.style.paddingLeft = `${depth * 16 + 7}px`
 
+    row.insertAdjacentHTML('beforeend', fileTypeIcon(entry.path))
+
     const label = document.createElement('span')
     label.className = 'label'
     label.textContent = entry.title
@@ -239,8 +248,10 @@ export class FolderTree {
 
     const pinBtn = document.createElement('button')
     pinBtn.className = 'pin-btn'
+    pinBtn.type = 'button'
     pinBtn.title = this.isPinnedFn(entry.path) ? 'Unpin' : 'Pin to top'
-    pinBtn.innerHTML = '&#128204;' // pushpin — distinct from the rating stars sitting right next to it
+    pinBtn.setAttribute('aria-label', pinBtn.title)
+    pinBtn.innerHTML = icon('push_pin', 18)
     pinBtn.classList.toggle('pinned', this.isPinnedFn(entry.path))
     pinBtn.addEventListener('click', (e) => {
       e.stopPropagation()
