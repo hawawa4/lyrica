@@ -67,6 +67,27 @@ pub fn set_root_folder(
 
 const SCANNED_EXTENSIONS: &[&str] = &["mscz", "mscx", "musicxml", "mxl", "pdf"];
 
+/// Whether `path` is MusicXML despite its generic `.xml` extension — exporters
+/// often save compressed MusicXML (a zip with `META-INF/container.xml`) under
+/// that name, and most `.xml` files on a disk aren't scores at all, so the
+/// content decides. Reads at most the first 8 KiB for plain XML.
+fn is_musicxml_content(path: &Path) -> bool {
+    use std::io::Read;
+    let Ok(mut file) = std::fs::File::open(path) else {
+        return false;
+    };
+    let mut head = Vec::with_capacity(8192);
+    if file.by_ref().take(8192).read_to_end(&mut head).is_err() {
+        return false;
+    }
+    if head.starts_with(b"PK\x03\x04") {
+        return zip::ZipArchive::new(file)
+            .is_ok_and(|mut zip| zip.by_name("META-INF/container.xml").is_ok());
+    }
+    let head = String::from_utf8_lossy(&head);
+    head.contains("<score-partwise") || head.contains("<score-timewise")
+}
+
 /// Recursively lists every `.mscz`/`.mscx`/`.musicxml`/`.mxl`/`.pdf` file under `root`, sorted by
 /// filename. Hidden entries (dotfiles/dotdirs) are skipped. `WalkDir` is used
 /// over a hand-rolled recursive `read_dir` specifically for its built-in
@@ -97,7 +118,13 @@ pub fn scan_library(root: &Path) -> Vec<LibraryEntry> {
                         .iter()
                         .any(|allowed| ext.eq_ignore_ascii_case(allowed))
                 });
-        if !has_scanned_extension {
+        let is_xml_score = !has_scanned_extension
+            && path
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("xml"))
+            && is_musicxml_content(path);
+        if !has_scanned_extension && !is_xml_score {
             continue;
         }
 
@@ -203,15 +230,20 @@ mod tests {
         std::fs::write(sub.join("scan.pdf"), b"").unwrap();
         std::fs::write(sub.join("Export.MusicXML"), b"").unwrap();
         std::fs::write(sub.join("Packed.mxl"), b"").unwrap();
-        // Plain `.xml` is too generic to scan for (it's only openable explicitly).
-        std::fs::write(sub.join("config.xml"), b"").unwrap();
+        // `.xml` is only picked up when its content is MusicXML.
+        std::fs::write(sub.join("config.xml"), b"<settings/>").unwrap();
+        std::fs::write(
+            sub.join("Plain.xml"),
+            b"<?xml version=\"1.0\"?><score-partwise version=\"3.1\"></score-partwise>",
+        )
+        .unwrap();
         let hidden = root.join(".git");
         std::fs::create_dir(&hidden).unwrap();
         std::fs::write(hidden.join("hidden.mscz"), b"").unwrap();
 
         let entries = scan_library(root);
         let titles: Vec<&str> = entries.iter().map(|e| e.title.as_str()).collect();
-        assert_eq!(titles, vec!["a", "Export", "Invention", "Packed", "scan"]);
+        assert_eq!(titles, vec!["a", "Export", "Invention", "Packed", "Plain", "scan"]);
     }
 
     #[test]

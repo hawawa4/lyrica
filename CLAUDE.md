@@ -47,7 +47,7 @@ How it installs depends on `Install::detect()`: an AppImage (`$APPIMAGE`) is dow
 
 ## MusicXML
 
-`.musicxml`/`.mxl` (and `.xml`, openable but not library-scanned — too generic) are imported by webmscore itself (`WebMscore.load('mxl'|'musicxml', …)`), then immediately re-saved as `.mscz` via the same path as the old-format upgrade in `PracticeView.openMsczBytes`. Everything downstream (timeline, staff/measure layout, pieces) then sees a normal native `.mscz` — Rust never parses MusicXML. Differences from `.mscz`: no `adapt_score_for_engine` (nothing to rewrite), the file hash comes from `hash_bytes` (`open_file` sniffs a MuseScore version MusicXML doesn't have), and pieces are detected from the converted bytes, not the original.
+`.musicxml`/`.mxl`/`.xml` are imported by webmscore itself (`WebMscore.load('mxl'|'musicxml', …)`), then immediately re-saved as `.mscz` via the same path as the old-format upgrade in `PracticeView.openMsczBytes`. Everything downstream (timeline, staff/measure layout, pieces) then sees a normal native `.mscz` — Rust never parses MusicXML. The format is sniffed from the bytes (`scoreFormatOf`), since exporters save zipped MusicXML as `.xml`; the library scan likewise only takes `.xml` files whose content is MusicXML (`is_musicxml_content`). Differences from `.mscz`: no `adapt_score_for_engine` (nothing to rewrite), the file hash comes from `hash_bytes` (`open_file` sniffs a MuseScore version MusicXML doesn't have), and pieces are detected from the converted bytes, not the original.
 
 ## Known gotchas
 

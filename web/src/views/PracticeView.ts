@@ -1663,7 +1663,7 @@ export class PracticeView {
     // key signature). In-memory only; hashing/pieces still use originalBytes.
     // MusicXML isn't a MuseScore archive, so there's nothing to rewrite — the
     // engine imports it natively, and the re-save below produces a native file.
-    const format = scoreFormatOf(filename) ?? 'mscz'
+    const format = scoreFormatOf(filename, originalBytes) ?? 'mscz'
     const isMusicXml = format !== 'mscz'
     let engineBytes: Uint8Array = originalBytes
     if (!isMusicXml) {

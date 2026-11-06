@@ -93,12 +93,22 @@ async function loadCjkFont(): Promise<Uint8Array[]> {
 /** The score formats webmscore can import: MuseScore's own plus (compressed or plain) MusicXML. */
 export type ScoreFormat = 'mscz' | 'mxl' | 'musicxml'
 
-/** Which import format a file name denotes, or `null` for anything that isn't a score (e.g. a PDF). `.mscx` is plain MuseScore XML and goes through the `mscz` path as before. */
-export function scoreFormatOf(filename: string): ScoreFormat | null {
+/**
+ * Which import format a file is, or `null` for anything that isn't a score
+ * (e.g. a PDF). `.mscx` is plain MuseScore XML and goes through the `mscz`
+ * path as before.
+ *
+ * MusicXML's extension can't be trusted: exporters routinely save compressed
+ * MusicXML (a zip) as `.xml`, or plain XML as `.mxl`. So for those extensions
+ * the bytes decide — a zip signature means `mxl`, anything else plain XML.
+ */
+export function scoreFormatOf(filename: string, bytes: Uint8Array): ScoreFormat | null {
   const ext = /\.([^./\\]+)$/.exec(filename)?.[1].toLowerCase()
-  if (ext === 'mxl') return 'mxl'
-  if (ext === 'musicxml' || ext === 'xml') return 'musicxml'
   if (ext === 'mscz' || ext === 'mscx') return 'mscz'
+  if (ext === 'mxl' || ext === 'musicxml' || ext === 'xml') {
+    const isZip = bytes.length >= 4 && bytes[0] === 0x50 && bytes[1] === 0x4b && bytes[2] === 0x03 && bytes[3] === 0x04
+    return isZip ? 'mxl' : 'musicxml'
+  }
   return null
 }
 
