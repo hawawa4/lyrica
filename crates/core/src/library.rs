@@ -243,7 +243,10 @@ mod tests {
 
         let entries = scan_library(root);
         let titles: Vec<&str> = entries.iter().map(|e| e.title.as_str()).collect();
-        assert_eq!(titles, vec!["a", "Export", "Invention", "Packed", "Plain", "scan"]);
+        assert_eq!(
+            titles,
+            vec!["a", "Export", "Invention", "Packed", "Plain", "scan"]
+        );
     }
 
     #[test]
