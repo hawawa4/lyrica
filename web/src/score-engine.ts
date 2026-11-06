@@ -90,6 +90,18 @@ async function loadCjkFont(): Promise<Uint8Array[]> {
   return cached ? [new Uint8Array(cached.slice(0))] : []
 }
 
+/** The score formats webmscore can import: MuseScore's own plus (compressed or plain) MusicXML. */
+export type ScoreFormat = 'mscz' | 'mxl' | 'musicxml'
+
+/** Which import format a file name denotes, or `null` for anything that isn't a score (e.g. a PDF). `.mscx` is plain MuseScore XML and goes through the `mscz` path as before. */
+export function scoreFormatOf(filename: string): ScoreFormat | null {
+  const ext = /\.([^./\\]+)$/.exec(filename)?.[1].toLowerCase()
+  if (ext === 'mxl') return 'mxl'
+  if (ext === 'musicxml' || ext === 'xml') return 'musicxml'
+  if (ext === 'mscz' || ext === 'mscx') return 'mscz'
+  return null
+}
+
 export interface OpenScoreResult {
   score: WebMscore
   needsUpgrade: boolean
@@ -119,12 +131,15 @@ const ENGINE_FILE_VERSION = 450
  * — callers must show a confirmation prompt and call `upgradeScore` themselves
  * (the original file is never written back over).
  */
-export async function openScore(bytes: Uint8Array): Promise<OpenScoreResult> {
+export async function openScore(bytes: Uint8Array, format: ScoreFormat = 'mscz'): Promise<OpenScoreResult> {
   const WebMscore = await ensureReady()
   const fonts = await loadCjkFont()
-  const score = await WebMscore.load('mscz', bytes, fonts, true)
+  const score = await WebMscore.load(format, bytes, fonts, true)
   const metadata = await score.metadata()
-  const needsUpgrade = metadata.fileVersion < ENGINE_FILE_VERSION
+  // An imported MusicXML score reports the engine's own file version, but it
+  // only exists in memory: it still has to be re-saved as `.mscz` (see
+  // `upgradeScore`) so the Rust side, which reads the score XML, can use it.
+  const needsUpgrade = format !== 'mscz' || metadata.fileVersion < ENGINE_FILE_VERSION
   return { score, needsUpgrade, metadata }
 }
 

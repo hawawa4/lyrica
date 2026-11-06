@@ -250,7 +250,7 @@ export async function setRootFolder(rootFolder: string | null): Promise<LibraryS
 }
 
 /**
- * Recursive on-demand scan of `root` for `.mscz`/`.mscx`/`.pdf` files — no
+ * Recursive on-demand scan of `root` for `.mscz`/`.mscx`/`.musicxml`/`.mxl`/`.pdf` files — no
  * indexing yet, so callers should cache the result themselves (keyed by
  * `root`) rather than calling this on every render; see `LibraryView`'s own
  * scan-result cache. Never fails outright — an unreadable subdirectory is

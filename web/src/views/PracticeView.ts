@@ -1,4 +1,4 @@
-import { openScore, upgradeScore, getMeasurePositions, getMidi, type OpenScoreResult, type WebMscore, type Positions } from '../score-engine'
+import { openScore, upgradeScore, scoreFormatOf, getMeasurePositions, getMidi, type OpenScoreResult, type WebMscore, type Positions } from '../score-engine'
 import { loadPdf, renderPdfPage, canvasToPngBytes, type PdfDocument } from '../pdf-engine'
 import { PageView, ZOOM_STEP, MIN_ZOOM, MAX_ZOOM, PAGE_RENDERED_EVENT } from '../render/PageView'
 import { SelectionOverlay, type MeasureRange } from '../render/SelectionOverlay'
@@ -305,8 +305,8 @@ export class PracticeView {
       <header class="toolbar">
         <div class="appbar">
           <button id="back-to-library-btn" class="tool-btn" hidden title="Back to library">${icon('arrow_back', 18)}<span>Library</span></button>
-          <button id="open-file-btn" class="tool-btn" hidden title="Open a .mscz or .pdf file">${icon('folder_open', 18)}<span>Open file</span></button>
-          <input id="file-input" type="file" accept=".mscz,.mscx,.pdf" hidden />
+          <button id="open-file-btn" class="tool-btn" hidden title="Open a .mscz, MusicXML or .pdf file">${icon('folder_open', 18)}<span>Open file</span></button>
+          <input id="file-input" type="file" accept=".mscz,.mscx,.musicxml,.mxl,.xml,.pdf" hidden />
           <div class="appbar-title">
             <span id="piece-title" class="piece-title"></span>
             <span id="rating-mount" class="rating-mount" style="display:none;"></span>
@@ -389,7 +389,7 @@ export class PracticeView {
             <div class="empty-state" id="empty-state">
               <img class="empty-state-logo" src="/lyrica-hat.png" alt="" width="64" height="64" />
               <div class="empty-state-title">No sheet open</div>
-              <div class="hint">Drag a .mscz or .pdf file onto this window, or pick one from your library.</div>
+              <div class="hint">Drag a .mscz, MusicXML or .pdf file onto this window, or pick one from your library.</div>
               <div class="empty-state-actions">
                 <button id="empty-library-btn" class="primary" hidden>${icon('folder_open', 18)}<span>Browse library</span></button>
                 <button id="empty-open-btn" class="primary" hidden>${icon('folder_open', 18)}<span>Open file</span></button>
@@ -1661,11 +1661,17 @@ export class PracticeView {
     // Score files from newer MuseScore versions get rewritten into a form the
     // engine understands first (it would otherwise silently drop e.g. every
     // key signature). In-memory only; hashing/pieces still use originalBytes.
+    // MusicXML isn't a MuseScore archive, so there's nothing to rewrite — the
+    // engine imports it natively, and the re-save below produces a native file.
+    const format = scoreFormatOf(filename) ?? 'mscz'
+    const isMusicXml = format !== 'mscz'
     let engineBytes: Uint8Array = originalBytes
-    try {
-      engineBytes = await adaptScoreForEngine(originalBytes)
-    } catch (e) {
-      console.error('Failed to adapt score for the engine, loading it as-is:', e)
+    if (!isMusicXml) {
+      try {
+        engineBytes = await adaptScoreForEngine(originalBytes)
+      } catch (e) {
+        console.error('Failed to adapt score for the engine, loading it as-is:', e)
+      }
     }
     // openScore detaches the buffer it's given; the timeline needs a copy of
     // what was loaded.
@@ -1673,7 +1679,7 @@ export class PracticeView {
 
     let result: OpenScoreResult
     try {
-      result = await openScore(engineBytes === originalBytes ? bytes : engineBytes)
+      result = await openScore(engineBytes === originalBytes ? bytes : engineBytes, format)
     } catch (e) {
       this.statusEl.textContent = `Failed to open ${filename}: ${e instanceof Error ? e.message : String(e)}`
       return
@@ -1692,7 +1698,7 @@ export class PracticeView {
     // hash — see the comment on hashing below). Nothing for the user to
     // decide here, so no confirmation prompt.
     if (needsUpgrade) {
-      this.setLoadingStep('Converting from an older MuseScore format…')
+      this.setLoadingStep(isMusicXml ? 'Importing MusicXML…' : 'Converting from an older MuseScore format…')
       const upgradedBytes = await upgradeScore(score)
       score.destroy()
       loadedBytes = upgradedBytes.slice() // openScore detaches the buffer it's given
@@ -1710,7 +1716,9 @@ export class PracticeView {
     if (isTauri()) {
       try {
         this.setLoadingStep('Checking file…')
-        fileHash = await contentHash(originalBytes, filename)
+        // `contentHash` sniffs a MuseScore version out of the zip, which
+        // MusicXML has none of — plain content hashing it is.
+        fileHash = isMusicXml ? await hashBytes(originalBytes) : await contentHash(originalBytes, filename)
       } catch (e) {
         console.error('Failed to compute file hash:', e)
         this.statusEl.textContent = `${title} opened, but markers/tabs are unavailable: ${e instanceof Error ? e.message : String(e)}`
@@ -1775,7 +1783,8 @@ export class PracticeView {
       tabState.staffRoles = staff_roles
       this.setLoadingStep('Finding pieces…')
       try {
-        tabState.pieces = await detectPieces(originalBytes)
+        // MusicXML has no `.mscx` of its own: detect from the imported score.
+        tabState.pieces = await detectPieces(isMusicXml ? loadedBytes : originalBytes)
       } catch (e) {
         console.error('Failed to detect pieces:', e)
       }
@@ -2598,5 +2607,5 @@ function isPdfFile(name: string): boolean {
 }
 
 function isOpenableFile(name: string): boolean {
-  return /\.(mscz|mscx|pdf)$/i.test(name)
+  return /\.(mscz|mscx|musicxml|mxl|xml|pdf)$/i.test(name)
 }

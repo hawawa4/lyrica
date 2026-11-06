@@ -65,9 +65,9 @@ pub fn set_root_folder(
     Ok(settings)
 }
 
-const SCANNED_EXTENSIONS: &[&str] = &["mscz", "mscx", "pdf"];
+const SCANNED_EXTENSIONS: &[&str] = &["mscz", "mscx", "musicxml", "mxl", "pdf"];
 
-/// Recursively lists every `.mscz`/`.mscx`/`.pdf` file under `root`, sorted by
+/// Recursively lists every `.mscz`/`.mscx`/`.musicxml`/`.mxl`/`.pdf` file under `root`, sorted by
 /// filename. Hidden entries (dotfiles/dotdirs) are skipped. `WalkDir` is used
 /// over a hand-rolled recursive `read_dir` specifically for its built-in
 /// symlink-loop protection, since a practice-library folder is plausibly a
@@ -201,13 +201,17 @@ mod tests {
         std::fs::create_dir(&sub).unwrap();
         std::fs::write(sub.join("Invention.mscx"), b"").unwrap();
         std::fs::write(sub.join("scan.pdf"), b"").unwrap();
+        std::fs::write(sub.join("Export.MusicXML"), b"").unwrap();
+        std::fs::write(sub.join("Packed.mxl"), b"").unwrap();
+        // Plain `.xml` is too generic to scan for (it's only openable explicitly).
+        std::fs::write(sub.join("config.xml"), b"").unwrap();
         let hidden = root.join(".git");
         std::fs::create_dir(&hidden).unwrap();
         std::fs::write(hidden.join("hidden.mscz"), b"").unwrap();
 
         let entries = scan_library(root);
         let titles: Vec<&str> = entries.iter().map(|e| e.title.as_str()).collect();
-        assert_eq!(titles, vec!["a", "Invention", "scan"]);
+        assert_eq!(titles, vec!["a", "Export", "Invention", "Packed", "scan"]);
     }
 
     #[test]

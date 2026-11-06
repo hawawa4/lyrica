@@ -45,6 +45,10 @@ How it installs depends on `Install::detect()`: an AppImage (`$APPIMAGE`) is dow
 - The practice toolbar is two rows: `.appbar` (title, rating, status chips, zen, theme) and `.controlbar` (grouped controls, hidden when no file is open). `#status` is for errors only; the file name is `#piece-title`.
 - The sidebar column only exists for multi-piece scores (`#app.no-sidebar` otherwise, toggled in `PracticeView.setPieces`).
 
+## MusicXML
+
+`.musicxml`/`.mxl` (and `.xml`, openable but not library-scanned — too generic) are imported by webmscore itself (`WebMscore.load('mxl'|'musicxml', …)`), then immediately re-saved as `.mscz` via the same path as the old-format upgrade in `PracticeView.openMsczBytes`. Everything downstream (timeline, staff/measure layout, pieces) then sees a normal native `.mscz` — Rust never parses MusicXML. Differences from `.mscz`: no `adapt_score_for_engine` (nothing to rewrite), the file hash comes from `hash_bytes` (`open_file` sniffs a MuseScore version MusicXML doesn't have), and pieces are detected from the converted bytes, not the original.
+
 ## Known gotchas
 
 - **webmscore in Node vs. browser**: webmscore 1.2.1's Node-targeted glue code breaks under Node 22 (read-only `navigator`, global `fetch` misdetection) — it should never be needed in `web/` itself, which always runs in a real browser or Tauri webview.
