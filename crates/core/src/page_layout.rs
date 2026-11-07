@@ -49,12 +49,17 @@ pub fn widen(mscz_bytes: &[u8]) -> Result<Option<Vec<u8>>, MsczError> {
     let mut archive = ZipArchive::new(Cursor::new(mscz_bytes))?;
     let rootfile_path = mscz::find_rootfile_path(&mut archive)?;
     let mut root = String::new();
-    archive
-        .by_name(&rootfile_path)?
-        .read_to_string(&mut root)?;
+    archive.by_name(&rootfile_path)?.read_to_string(&mut root)?;
 
     let mss_path = (0..archive.len())
-        .filter_map(|i| archive.by_index_raw(i).ok()?.name().ok().map(|n| n.into_owned()))
+        .filter_map(|i| {
+            archive
+                .by_index_raw(i)
+                .ok()?
+                .name()
+                .ok()
+                .map(|n| n.into_owned())
+        })
         .find(|name| name.ends_with(".mss"));
     let mss = match &mss_path {
         Some(path) => {
@@ -199,8 +204,8 @@ fn strip_manual_breaks(text: &str) -> String {
         };
         let end = start + len + CLOSE.len();
         let block = &rest[start..end];
-        let removable = block.contains("<subtype>line</subtype>")
-            || block.contains("<subtype>page</subtype>");
+        let removable =
+            block.contains("<subtype>line</subtype>") || block.contains("<subtype>page</subtype>");
         if removable {
             out.push_str(rest[..start].trim_end_matches([' ', '\t']));
             // Drop the line the block sat on, not just the block, so no blank line is left.
@@ -222,7 +227,9 @@ mod tests {
     fn archive(mss: Option<&str>, mscx: &str) -> Vec<u8> {
         let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
         let options = SimpleFileOptions::default();
-        writer.start_file("META-INF/container.xml", options).unwrap();
+        writer
+            .start_file("META-INF/container.xml", options)
+            .unwrap();
         writer
             .write_all(
                 b"<container><rootfiles><rootfile full-path=\"score.mscx\"/></rootfiles></container>",
@@ -234,7 +241,9 @@ mod tests {
         }
         writer.start_file("score.mscx", options).unwrap();
         writer.write_all(mscx.as_bytes()).unwrap();
-        writer.start_file("Thumbnails/thumbnail.png", options).unwrap();
+        writer
+            .start_file("Thumbnails/thumbnail.png", options)
+            .unwrap();
         writer.write_all(b"png").unwrap();
         writer.finish().unwrap().into_inner()
     }
@@ -242,7 +251,11 @@ mod tests {
     fn entry(bytes: &[u8], name: &str) -> String {
         let mut archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
         let mut text = String::new();
-        archive.by_name(name).unwrap().read_to_string(&mut text).unwrap();
+        archive
+            .by_name(name)
+            .unwrap()
+            .read_to_string(&mut text)
+            .unwrap();
         text
     }
 
@@ -255,7 +268,10 @@ mod tests {
         let root = entry(&out, "score.mscx");
         assert!(root.contains("<pageWidth>18.70400</pageWidth>"), "{root}");
         // 8.27 - 7.48 = 0.79 of margins stays.
-        assert!(root.contains("<pagePrintableWidth>17.91400</pagePrintableWidth>"), "{root}");
+        assert!(
+            root.contains("<pagePrintableWidth>17.91400</pagePrintableWidth>"),
+            "{root}"
+        );
         assert!(root.contains("<pageHeight>11.69</pageHeight>"));
         assert_eq!(entry(&out, "Thumbnails/thumbnail.png"), "png");
     }
@@ -279,7 +295,10 @@ mod tests {
         let root = entry(&out, "score.mscx");
         assert!(root.contains("<pageWidth>18.70864</pageWidth>"), "{root}");
         // 8.26772 - 7.48032 = 0.7874 margins.
-        assert!(root.contains("<pagePrintableWidth>17.92124</pagePrintableWidth>"), "{root}");
+        assert!(
+            root.contains("<pagePrintableWidth>17.92124</pagePrintableWidth>"),
+            "{root}"
+        );
     }
 
     #[test]
@@ -310,13 +329,17 @@ mod tests {
 
     #[test]
     fn real_score_gets_a_wide_page_without_breaks() {
-        let path = std::path::Path::new("/media/superfast/pianostuff/Sheets/Games/Touhou/Chronondecay/EoSD.mscz");
+        let path = std::path::Path::new(
+            "/media/superfast/pianostuff/Sheets/Games/Touhou/Chronondecay/EoSD.mscz",
+        );
         if !path.exists() {
             eprintln!("skipping: EoSD.mscz not present in this environment");
             return;
         }
         let original = std::fs::read(path).unwrap();
-        let wide = widen(&original).unwrap().expect("A4 score should be widened");
+        let wide = widen(&original)
+            .unwrap()
+            .expect("A4 score should be widened");
         let contents = mscz::read_rootfile_contents(Cursor::new(&wide)).unwrap();
         assert!(contents.contains("<pageWidth>18.70864</pageWidth>"));
         assert!(!contents.contains("<subtype>line</subtype>"));

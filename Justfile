@@ -95,3 +95,35 @@ release: fetch-soundfont fetch-cjk-font
     @echo
     @echo "Release bundles:"
     @ls -1sh target/release/bundle/deb/*.deb target/release/bundle/appimage/*.AppImage
+
+# Run everything a release depends on, locally, BEFORE pushing a version tag:
+# version consistency (release.yml's `prepare`), the same checks as ci.yml
+# (fmt, clippy, tests, web, landing page, workflow lint), then the real bundle
+# build (`just release`). A pushed tag that fails CI burns the version number.
+preflight:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo_v=$(grep -m1 '^version' Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')
+    tauri_v=$(jq -r .version crates/desktop/tauri.conf.json)
+    web_v=$(jq -r .version web/package.json)
+    echo "versions: Cargo.toml=$cargo_v tauri.conf.json=$tauri_v web/package.json=$web_v"
+    if [ "$cargo_v" != "$tauri_v" ] || [ "$cargo_v" != "$web_v" ]; then
+        echo "version mismatch" >&2; exit 1
+    fi
+    if git ls-remote --exit-code --tags origin "refs/tags/v$cargo_v" >/dev/null 2>&1; then
+        echo "tag v$cargo_v already exists on origin; bump the version" >&2; exit 1
+    fi
+    just fetch-soundfont fetch-cjk-font
+    cargo fmt --all -- --check
+    cargo clippy --workspace --all-targets -- -D warnings
+    cargo test --workspace
+    (cd web && npm ci && npx tsc -b && npx vite build)
+    (cd site && npm ci && npm run build)
+    docker build -t lyrica-site:preflight site/
+    docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:1.7.7
+    just release
+    if [ -n "$(git status --porcelain)" ]; then
+        echo "working tree is dirty; commit everything before tagging:" >&2
+        git status --short >&2; exit 1
+    fi
+    echo "preflight OK for v$cargo_v"
