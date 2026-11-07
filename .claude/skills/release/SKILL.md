@@ -11,8 +11,8 @@ alone wouldn't have caught), and the fix then needs yet another version.
 
 ## Steps
 
-1. Bump the version in `Cargo.toml`, `crates/desktop/tauri.conf.json`, `web/package.json` (and lockfiles,
-   e.g. `cargo check` to refresh `Cargo.lock`). All three must match; the tag is `v<version>`.
+1. Bump the version in `Cargo.toml`, `crates/desktop/tauri.conf.json`, `web/package.json`, `site/package.json` (and lockfiles,
+   e.g. `cargo update --workspace` for `Cargo.lock`, `npm install --package-lock-only` in web/ and site/). They must all match; the tag is `v<version>`.
 2. Commit everything (`Bump version to X.Y.Z`). Preflight fails on a dirty tree.
 3. Run `bash -lc 'just preflight'` (non-login shells lack cargo/node). It mirrors `release.yml`'s
    `prepare` job, all of `ci.yml` (fmt, clippy `-D warnings`, tests, web, landing page + docker, actionlint)
