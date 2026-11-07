@@ -1,5 +1,5 @@
 use mp_core::api::{self, ImportTimelineResponse, OpenFileRequest, OpenFileResponse, StaffSystem};
-use mp_core::audio::midi_events::TempoMapEntry;
+use mp_core::audio::midi_events::{MidiStream, TempoMapEntry};
 use mp_core::library::{LibraryEntry, LibrarySettings, PinnedFile};
 use mp_core::markers::{Marker, MarkerKind, MarkerPosition};
 use mp_core::pdf_calibration::CalibrationPoint;
@@ -104,6 +104,14 @@ pub fn set_loop_region(audio: State<AudioState>, region: Option<(f64, f64)>) {
 #[tauri::command]
 pub fn set_enabled_tracks(audio: State<AudioState>, tracks: Option<Vec<bool>>) {
     audio.set_enabled_tracks(tracks)
+}
+
+/// Silences the notes of these `(track, channel)` streams — the chord-symbol
+/// streams `import_timeline` reports, while chord playback is off. An empty
+/// list silences nothing.
+#[tauri::command]
+pub fn set_muted_streams(audio: State<AudioState>, streams: Vec<MidiStream>) {
+    audio.set_muted_streams(streams)
 }
 
 #[tauri::command]

@@ -1,5 +1,6 @@
 pub mod api;
 pub mod audio;
+pub mod chord_symbols;
 pub mod engine_compat;
 pub mod library;
 pub mod markers;

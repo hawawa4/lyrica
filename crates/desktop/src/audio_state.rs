@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::thread;
 
-use mp_core::audio::midi_events::TempoMapEntry;
+use mp_core::audio::midi_events::{MidiStream, TempoMapEntry};
 use mp_core::audio::output_cpal;
 use mp_core::audio::synth::{self, LoadedMidi, Player};
 
@@ -159,6 +159,10 @@ impl AudioState {
 
     pub fn set_enabled_tracks(&self, tracks: Option<Vec<bool>>) {
         self.player.lock().unwrap().set_enabled_tracks(tracks);
+    }
+
+    pub fn set_muted_streams(&self, streams: Vec<MidiStream>) {
+        self.player.lock().unwrap().set_muted_streams(streams);
     }
 
     pub fn set_metronome_enabled(&self, enabled: bool) {

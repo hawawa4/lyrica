@@ -8,7 +8,8 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::audio::midi_events::TempoMapEntry;
+use crate::audio::midi_events::{self, MidiStream, TempoMapEntry};
+use crate::chord_symbols;
 use crate::engine_compat;
 use crate::library::{self, LibraryEntry, LibraryError, LibrarySettings, PinnedFile};
 use crate::markers::{self, Marker, MarkerError, MarkerKind, MarkerPosition};
@@ -126,6 +127,13 @@ pub struct ImportTimelineResponse {
     /// One entry per staff, in MIDI track order; empty if the score XML
     /// couldn't be read (the staff selector is then unavailable).
     pub staff_roles: Vec<StaffRole>,
+    /// The MIDI streams that play the score's chord symbols, for
+    /// `set_muted_streams`; empty when the score has none (or they couldn't be
+    /// located), which leaves the chord-playback toggle unavailable.
+    pub chord_streams: Vec<MidiStream>,
+    /// Whether chord symbols should sound until the user says otherwise: true
+    /// only for a lead sheet (see `chord_symbols::chords_default_on`).
+    pub chords_default_on: bool,
 }
 
 #[derive(Debug, Error)]
@@ -157,11 +165,42 @@ pub fn import_timeline(
                 .ok()
         })
         .unwrap_or_default();
+    let (chord_streams, chords_default_on) = chord_playback(contents.as_deref(), &req.midi_bytes);
     let timeline = timeline::build_timeline(&req.positions, &req.midi_bytes, measures.as_deref())?;
     Ok(ImportTimelineResponse {
         timeline,
         staff_roles,
+        chord_streams,
+        chords_default_on,
     })
+}
+
+/// Where the score's chord symbols sound in the MIDI, and whether to play them
+/// by default. Like the staff layout, failures only cost the feature.
+fn chord_playback(score_xml: Option<&str>, midi_bytes: &[u8]) -> (Vec<MidiStream>, bool) {
+    let Some(score_xml) = score_xml else {
+        return (Vec::new(), false);
+    };
+    let parts = match chord_symbols::parse_part_chords(score_xml) {
+        Ok(parts) => parts,
+        Err(e) => {
+            eprintln!("import_timeline: could not parse chord symbols: {e}");
+            return (Vec::new(), false);
+        }
+    };
+    if !parts.iter().any(|p| p.has_chord_symbols) {
+        return (Vec::new(), false);
+    }
+    let (events, _, track_count) = match midi_events::parse_midi_events(midi_bytes) {
+        Ok(parsed) => parsed,
+        Err(e) => {
+            eprintln!("import_timeline: could not parse MIDI for chord symbols: {e}");
+            return (Vec::new(), false);
+        }
+    };
+    let streams = chord_symbols::find_chord_streams(&parts, &events, track_count);
+    let default_on = chord_symbols::chords_default_on(&events, &streams);
+    (streams, default_on)
 }
 
 /// Markers CRUD, all keyed by `file_hash` (from `open_file`'s response) and

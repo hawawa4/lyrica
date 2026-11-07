@@ -5,7 +5,7 @@ use oxisynth::{MidiEvent, SoundFont, Synth, SynthDescriptor};
 use thiserror::Error;
 
 use super::metronome::{self, ClickEvent, ClickSample};
-use super::midi_events::{self, MidiEventsError, ScheduledEvent, TempoMapEntry};
+use super::midi_events::{self, MidiEventsError, MidiStream, ScheduledEvent, TempoMapEntry};
 
 #[derive(Debug, Error)]
 pub enum SynthError {
@@ -85,6 +85,10 @@ pub struct Player {
     /// so a stale mask from another score can't mute the wrong tracks.
     enabled_tracks: Option<Vec<bool>>,
 
+    /// `(track, channel)` streams whose notes never sound — chord symbols,
+    /// when the user has them switched off.
+    muted_streams: Vec<MidiStream>,
+
     metronome_enabled: bool,
     clicks: Vec<ClickEvent>,
     next_click_index: usize,
@@ -132,6 +136,7 @@ impl Player {
             playing: false,
             loop_region: None,
             enabled_tracks: None,
+            muted_streams: Vec::new(),
             metronome_enabled: false,
             clicks: Vec::new(),
             next_click_index: 0,
@@ -252,6 +257,20 @@ impl Player {
         self.release_all_notes();
     }
 
+    /// Silences the notes of these `(track, channel)` streams (an empty list
+    /// silences nothing). Independent of `set_enabled_tracks`: a note sounds
+    /// only if neither mutes it. Safe mid-playback.
+    pub fn set_muted_streams(&mut self, streams: Vec<MidiStream>) {
+        self.muted_streams = streams;
+        self.release_all_notes();
+    }
+
+    fn stream_is_muted(&self, track: usize, channel: i32) -> bool {
+        self.muted_streams
+            .iter()
+            .any(|s| s.track == track && i32::from(s.channel) == channel)
+    }
+
     fn track_is_muted(&self, track: usize) -> bool {
         match (&self.enabled_tracks, &self.midi) {
             (Some(mask), Some(midi)) if mask.len() == midi.track_count => {
@@ -356,8 +375,8 @@ impl Player {
                 // Only notes are muted: the staves of a piano share one
                 // channel, and its program change/pedal live on whichever
                 // track happens to come first.
-                let muted_note =
-                    matches!(e.command, 0x80 | 0x90 | 0xA0) && self.track_is_muted(e.track);
+                let muted_note = matches!(e.command, 0x80 | 0x90 | 0xA0)
+                    && (self.track_is_muted(e.track) || self.stream_is_muted(e.track, e.channel));
                 if !muted_note {
                     if let Some(event) = to_oxisynth_event(&e) {
                         // Only fails on out-of-range values, which a parsed MIDI

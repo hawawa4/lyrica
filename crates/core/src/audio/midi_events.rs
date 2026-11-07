@@ -22,6 +22,15 @@ pub struct ScheduledEvent {
     pub data2: i32,
 }
 
+/// One MIDI channel within one track — the unit `Player` can mute. Chord
+/// symbols are exported on their own channel inside the track of the staff
+/// they sit on, so `(track, channel)` picks them out from that staff's notes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MidiStream {
+    pub track: usize,
+    pub channel: u8,
+}
+
 /// One tempo/time-signature breakpoint in the flattened timeline.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct TempoMapEntry {

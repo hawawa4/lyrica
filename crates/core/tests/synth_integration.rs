@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::Path;
 
-use mp_core::audio::midi_events::TempoMapEntry;
+use mp_core::audio::midi_events::{MidiStream, TempoMapEntry};
 use mp_core::audio::synth::Player;
 
 fn soundfont_path() -> std::path::PathBuf {
@@ -409,6 +409,48 @@ fn disabled_tracks_do_not_sound() {
     );
     // A mask for a different number of tracks (another score's) is ignored.
     assert!(peak_with(Some(vec![false])) > 0.01);
+}
+
+/// Muting a `(track, channel)` stream silences just that channel's notes: in
+/// the lead-sheet fixture the melody is channel 0 and the chord symbols
+/// channel 1 of the same track.
+#[test]
+fn muted_streams_silence_only_their_channel() {
+    let soundfont_path = soundfont_path();
+    if !soundfont_path.exists() {
+        eprintln!("skipping: soundfont not present in this environment");
+        return;
+    }
+    let soundfont_bytes = fs::read(&soundfont_path).unwrap();
+    let midi_bytes = fs::read("tests/fixtures/chords_lead.mid").unwrap();
+    let sample_rate = 44100;
+
+    // Total signal energy over the first second.
+    let energy_with = |muted: &[(usize, u8)]| {
+        let mut player = Player::new(&soundfont_bytes, sample_rate).unwrap();
+        let midi = player.load_midi(&midi_bytes).unwrap();
+        player.set_muted_streams(
+            muted
+                .iter()
+                .map(|&(track, channel)| MidiStream { track, channel })
+                .collect(),
+        );
+        player.play(&midi, false);
+        let mut left = vec![0.0f32; sample_rate as usize];
+        let mut right = left.clone();
+        player.render(&mut left, &mut right);
+        left.iter().map(|v| v * v).sum::<f32>()
+    };
+
+    let all = energy_with(&[]);
+    let without_chords = energy_with(&[(0, 1)]);
+    let without_melody = energy_with(&[(0, 0)]);
+    let nothing = energy_with(&[(0, 0), (0, 1)]);
+    assert!(all > 1e-3, "nothing sounded (energy {all})");
+    assert!(without_chords > 1e-3, "melody went silent too");
+    assert!(without_chords < all, "muting the chords changed nothing");
+    assert!(without_melody > 1e-3, "chords went silent too");
+    assert!(nothing < 1e-9, "muted streams still sounded ({nothing})");
 }
 
 /// Looping the last measure: its end is past the final MIDI event, which
