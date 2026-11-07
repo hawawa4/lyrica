@@ -42,6 +42,17 @@ export async function adaptScoreForEngine(bytes: Uint8Array): Promise<Uint8Array
   return new Uint8Array(await invoke<ArrayBuffer>('adapt_score_for_engine', { bytes: Array.from(bytes) }))
 }
 
+/**
+ * Re-lays the `.mscz` out on a wide landscape page with no manual line/page
+ * breaks (see `crates/core/src/page_layout.rs`), so systems hold many more
+ * measures. Returns the input unchanged outside Tauri (no transport yet).
+ */
+export async function widenScorePages(bytes: Uint8Array): Promise<Uint8Array> {
+  if (!isTauri()) return bytes
+  const { invoke } = await import('@tauri-apps/api/core')
+  return new Uint8Array(await invoke<ArrayBuffer>('widen_score_pages', { bytes: Array.from(bytes) }))
+}
+
 /** `scoreBytes`: the `.mscz` webmscore actually loaded (post-upgrade), so the timeline can follow the MIDI's exact timing — see `crates/core/src/timeline.rs`'s `build_timeline`. */
 export async function importTimeline(
   positions: Positions,

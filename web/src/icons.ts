@@ -46,6 +46,8 @@ const GLYPHS = {
   ),
   /** Pages stacked in a continuous strip. */
   scroll: path('M20 13H3c-.55 0-1 .45-1 1v6c0 .55.45 1 1 1h17c.55 0 1-.45 1-1v-6c0-.55-.45-1-1-1zm0-10H3c-.55 0-1 .45-1 1v6c0 .55.45 1 1 1h17c.55 0 1-.45 1-1V4c0-.55-.45-1-1-1z'),
+  /** A page stretched wide, with long lines of measures. */
+  wide_page: path('M2 6h20v12H2V6zm2 2v8h16V8H4zm2 1.5h5v1H6v-1zm7 0h5v1h-5v-1zM6 12.5h5v1H6v-1zm7 0h5v1h-5v-1z'),
   fit_width: path('M3 5h2v14H3zM19 5h2v14h-2zM7.5 12 11 8.5V11h2V8.5l3.5 3.5-3.5 3.5V13h-2v2.5z'),
   fit_height: path('M5 3h14v2H5zM5 19h14v2H5zM12 7.5 15.5 11H13v2h2.5L12 16.5 8.5 13H11v-2H8.5z'),
   fullscreen: path('M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z'),

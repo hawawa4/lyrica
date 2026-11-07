@@ -40,3 +40,22 @@ export function saveSession(session: Session): void {
     // storage unavailable — the session just won't be restored
   }
 }
+
+const WIDE_LAYOUT_KEY = 'lyrica.wideLayout'
+
+/** Whether scores open on the wide page layout — the last choice made with the layout toggle. */
+export function loadWideLayoutPref(): boolean {
+  try {
+    return localStorage.getItem(WIDE_LAYOUT_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+
+export function saveWideLayoutPref(wide: boolean): void {
+  try {
+    localStorage.setItem(WIDE_LAYOUT_KEY, wide ? '1' : '0')
+  } catch {
+    // storage unavailable — the choice just won't carry over to the next score
+  }
+}

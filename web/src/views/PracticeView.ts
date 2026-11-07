@@ -1,4 +1,4 @@
-import { openScore, upgradeScore, scoreFormatOf, getMeasurePositions, getMidi, type OpenScoreResult, type WebMscore, type Positions } from '../score-engine'
+import { openScore, upgradeScore, scoreFormatOf, getMeasurePositions, getMidi, type OpenScoreResult, type ScoreFormat, type ScoreMetadata, type WebMscore, type Positions } from '../score-engine'
 import { loadPdf, renderPdfPage, canvasToPngBytes, type PdfDocument } from '../pdf-engine'
 import { PageView, ZOOM_STEP, MIN_ZOOM, MAX_ZOOM, PAGE_RENDERED_EVENT } from '../render/PageView'
 import { SelectionOverlay, type MeasureRange } from '../render/SelectionOverlay'
@@ -38,6 +38,7 @@ import {
   detectPieces,
   getPlaybackPosition,
   adaptScoreForEngine,
+  widenScorePages,
 } from '../api-client'
 import { MarkerOverlay, type MarkerHost, type MarkerTool } from './MarkerOverlay'
 import { PiecesIndex } from './PiecesIndex'
@@ -45,7 +46,7 @@ import { RatingStars } from './RatingStars'
 import { TabBar, type TabInfo } from './TabBar'
 import type { CalibrationPoint, KnowledgeLevel, MidiStream, Piece, StaffRole, StaffSystem, Timeline, TimelineEvent } from '../types'
 import { loopRegionForElidRange } from '../loop-region'
-import { saveSession, type Session } from '../session'
+import { saveSession, loadWideLayoutPref, saveWideLayoutPref, type Session } from '../session'
 import { initTheme, applyTheme, THEME_LABELS, THEME_ICONS, type Theme } from '../theme'
 import { icon } from '../icons'
 
@@ -127,6 +128,16 @@ interface SelectionSource {
   resync(allElements: Positions['elements'], page: number): void
 }
 
+/** What `loadEngineScore` produces. */
+interface LoadedScore {
+  score: WebMscore
+  metadata: ScoreMetadata
+  /** The title as the file itself reported it (empty when it has none). */
+  title: string
+  /** Exactly the `.mscz` webmscore holds — the timeline's measure layout is read from it. */
+  loadedBytes: Uint8Array
+}
+
 interface MsczTabState {
   kind: 'mscz'
   fileHash: string
@@ -156,6 +167,10 @@ interface MsczTabState {
   speed: number
   loopRegion: [number, number] | null
   originalBytes: Uint8Array
+  /** What `originalBytes` is, to re-import it (the wide layout toggle reloads the score from scratch). */
+  format: ScoreFormat
+  /** Whether the score is laid out on a wide landscape page (many measures per line) instead of its own page — see `page_layout.rs`. Markers are page-position based, so each layout keeps its own set. */
+  wideLayout: boolean
   transportState: TransportState
   /** Where the playback-head marker currently sits, in the timeline's 1.0x-speed milliseconds — independent of whether audio is actually running. */
   headMs: number
@@ -275,6 +290,7 @@ export class PracticeView {
   private readonly zoomResetBtn: HTMLButtonElement
   private readonly bookModeBtn: HTMLButtonElement
   private readonly scrollModeBtn: HTMLButtonElement
+  private readonly wideLayoutBtn: HTMLButtonElement
   private readonly markerToolsEl: HTMLDivElement
   private readonly textToolBtn: HTMLButtonElement
   private readonly fingeringToolBtn: HTMLButtonElement
@@ -288,6 +304,8 @@ export class PracticeView {
   private loadingCount = 0
 
   private readonly tabs = new Map<string, TabState>()
+  /** True while a tab is being re-laid out, so a second toggle can't interleave with it. */
+  private layoutChanging = false
   /** True while `restoreSession` is still reopening files — see `persistSession`. */
   private restoringSession = false
   private activeHash: string | null = null
@@ -376,6 +394,7 @@ export class PracticeView {
             <span class="tool-sep"></span>
             <button id="book-mode-btn" class="icon-btn" title="Book mode: show two pages side by side" aria-label="Book mode">${icon('book')}</button>
             <button id="scroll-mode-btn" class="icon-btn" title="Scroll mode: all pages in one continuous strip (with Book mode: scrolls sideways)" aria-label="Scroll mode">${icon('scroll')}</button>
+            <button id="wide-layout-btn" class="icon-btn" title="Wide layout: re-flow the score onto a wide page so each line holds more measures" aria-label="Wide layout">${icon('wide_page')}</button>
           </div>
 
           <div id="marker-tools" class="tool-group" role="group" aria-label="Markers" style="display:none;">
@@ -492,6 +511,7 @@ export class PracticeView {
     this.zoomResetBtn = this.root.querySelector('#zoom-reset-btn')!
     this.bookModeBtn = this.root.querySelector('#book-mode-btn')!
     this.scrollModeBtn = this.root.querySelector('#scroll-mode-btn')!
+    this.wideLayoutBtn = this.root.querySelector('#wide-layout-btn')!
     this.markerToolsEl = this.root.querySelector('#marker-tools')!
     this.textToolBtn = this.root.querySelector('#text-tool-btn')!
     this.fingeringToolBtn = this.root.querySelector('#fingering-tool-btn')!
@@ -701,6 +721,10 @@ export class PracticeView {
     this.zoomResetBtn.addEventListener('click', () => this.resetActiveTabZoom())
     this.bookModeBtn.addEventListener('click', () => void this.setDisplayModeForActiveTab({ book: !this.activeTab()?.bookMode }))
     this.scrollModeBtn.addEventListener('click', () => void this.setDisplayModeForActiveTab({ scroll: !this.activeTab()?.scrollMode }))
+    this.wideLayoutBtn.addEventListener('click', () => {
+      const active = this.activeTab()
+      if (active?.kind === 'mscz') void this.setWideLayoutForActiveTab(!active.wideLayout)
+    })
 
     /** Ctrl/Cmd+scroll zooms the active tab's page, like a PDF viewer or image editor — matches the gesture users expect instead of scrolling the page area. */
     this.pageContainerEl.addEventListener(
@@ -1204,10 +1228,17 @@ export class PracticeView {
     this.zoomGroupEl.style.display = 'flex'
     setPressed(this.bookModeBtn, tab.bookMode)
     setPressed(this.scrollModeBtn, tab.scrollMode)
+    // Re-flowing the page is a .mscz thing (a PDF's pages are fixed), and needs the desktop shell's Rust side.
+    this.wideLayoutBtn.hidden = tab.kind !== 'mscz' || !isTauri()
+    setPressed(this.wideLayoutBtn, tab.kind === 'mscz' && tab.wideLayout)
     void this.loadRatingForTab(tab)
     // "untracked-" tabs have no stable file_hash (desktop hashing failed, or
     // running outside Tauri), so there's nothing to persist markers under.
-    const markerHash = tab.fileHash.startsWith('untracked-') ? null : tab.fileHash
+    const markerHash = tab.fileHash.startsWith('untracked-')
+      ? null
+      : tab.kind === 'mscz' && tab.wideLayout
+        ? `${tab.fileHash}-wide` // markers are page positions, which only mean something in the layout they were placed on
+        : tab.fileHash
     this.markerToolsEl.style.display = markerHash ? 'flex' : 'none'
     void this.markerOverlay.setTab(tab.pageContainer, markerHash, this.markerHostFor(tab))
 
@@ -1692,24 +1723,22 @@ export class PracticeView {
     return `Selected measures (elid ${range.startElid}-${range.endElid})`
   }
 
-  private async openMsczBytes(bytes: Uint8Array, filename: string, path: string | null): Promise<void> {
-    this.setLoadingStep('Loading score…')
-
-    // webmscore's worker-based load() transfers `data.buffer` into the worker
-    // (an explicit `Transferable`, see node_modules/webmscore/src/worker-helper.js),
-    // which detaches the original ArrayBuffer as a side effect — `bytes` itself
-    // becomes unusable (reads throw "detached ArrayBuffer") immediately after
-    // `openScore` returns. Keep a copy for anything needed later (e.g. hashing
-    // the original file for markers).
-    const originalBytes = bytes.slice()
+  /**
+   * Loads a score into webmscore's engine, ready to render: the whole
+   * adapt → (widen) → open → upgrade pipeline, shared by opening a file and by
+   * re-laying an open one out. `originalBytes` is never modified. `wide`
+   * re-flows the pages onto a landscape page (see `page_layout.rs`).
+   *
+   * Throws if the engine can't open the file.
+   */
+  private async loadEngineScore(originalBytes: Uint8Array, format: ScoreFormat, wide: boolean): Promise<LoadedScore> {
+    const isMusicXml = format !== 'mscz'
 
     // Score files from newer MuseScore versions get rewritten into a form the
     // engine understands first (it would otherwise silently drop e.g. every
-    // key signature). In-memory only; hashing/pieces still use originalBytes.
+    // key signature). In-memory only; hashing/pieces still use the original.
     // MusicXML isn't a MuseScore archive, so there's nothing to rewrite — the
     // engine imports it natively, and the re-save below produces a native file.
-    const format = scoreFormatOf(filename, originalBytes) ?? 'mscz'
-    const isMusicXml = format !== 'mscz'
     let engineBytes: Uint8Array = originalBytes
     if (!isMusicXml) {
       try {
@@ -1720,38 +1749,68 @@ export class PracticeView {
     }
     // openScore detaches the buffer it's given; the timeline needs a copy of
     // what was loaded.
-    let loadedBytes: Uint8Array = engineBytes === originalBytes ? originalBytes : engineBytes.slice()
-
-    let result: OpenScoreResult
-    try {
-      result = await openScore(engineBytes === originalBytes ? bytes : engineBytes, format)
-    } catch (e) {
-      this.statusEl.textContent = `Failed to open ${filename}: ${e instanceof Error ? e.message : String(e)}`
-      return
-    }
-
-    let { score } = result
-    const { needsUpgrade, metadata } = result
-    // `loadedBytes` must stay exactly what webmscore ends up holding (the
-    // upgraded re-save, if any) — the timeline reads its measure layout from
-    // it, so it has to describe the score the positions/MIDI came from.
+    let loadedBytes: Uint8Array = engineBytes
+    let result: OpenScoreResult = await openScore(engineBytes.slice(), format)
+    const firstMetadata: ScoreMetadata = result.metadata
 
     // Upgrading is purely an in-memory re-save inside webmscore's own engine
     // (to the format version it natively works with) — it never touches the
     // user's original file on disk (upgradeScore's return value is only ever
     // persisted into this app's own cache, keyed by the *original* file's
-    // hash — see the comment on hashing below). Nothing for the user to
-    // decide here, so no confirmation prompt.
-    if (needsUpgrade) {
-      this.setLoadingStep(isMusicXml ? 'Importing MusicXML…' : 'Converting from an older MuseScore format…')
-      const upgradedBytes = await upgradeScore(score)
-      score.destroy()
-      loadedBytes = upgradedBytes.slice() // openScore detaches the buffer it's given
-      result = await openScore(upgradedBytes)
-      score = result.score
+    // hash). Nothing for the user to decide here, so no confirmation prompt.
+    // `loadedBytes` must stay exactly what webmscore ends up holding (the
+    // upgraded re-save, if any) — the timeline reads its measure layout from
+    // it, so it has to describe the score the positions/MIDI came from.
+    //
+    // The wide layout always goes through the re-save: the engine ignores the
+    // page size stored in files from MuseScore 4.1+ (`fileVersion` 450), but
+    // honours it in its own re-save (which is 400) — so the page is widened
+    // in the re-saved bytes, never in the original's.
+    if (result.needsUpgrade || wide) {
+      this.setLoadingStep(
+        wide ? 'Re-flowing pages…' : isMusicXml ? 'Importing MusicXML…' : 'Converting from an older MuseScore format…',
+      )
+      let upgradedBytes = await upgradeScore(result.score)
+      result.score.destroy()
+      if (wide) {
+        try {
+          upgradedBytes = await widenScorePages(upgradedBytes)
+        } catch (e) {
+          console.error('Failed to widen the score layout, loading it as-is:', e)
+        }
+      }
+      loadedBytes = upgradedBytes
+      result = await openScore(upgradedBytes.slice())
     }
 
-    const title = metadata.title || filename
+    return { score: result.score, metadata: result.metadata, title: firstMetadata.title, loadedBytes }
+  }
+
+  private async openMsczBytes(bytes: Uint8Array, filename: string, path: string | null): Promise<void> {
+    this.setLoadingStep('Loading score…')
+
+    // webmscore's worker-based load() transfers `data.buffer` into the worker
+    // (an explicit `Transferable`, see node_modules/webmscore/src/worker-helper.js),
+    // which detaches the ArrayBuffer as a side effect, so every load gets its
+    // own copy (see `loadEngineScore`). `originalBytes` is kept intact for
+    // anything needed later (hashing the original file for markers, reloading
+    // the score in another layout).
+    const originalBytes = bytes.slice()
+
+    const format = scoreFormatOf(filename, originalBytes) ?? 'mscz'
+    const isMusicXml = format !== 'mscz'
+    const wideLayout = isTauri() && loadWideLayoutPref()
+
+    let loaded: LoadedScore
+    try {
+      loaded = await this.loadEngineScore(originalBytes, format, wideLayout)
+    } catch (e) {
+      this.statusEl.textContent = `Failed to open ${filename}: ${e instanceof Error ? e.message : String(e)}`
+      return
+    }
+    const { score, loadedBytes, title: scoreTitle } = loaded
+    const metadata = loaded.metadata
+    const title = scoreTitle || filename
 
     // Hashed from `originalBytes` (captured before openScore() detaches the
     // original buffer), not any upgraded re-save of it — markers/tabs should
@@ -1809,6 +1868,8 @@ export class PracticeView {
       speed: 1.0,
       loopRegion: null,
       originalBytes,
+      format,
+      wideLayout,
       transportState: 'stopped',
       headMs: 0,
       bookMode: false,
@@ -2402,10 +2463,25 @@ export class PracticeView {
   }
 
   private async setMsczDisplayMode(active: MsczTabState, book: boolean, scroll: boolean): Promise<void> {
-    const currentPage = active.pageView.page
-    const currentZoom = active.pageView.getZoom()
-    const pageCount = active.pageView.pages
+    await this.rebuildMsczDisplay(active, book, scroll, {
+      pageCount: active.pageView.pages,
+      page: active.pageView.page,
+      zoom: active.pageView.getZoom(),
+    })
+  }
 
+  /**
+   * Tears down and rebuilds `active`'s page display around `active.score`
+   * (mode change, or a new score after a re-layout), then restores `restore`:
+   * the page count, which page to show, and a zoom — `'fit-width'` fills the
+   * page area's width instead of a fixed zoom.
+   */
+  private async rebuildMsczDisplay(
+    active: MsczTabState,
+    book: boolean,
+    scroll: boolean,
+    restore: { pageCount: number; page: number; zoom: number | 'fit-width' },
+  ): Promise<void> {
     active.selectionOverlay.destroy()
     active.pageContainer.innerHTML = ''
     active.pageContainer.className = scroll ? '' : book ? 'page-stage book-spread' : 'page-stage'
@@ -2418,13 +2494,83 @@ export class PracticeView {
 
     this.cursorBoxEl.style.display = 'none'
 
-    await pageView.setScore(active.score, pageCount)
+    await pageView.setScore(active.score, restore.pageCount)
     // setScore resets to page 0 / zoom 1 internally (see PageView.setScore) —
-    // restore what the user actually had showing before the mode switch.
+    // restore what the user actually had showing before the rebuild.
     // Zoom first: in scroll mode it sets the page footprints showPage scrolls to.
-    pageView.setZoom(currentZoom)
-    await pageView.showPage(currentPage)
+    if (restore.zoom === 'fit-width') {
+      // A fit needs a rendered page to know its proportions, and a scroll
+      // strip needs the final zoom before it can scroll to the page.
+      await pageView.showPage(restore.page)
+      pageView.setZoomToWidth(this.pageAreaAvailableSize().width)
+    } else {
+      pageView.setZoom(restore.zoom)
+    }
+    await pageView.showPage(restore.page)
     this.mountOverlaysOnPage(active, pageView.page)
+  }
+
+  /**
+   * Switches the active `.mscz` tab between its own page and the wide layout
+   * (many measures per line, see `page_layout.rs`), and remembers the choice
+   * for scores opened afterwards.
+   *
+   * The engine can't re-flow a loaded score, so the score is reloaded from its
+   * original bytes and everything that depends on where things sit on the page
+   * is rebuilt — the timeline's cursor positions, the measure overlay, markers
+   * (each layout has its own). What doesn't depend on layout survives: playback
+   * position, the measure selection and loop (measure ids), speed, staff mode.
+   * Playback is stopped, as on a tab switch.
+   */
+  private async setWideLayoutForActiveTab(wide: boolean): Promise<void> {
+    const tab = this.activeTab()
+    if (!tab || tab.kind !== 'mscz' || tab.wideLayout === wide || this.layoutChanging) return
+    this.layoutChanging = true
+    this.beginLoading(tab.title)
+    try {
+      this.setLoadingStep('Re-flowing pages…')
+      await this.stopAudioForTabSwitch(tab)
+      let loaded: LoadedScore
+      try {
+        loaded = await this.loadEngineScore(tab.originalBytes, tab.format, wide)
+      } catch (e) {
+        this.statusEl.textContent = `Couldn't change the layout: ${e instanceof Error ? e.message : String(e)}`
+        return
+      }
+
+      // Everything fallible happens before the tab is touched, so a failure leaves it as it was.
+      let timeline = tab.timeline
+      if (timeline && tab.midiBytes) {
+        try {
+          const positions = await getMeasurePositions(loaded.score)
+          timeline = (await importTimeline(positions, tab.midiBytes, loaded.loadedBytes)).timeline
+        } catch (e) {
+          loaded.score.destroy()
+          this.statusEl.textContent = `Couldn't change the layout: ${e instanceof Error ? e.message : String(e)}`
+          return
+        }
+      }
+
+      const previous = tab.score
+      tab.score = loaded.score
+      tab.timeline = timeline
+      tab.wideLayout = wide
+      saveWideLayoutPref(wide)
+      setPressed(this.wideLayoutBtn, wide)
+
+      await this.rebuildMsczDisplay(tab, tab.bookMode, tab.scrollMode, {
+        pageCount: loaded.metadata.pages,
+        page: 0,
+        zoom: wide ? 'fit-width' : 1,
+      })
+      previous.destroy()
+      if (tab.selection) tab.selectionOverlay.setSelection(tab.selection)
+      // Back to where the head is, which also flips to that measure's page in the new layout.
+      await this.activateTab(tab)
+    } finally {
+      this.endLoading()
+      this.layoutChanging = false
+    }
   }
 
   /** Removes every extra pane (and scroll observers/sizing), leaving just the primary pane, unstyled for any mode. */
