@@ -28,9 +28,19 @@ export interface Timeline {
 /** Which staff of its part a staff is, in MIDI track order — `solo` for a part with a single staff, which the upper/lower choice never mutes. */
 export type StaffRole = 'solo' | 'upper' | 'lower'
 
+/** One MIDI channel within one track — the unit the player can mute (chord symbols play on their own channel inside their staff's track). */
+export interface MidiStream {
+  track: number
+  channel: number
+}
+
 export interface ImportTimelineResponse {
   timeline: Timeline
   staff_roles: StaffRole[]
+  /** Where the score's chord symbols sound; empty when it has none, which leaves the chord toggle unavailable. */
+  chord_streams: MidiStream[]
+  /** Whether chord symbols should play until the user says otherwise — only for a lead sheet (chords + at most a single melody line). */
+  chords_default_on: boolean
 }
 
 export type MarkerKind = 'text' | 'fingering'

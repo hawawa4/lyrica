@@ -20,6 +20,7 @@ import {
   setPlaybackSpeed,
   setLoopRegion,
   setEnabledTracks,
+  setMutedStreams,
   setMetronomeEnabled,
   setMetronomeVolume,
   contentHash,
@@ -42,7 +43,7 @@ import { MarkerOverlay, type MarkerHost, type MarkerTool } from './MarkerOverlay
 import { PiecesIndex } from './PiecesIndex'
 import { RatingStars } from './RatingStars'
 import { TabBar, type TabInfo } from './TabBar'
-import type { CalibrationPoint, KnowledgeLevel, Piece, StaffRole, StaffSystem, Timeline, TimelineEvent } from '../types'
+import type { CalibrationPoint, KnowledgeLevel, MidiStream, Piece, StaffRole, StaffSystem, Timeline, TimelineEvent } from '../types'
 import { loopRegionForElidRange } from '../loop-region'
 import { saveSession, type Session } from '../session'
 import { initTheme, applyTheme, THEME_LABELS, THEME_ICONS, type Theme } from '../theme'
@@ -148,6 +149,10 @@ interface MsczTabState {
   staffRoles: StaffRole[]
   /** Which staves sound — per tab, like speed. */
   staffMode: StaffMode
+  /** Where the score's chord symbols sound in the MIDI — empty when it has none, which leaves the chord toggle unavailable. */
+  chordStreams: MidiStream[]
+  /** Whether chord symbols are played — per tab. The text is always drawn; this only gates the sound. */
+  playChords: boolean
   speed: number
   loopRegion: [number, number] | null
   originalBytes: Uint8Array
@@ -244,6 +249,8 @@ export class PracticeView {
   private readonly stopBtn: HTMLButtonElement
   private readonly speedButtons: Record<number, HTMLButtonElement>
   private readonly staffGroupEl: HTMLDivElement
+  private readonly chordGroupEl: HTMLDivElement
+  private readonly chordBtn: HTMLButtonElement
   private readonly staffButtons: Record<StaffMode, HTMLButtonElement>
   private readonly metronomeBtn: HTMLButtonElement
   private readonly metronomeVolumeInput: HTMLInputElement
@@ -335,6 +342,9 @@ export class PracticeView {
             </div>
             <div id="staff-group" class="tool-group" role="group" aria-label="Staves to play" style="display:none;">
               <span class="tool-caption">Staff</span>
+            </div>
+            <div id="chord-group" class="tool-group" role="group" aria-label="Chord symbols" style="display:none;">
+              <button id="chord-btn" class="seg-btn" type="button" aria-pressed="false">Chords</button>
             </div>
             <div class="tool-group">
               <button id="metronome-btn" class="icon-btn metronome-btn" disabled aria-pressed="false" title="Metronome (M)" aria-label="Metronome">${icon('metronome')}</button>
@@ -452,6 +462,9 @@ export class PracticeView {
       this.staffButtons[mode] = btn
       this.staffGroupEl.appendChild(btn)
     }
+    this.chordGroupEl = this.root.querySelector('#chord-group')!
+    this.chordBtn = this.root.querySelector('#chord-btn')!
+    this.chordBtn.addEventListener('click', () => void this.toggleChords())
     this.metronomeBtn = this.root.querySelector('#metronome-btn')!
     this.metronomeVolumeInput = this.root.querySelector('#metronome-volume')!
     this.pageContainerEl = this.root.querySelector('#page')!
@@ -1077,6 +1090,34 @@ export class PracticeView {
     await this.applyStaffMode(active)
   }
 
+  /** Shows the chord toggle only for a `.mscz` that has chord symbols (nothing to switch otherwise), reflecting that tab's choice. */
+  private updateChordControls(tab: TabState | null): void {
+    const available = tab?.kind === 'mscz' && tab.chordStreams.length > 0
+    this.chordGroupEl.style.display = available ? 'inline-flex' : 'none'
+    const on = available && tab.playChords
+    setPressed(this.chordBtn, on)
+    this.chordBtn.title = on
+      ? 'Chord symbols play as chords — click to mute them (the symbols stay on the page)'
+      : 'Chord symbols are silent — click to play them as chords'
+  }
+
+  /** Always sent — an empty list un-mutes whatever the previous tab muted. */
+  private async applyChordPlayback(tab: MsczTabState): Promise<void> {
+    try {
+      await setMutedStreams(tab.playChords ? [] : tab.chordStreams)
+    } catch (e) {
+      console.error('Failed to set chord-symbol playback:', e)
+    }
+  }
+
+  private async toggleChords(): Promise<void> {
+    const active = this.activeTab()
+    if (!active || active.kind !== 'mscz' || active.chordStreams.length === 0) return
+    active.playChords = !active.playChords
+    this.updateChordControls(active)
+    await this.applyChordPlayback(active)
+  }
+
   private setSpeed(speed: number): void {
     const active = this.activeTab()
     if (active) active.speed = speed
@@ -1214,9 +1255,11 @@ export class PracticeView {
         await setLoopRegion(tab.loopRegion)
         await setMetronomeEnabled(this.metronomeOn)
         await this.applyStaffMode(tab)
+        await this.applyChordPlayback(tab)
         this.updateMsczHeadMarker(tab)
       }
       this.updateStaffControls(tab)
+      this.updateChordControls(tab)
     } else {
       tab.canvasContainer.appendChild(this.headMarker.el)
       tab.transportState = 'stopped'
@@ -1252,6 +1295,7 @@ export class PracticeView {
       for (const btn of Object.values(this.speedButtons)) btn.disabled = !hasAudio
       this.metronomeBtn.disabled = !hasAudio
       this.updateStaffControls(null)
+      this.updateChordControls(null)
 
       if (hasAudio) {
         this.setSpeed(tab.speed)
@@ -1489,6 +1533,7 @@ export class PracticeView {
         for (const btn of Object.values(this.speedButtons)) btn.disabled = true
         this.metronomeBtn.disabled = true
         this.updateStaffControls(null)
+        this.updateChordControls(null)
       }
     }
     this.renderTabBar()
@@ -1759,6 +1804,8 @@ export class PracticeView {
       anchorElid: null,
       staffRoles: [],
       staffMode: 'both',
+      chordStreams: [],
+      playChords: false,
       speed: 1.0,
       loopRegion: null,
       originalBytes,
@@ -1778,9 +1825,15 @@ export class PracticeView {
       const positions = pageView.getPositions() ?? (await getMeasurePositions(score))
       tabState.midiBytes = await getMidi(score)
       this.setLoadingStep('Building playback timeline…')
-      const { timeline, staff_roles } = await importTimeline(positions, tabState.midiBytes, loadedBytes)
+      const { timeline, staff_roles, chord_streams, chords_default_on } = await importTimeline(
+        positions,
+        tabState.midiBytes,
+        loadedBytes,
+      )
       tabState.timeline = timeline
       tabState.staffRoles = staff_roles
+      tabState.chordStreams = chord_streams
+      tabState.playChords = chords_default_on
       this.setLoadingStep('Finding pieces…')
       try {
         // MusicXML has no `.mscx` of its own: detect from the imported score.

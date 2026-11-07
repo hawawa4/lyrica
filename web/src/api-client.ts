@@ -8,6 +8,7 @@ import type {
   Marker,
   MarkerKind,
   MarkerPosition,
+  MidiStream,
   PinnedFile,
   Piece,
   RecentFile,
@@ -120,6 +121,13 @@ export async function setEnabledTracks(tracks: boolean[] | null): Promise<void> 
   if (!isTauri()) throw new Error('setEnabledTracks: desktop-only for now')
   const { invoke } = await import('@tauri-apps/api/core')
   await invoke('set_enabled_tracks', { tracks })
+}
+
+/** Silences the notes of these `(track, channel)` streams (chord symbols, while chord playback is off); an empty list silences nothing. */
+export async function setMutedStreams(streams: MidiStream[]): Promise<void> {
+  if (!isTauri()) throw new Error('setMutedStreams: desktop-only for now')
+  const { invoke } = await import('@tauri-apps/api/core')
+  await invoke('set_muted_streams', { streams })
 }
 
 export async function setMetronomeEnabled(enabled: boolean): Promise<void> {
