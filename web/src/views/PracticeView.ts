@@ -1228,6 +1228,7 @@ export class PracticeView {
     this.zoomGroupEl.style.display = 'flex'
     setPressed(this.bookModeBtn, tab.bookMode)
     setPressed(this.scrollModeBtn, tab.scrollMode)
+    this.updateBookModeAvailability(tab)
     // Re-flowing the page is a .mscz thing (a PDF's pages are fixed), and needs the desktop shell's Rust side.
     this.wideLayoutBtn.hidden = tab.kind !== 'mscz' || !isTauri()
     setPressed(this.wideLayoutBtn, tab.kind === 'mscz' && tab.wideLayout)
@@ -2454,6 +2455,7 @@ export class PracticeView {
   private async setDisplayModeForActiveTab(change: { book?: boolean; scroll?: boolean }): Promise<void> {
     const active = this.activeTab()
     if (!active) return
+    if (change.book && active.kind === 'mscz' && active.wideLayout) return
     const book = change.book ?? active.bookMode
     const scroll = change.scroll ?? active.scrollMode
     if (active.kind === 'mscz') await this.setMsczDisplayMode(active, book, scroll)
@@ -2510,6 +2512,16 @@ export class PracticeView {
     this.mountOverlaysOnPage(active, pageView.page)
   }
 
+  /** Book mode (two pages side by side) makes no sense on a wide page, so its button is greyed out for a wide tab. */
+  private updateBookModeAvailability(tab: TabState): void {
+    const wide = tab.kind === 'mscz' && tab.wideLayout
+    this.bookModeBtn.disabled = wide
+    setPressed(this.bookModeBtn, tab.bookMode)
+    this.bookModeBtn.title = wide
+      ? 'Book mode is unavailable in the wide layout'
+      : 'Book mode: show two pages side by side'
+  }
+
   /**
    * Switches the active `.mscz` tab between its own page and the wide layout
    * (many measures per line, see `page_layout.rs`), and remembers the choice
@@ -2557,8 +2569,10 @@ export class PracticeView {
       tab.wideLayout = wide
       saveWideLayoutPref(wide)
       setPressed(this.wideLayoutBtn, wide)
+      this.updateBookModeAvailability(tab)
 
-      await this.rebuildMsczDisplay(tab, tab.bookMode, tab.scrollMode, {
+      // Book mode is meaningless on a wide page, so entering wide leaves it.
+      await this.rebuildMsczDisplay(tab, wide ? false : tab.bookMode, tab.scrollMode, {
         pageCount: loaded.metadata.pages,
         page: 0,
         zoom: wide ? 'fit-width' : 1,
