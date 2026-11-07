@@ -344,7 +344,7 @@ export class PracticeView {
               <span class="tool-caption">Staff</span>
             </div>
             <div id="chord-group" class="tool-group" role="group" aria-label="Chord symbols" style="display:none;">
-              <button id="chord-btn" class="seg-btn" type="button" aria-pressed="false">Chords</button>
+              <button id="chord-btn" class="icon-btn" type="button" aria-pressed="false" aria-label="Play chord symbols">${icon('chords')}</button>
             </div>
             <div class="tool-group">
               <button id="metronome-btn" class="icon-btn metronome-btn" disabled aria-pressed="false" title="Metronome (M)" aria-label="Metronome">${icon('metronome')}</button>
@@ -1097,7 +1097,7 @@ export class PracticeView {
     const on = available && tab.playChords
     setPressed(this.chordBtn, on)
     this.chordBtn.title = on
-      ? 'Chord symbols play as chords — click to mute them (the symbols stay on the page)'
+      ? 'Chord symbols are playing — click to mute them (the symbols stay on the page)'
       : 'Chord symbols are silent — click to play them as chords'
   }
 

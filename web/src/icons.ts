@@ -67,6 +67,8 @@ const GLYPHS = {
   dark_mode: path('M12 3a9 9 0 1 0 9 9c0-.46-.04-.92-.1-1.36a5.389 5.389 0 0 1-4.4 2.26 5.403 5.403 0 0 1-3.14-9.8c-.44-.06-.9-.1-1.36-.1z'),
   /** Sheet of paper — the "paper" theme. */
   paper: stroke('<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h6"/>'),
+  /** A block chord: three stacked noteheads on one stem. */
+  chords: '<circle cx="11.5" cy="18.5" r="2.6"/><circle cx="11.5" cy="12" r="2.6"/><circle cx="11.5" cy="5.5" r="2.6"/><path d="M14.1 2.5v16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/>',
   metronome: stroke('<path d="M9 3h6l4 18H5L9 3z"/><path d="M5.9 17h12.2"/><path d="M12 17l5-11"/><circle cx="15.6" cy="9.1" r="1.3" fill="currentColor"/>'),
 } as const
 
