@@ -118,7 +118,7 @@ preflight:
     cargo clippy --workspace --all-targets -- -D warnings
     cargo test --workspace
     (cd web && npm ci && npx tsc -b && npx vite build)
-    (cd site && npm ci && npm run build)
+    # The Dockerfile runs `npm ci && npm run build` on a current node:22 (host node may be too old for Astro).
     docker build -t lyrica-site:preflight site/
     docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:1.7.7
     just release
