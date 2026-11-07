@@ -6,6 +6,7 @@ pub mod library;
 pub mod markers;
 pub mod measure_layout;
 pub mod mscz;
+pub mod page_layout;
 pub mod pdf_calibration;
 pub mod pieces;
 pub mod rating;

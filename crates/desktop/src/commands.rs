@@ -34,6 +34,12 @@ pub fn adapt_score_for_engine(bytes: Vec<u8>) -> tauri::ipc::Response {
     tauri::ipc::Response::new(api::adapt_score_for_engine(bytes))
 }
 
+/// Same raw binary transport as `adapt_score_for_engine`.
+#[tauri::command]
+pub fn widen_score_pages(bytes: Vec<u8>) -> tauri::ipc::Response {
+    tauri::ipc::Response::new(api::widen_score_pages(bytes))
+}
+
 #[tauri::command]
 pub fn import_timeline(
     positions: Positions,

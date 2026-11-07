@@ -50,6 +50,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             commands::open_file,
             commands::adapt_score_for_engine,
+            commands::widen_score_pages,
             commands::import_timeline,
             commands::load_midi,
             commands::load_tempo_map,

@@ -11,6 +11,7 @@ use thiserror::Error;
 use crate::audio::midi_events::{self, MidiStream, TempoMapEntry};
 use crate::chord_symbols;
 use crate::engine_compat;
+use crate::page_layout;
 use crate::library::{self, LibraryEntry, LibraryError, LibrarySettings, PinnedFile};
 use crate::markers::{self, Marker, MarkerError, MarkerKind, MarkerPosition};
 use crate::measure_layout;
@@ -100,6 +101,20 @@ pub fn adapt_score_for_engine(bytes: Vec<u8>) -> Vec<u8> {
         Ok(None) => bytes,
         Err(e) => {
             eprintln!("adapt_score_for_engine: leaving score as-is: {e}");
+            bytes
+        }
+    }
+}
+
+/// The `.mscz` bytes re-laid-out on a wide landscape page (see
+/// `page_layout`), or the input unchanged if that changes nothing. Like
+/// `adapt_score_for_engine`, an unreadable archive is passed through.
+pub fn widen_score_pages(bytes: Vec<u8>) -> Vec<u8> {
+    match page_layout::widen(&bytes) {
+        Ok(Some(widened)) => widened,
+        Ok(None) => bytes,
+        Err(e) => {
+            eprintln!("widen_score_pages: leaving score as-is: {e}");
             bytes
         }
     }
