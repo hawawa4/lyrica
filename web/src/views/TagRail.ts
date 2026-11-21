@@ -14,6 +14,8 @@ export class TagRail {
   private readonly listEl: HTMLDivElement
   private readonly clearBtn: HTMLButtonElement
   private tags: TagNode[] = []
+  /** True until the first scan's tags arrive: placeholder pills hold the rail's place so the layout doesn't shift. */
+  private loading = true
   private selected = new Set<string>()
   private readonly unfolded = new Set<string>()
   private onChangeCallback: ((selected: Set<string>) => void) | null = null
@@ -41,9 +43,16 @@ export class TagRail {
     this.onChangeCallback = callback
   }
 
-  /** New scan results. Selected tags whose folder no longer exists are dropped (and reported via `onChange`). */
+  /** Shows placeholder pills while a (full, non-background) scan runs. */
+  setLoading(loading: boolean): void {
+    this.loading = loading
+    this.render()
+  }
+
+  /** New scan results (ends the loading state). Selected tags whose folder no longer exists are dropped (and reported via `onChange`). */
   setTags(tags: TagNode[]): void {
     this.tags = tags
+    this.loading = false
     const known = new Set<string>()
     const walk = (nodes: TagNode[]): void => {
       for (const n of nodes) {
@@ -77,9 +86,24 @@ export class TagRail {
   }
 
   private render(): void {
-    this.el.hidden = this.tags.length === 0
     this.clearBtn.hidden = this.selected.size === 0
     this.listEl.innerHTML = ''
+    this.el.setAttribute('aria-busy', String(this.loading))
+    if (this.loading) {
+      for (let i = 0; i < 8; i++) {
+        const placeholder = document.createElement('div')
+        placeholder.className = 'tag-placeholder'
+        this.listEl.appendChild(placeholder)
+      }
+      return
+    }
+    if (this.tags.length === 0) {
+      const empty = document.createElement('p')
+      empty.className = 'tag-rail-empty'
+      empty.textContent = 'Sheets are tagged by the folders they sit in. Sort them into sub-folders to filter by tag.'
+      this.listEl.appendChild(empty)
+      return
+    }
     for (const tag of this.tags) {
       const open = this.unfolded.has(tag.key)
       this.listEl.appendChild(this.renderPill(tag, false, tag.children.length > 0 ? open : null))

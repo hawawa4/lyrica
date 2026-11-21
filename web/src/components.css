@@ -1206,6 +1206,44 @@
   transform: rotate(90deg);
 }
 
+/* Placeholder pills while the library scans, so the rail holds its place. */
+.tag-placeholder {
+  flex: none;
+  height: 30px;
+  margin-right: 28px;
+  border-radius: 999px;
+  background: var(--bg-control);
+  animation: tag-placeholder-pulse 1.4s ease-in-out infinite;
+}
+
+.tag-placeholder:nth-child(3n + 2) {
+  margin-right: 64px;
+}
+
+.tag-placeholder:nth-child(3n) {
+  margin-right: 46px;
+}
+
+@keyframes tag-placeholder-pulse {
+  50% {
+    opacity: 0.45;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tag-placeholder {
+    animation: none;
+  }
+}
+
+.tag-rail-empty {
+  margin: 0;
+  padding: 4px 6px;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 /* Flat results: the sheet's title over the folders it sits in. */
 .folder-tree.flat-results .tree-file-row .file-icon {
   margin-left: 0;

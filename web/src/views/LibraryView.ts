@@ -169,6 +169,7 @@ export class LibraryView {
       this.chooseFolderBtn.addEventListener('click', () => void this.chooseFolder())
     } else {
       this.rootFolderLabel.textContent = 'No folder selected'
+      this.tagRail.el.hidden = true
       this.chooseFolderBtn.disabled = true
       this.chooseFolderBtn.title = 'Library browsing is desktop-only for now'
     }
@@ -333,6 +334,7 @@ export class LibraryView {
     // library is and nothing needs choosing again.
     const scanning = this.rootFolder
     this.setLoading(`Loading your library from ${scanning}…`)
+    this.tagRail.setLoading(true)
     try {
       const entries = await scanLibrary(scanning)
       if (scanning !== this.rootFolder) return // folder changed mid-scan; that scan owns the UI now
