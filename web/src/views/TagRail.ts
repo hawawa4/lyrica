@@ -19,6 +19,9 @@ export class TagRail {
   private selected = new Set<string>()
   private readonly unfolded = new Set<string>()
   private onChangeCallback: ((selected: Set<string>) => void) | null = null
+  private includePdfs = true
+  private onIncludePdfsCallback: ((include: boolean) => void) | null = null
+  private readonly pdfButtons: HTMLButtonElement[]
 
   constructor(container: HTMLElement) {
     this.el = document.createElement('aside')
@@ -31,16 +34,48 @@ export class TagRail {
         <button type="button" class="tag-rail-clear" hidden>Clear</button>
       </div>
       <div class="tag-rail-list"></div>
+      <div class="tag-rail-footer">
+        <span class="tool-caption">PDFs</span>
+        <div class="tool-group" role="radiogroup" aria-label="PDFs">
+          <button type="button" class="seg-btn" data-pdfs="show" role="radio">Show</button>
+          <button type="button" class="seg-btn" data-pdfs="hide" role="radio">Hide</button>
+        </div>
+      </div>
     `
     container.appendChild(this.el)
     this.listEl = this.el.querySelector('.tag-rail-list')!
     this.clearBtn = this.el.querySelector('.tag-rail-clear')!
     this.clearBtn.addEventListener('click', () => this.setSelected(new Set()))
+    this.pdfButtons = Array.from(this.el.querySelectorAll<HTMLButtonElement>('[data-pdfs]'))
+    for (const btn of this.pdfButtons) {
+      btn.addEventListener('click', () => {
+        const include = btn.dataset.pdfs === 'show'
+        if (include === this.includePdfs) return
+        this.setIncludePdfs(include)
+        this.onIncludePdfsCallback?.(include)
+      })
+    }
+    this.setIncludePdfs(true)
     this.render()
   }
 
   onChange(callback: (selected: Set<string>) => void): void {
     this.onChangeCallback = callback
+  }
+
+  /** The Show/Hide PDFs switch at the bottom of the rail was flipped. */
+  onIncludePdfsChange(callback: (include: boolean) => void): void {
+    this.onIncludePdfsCallback = callback
+  }
+
+  /** Reflects the PDF switch's state (without firing its callback). */
+  setIncludePdfs(include: boolean): void {
+    this.includePdfs = include
+    for (const btn of this.pdfButtons) {
+      const on = (btn.dataset.pdfs === 'show') === include
+      btn.classList.toggle('active', on)
+      btn.setAttribute('aria-checked', String(on))
+    }
   }
 
   /** Shows placeholder pills while a (full, non-background) scan runs. */

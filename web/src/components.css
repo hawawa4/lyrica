@@ -1106,6 +1106,11 @@
   display: none;
 }
 
+/* The rail's mount point mustn't be its own box: a sticky element only sticks within its parent, and a wrapper exactly the rail's height leaves it no room to — it would scroll away with the page. */
+#tag-rail-slot {
+  display: contents;
+}
+
 .tag-rail {
   position: sticky;
   top: 88px;
@@ -1134,6 +1139,27 @@
   color: var(--text-muted);
   font-size: 12px;
   text-decoration: underline;
+}
+
+/* PDF switch: pinned under the (scrolling) tag list. */
+.tag-rail-footer {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 10px 2px 2px;
+  border-top: 1px solid var(--border);
+}
+
+.tag-rail-footer .tool-caption {
+  padding-left: 4px;
+}
+
+.tag-rail-footer .seg-btn {
+  height: 26px;
+  font-size: 12px;
 }
 
 .tag-rail-list {

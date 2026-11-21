@@ -32,6 +32,24 @@ import { icon } from '../icons'
 /** How often the library folder is re-walked in the background to pick up files added or removed while the app is open. */
 const BACKGROUND_RESCAN_MS = 5000
 
+const INCLUDE_PDFS_KEY = 'lyrica.libraryIncludePdfs'
+
+function loadIncludePdfs(): boolean {
+  try {
+    return localStorage.getItem(INCLUDE_PDFS_KEY) !== '0'
+  } catch {
+    return true
+  }
+}
+
+function saveIncludePdfs(include: boolean): void {
+  try {
+    localStorage.setItem(INCLUDE_PDFS_KEY, include ? '1' : '0')
+  } catch {
+    // Best-effort: the default (show) stands next launch.
+  }
+}
+
 function scanSignature(entries: LibraryEntry[]): string {
   return entries.map((e) => e.path).sort().join('\n')
 }
@@ -50,6 +68,10 @@ export class LibraryView {
   private readonly levelFilterBar: LevelFilterBar
   private readonly tagRail: TagRail
   private readonly listsEl: HTMLDivElement
+  /** The last scan, before the PDF switch is applied — flipping it re-filters this without rescanning. */
+  private scannedEntries: LibraryEntry[] = []
+  private scannedEntriesRoot = ''
+  private includePdfs = loadIncludePdfs()
   private onOpenCallback: ((path: string) => void) | null = null
   private onBackToSheetsCallback: (() => void) | null = null
   private pinnedFiles: PinnedFile[] = []
@@ -146,6 +168,12 @@ export class LibraryView {
       this.updateFilteringState()
     })
     this.folderTree.onTagClick((tag) => this.tagRail.setSelected(new Set([tag])))
+    this.tagRail.setIncludePdfs(this.includePdfs)
+    this.tagRail.onIncludePdfsChange((include) => {
+      this.includePdfs = include
+      saveIncludePdfs(include)
+      this.setEntries(this.scannedEntries, this.scannedEntriesRoot)
+    })
 
     // Pinned to the corner, outside the lists; checks GitHub once per launch.
     void new UpdateNotice(this.root).checkOnce()
@@ -180,10 +208,13 @@ export class LibraryView {
     this.listsEl.classList.toggle('filtering', this.folderTree.isFiltering)
   }
 
-  /** Hands a scan's entries to the tree and the tag rail together. */
+  /** Hands a scan's entries — minus PDFs when the rail's switch hides them — to the tree and the tag rail (whose counts then match what's listed). */
   private setEntries(entries: LibraryEntry[], rootFolder: string): void {
-    this.folderTree.setData(entries, rootFolder)
-    this.tagRail.setTags(rootFolder ? buildTagTree(entries, rootFolder) : [])
+    this.scannedEntries = entries
+    this.scannedEntriesRoot = rootFolder
+    const shown = this.includePdfs ? entries : entries.filter((e) => e.is_dir || !/\.pdf$/i.test(e.path))
+    this.folderTree.setData(shown, rootFolder)
+    this.tagRail.setTags(rootFolder ? buildTagTree(shown, rootFolder) : [])
   }
 
   /** Shows the "back to open sheets" button — only meaningful while the practice view has something open. */
