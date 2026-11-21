@@ -43,6 +43,7 @@ How it installs depends on `Install::detect()`: an AppImage (`$APPIMAGE`) is dow
 - Styles: `theme.css` (tokens + base controls), `app.css` (shell/page area), `components.css` (toolbar, chips, tab bar, library). Colors come only from theme tokens, in all three themes.
 - Solid accent (`button.primary`) is for the one primary action in a region (Play, "Choose folder" on a fresh install). Toggles and the selected segment use the tonal `.active` state. Related controls share a `.tool-group` pill; one-of-N choices use `.seg-btn`.
 - The practice toolbar is two rows: `.appbar` (title, rating, status chips, zen, theme) and `.controlbar` (grouped controls, hidden when no file is open). `#status` is for errors only; the file name is `#piece-title`.
+- Library tags are derived, never stored: a sheet's tags are its first two folders below the library root (`web/src/library-tags.ts`), shown in the left `TagRail` (OR-combined). Any active search/tag/level filter switches `FolderTree` from the tree to a flat result list and hides Pinned/Recent.
 - The sidebar column only exists for multi-piece scores (`#app.no-sidebar` otherwise, toggled in `PracticeView.setPieces`).
 
 ## MusicXML

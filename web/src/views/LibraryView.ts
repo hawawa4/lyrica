@@ -15,6 +15,8 @@ import type { KnowledgeLevel, LibraryEntry, PinnedFile, RecentFile } from '../ty
 import { FileListPanel } from './FileListPanel'
 import { FolderTree } from './FolderTree'
 import { LevelFilterBar } from './LevelFilterBar'
+import { TagRail } from './TagRail'
+import { buildTagTree } from '../library-tags'
 import { UpdateNotice } from './UpdateNotice'
 import { icon } from '../icons'
 
@@ -46,6 +48,8 @@ export class LibraryView {
   private readonly recentPanel: FileListPanel<RecentFile>
   private readonly folderTree: FolderTree
   private readonly levelFilterBar: LevelFilterBar
+  private readonly tagRail: TagRail
+  private readonly listsEl: HTMLDivElement
   private onOpenCallback: ((path: string) => void) | null = null
   private onBackToSheetsCallback: (() => void) | null = null
   private pinnedFiles: PinnedFile[] = []
@@ -82,6 +86,8 @@ export class LibraryView {
           <button id="choose-folder-btn" class="folder-chip" title="Choose your scores folder">${icon('folder_open', 18)}<span class="label" id="root-folder-label">Loading&hellip;</span></button>
         </div>
       </div>
+      <div class="library-body">
+      <div id="tag-rail-slot"></div>
       <div class="library-lists">
         <div id="library-loading" class="library-loading" style="display:none;" role="status" aria-live="polite">
           <div class="spinner spinner-sm"></div>
@@ -90,6 +96,7 @@ export class LibraryView {
         <div id="pinned-list"></div>
         <div id="recent-list"></div>
         <div id="tree-list"></div>
+      </div>
       </div>
     `
     container.appendChild(this.root)
@@ -106,6 +113,8 @@ export class LibraryView {
     this.recentPanel = new FileListPanel<RecentFile>(this.root.querySelector('#recent-list')!, 'Recent files', 'history')
     this.folderTree = new FolderTree(this.root.querySelector('#tree-list')!)
     this.levelFilterBar = new LevelFilterBar(this.folderTree.toolbarEl)
+    this.tagRail = new TagRail(this.root.querySelector('#tag-rail-slot')!)
+    this.listsEl = this.root.querySelector('.library-lists')!
 
     this.pinnedPanel.setIsPinned(() => true)
     this.recentPanel.setIsPinned((e) => this.isPinned(e.file_hash))
@@ -128,13 +137,28 @@ export class LibraryView {
     this.recentPanel.onRatingChange((entry, level) => void this.setRating(entry.file_hash, level))
     this.folderTree.onRatingChange((path, _title, level) => void this.setRatingByPath(path, level))
 
-    this.levelFilterBar.onChange((levels) => this.folderTree.setLevelFilter(levels))
+    this.levelFilterBar.onChange((levels) => {
+      this.folderTree.setLevelFilter(levels)
+      this.updateFilteringState()
+    })
+    this.tagRail.onChange((tags) => {
+      this.folderTree.setTagFilter(tags)
+      this.updateFilteringState()
+    })
+    this.folderTree.onTagClick((tag) => this.tagRail.setSelected(new Set([tag])))
 
     // Pinned to the corner, outside the lists; checks GitHub once per launch.
     void new UpdateNotice(this.root).checkOnce()
 
     this.searchInput.addEventListener('input', () => {
       this.folderTree.setSearchQuery(this.searchInput.value)
+      this.updateFilteringState()
+    })
+    this.searchInput.addEventListener('keydown', (e) => {
+      if (e.key !== 'Escape' || !this.searchInput.value) return
+      this.searchInput.value = ''
+      this.folderTree.setSearchQuery('')
+      this.updateFilteringState()
     })
 
     if (isTauri()) {
@@ -148,6 +172,17 @@ export class LibraryView {
       this.chooseFolderBtn.disabled = true
       this.chooseFolderBtn.title = 'Library browsing is desktop-only for now'
     }
+  }
+
+  /** While a search/tag/level filter is active the results are what matters: pinned and recent step aside so matches start at the top. */
+  private updateFilteringState(): void {
+    this.listsEl.classList.toggle('filtering', this.folderTree.isFiltering)
+  }
+
+  /** Hands a scan's entries to the tree and the tag rail together. */
+  private setEntries(entries: LibraryEntry[], rootFolder: string): void {
+    this.folderTree.setData(entries, rootFolder)
+    this.tagRail.setTags(rootFolder ? buildTagTree(entries, rootFolder) : [])
   }
 
   /** Shows the "back to open sheets" button — only meaningful while the practice view has something open. */
@@ -284,7 +319,7 @@ export class LibraryView {
   private async refreshScan(force: boolean): Promise<void> {
     if (!isTauri() || !this.rootFolder) {
       this.scannedRootFolder = null
-      this.folderTree.setData([], '')
+      this.setEntries([], '')
       this.setLoading(null)
       return
     }
@@ -303,13 +338,13 @@ export class LibraryView {
       if (scanning !== this.rootFolder) return // folder changed mid-scan; that scan owns the UI now
       this.scannedRootFolder = scanning
       this.scanSignature = scanSignature(entries)
-      this.folderTree.setData(entries, scanning)
+      this.setEntries(entries, scanning)
     } catch (e) {
       console.error('Failed to scan library folder:', e)
       if (scanning !== this.rootFolder) return
       this.scannedRootFolder = null
       this.scanSignature = ''
-      this.folderTree.setData([], scanning)
+      this.setEntries([], scanning)
     }
     this.setLoading(null)
   }
@@ -335,7 +370,7 @@ export class LibraryView {
       const signature = scanSignature(entries)
       if (signature === this.scanSignature) return
       this.scanSignature = signature
-      this.folderTree.setData(entries, root)
+      this.setEntries(entries, root)
     } catch (e) {
       console.warn('Background library rescan failed:', e)
     } finally {

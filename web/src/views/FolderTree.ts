@@ -2,6 +2,7 @@ import type { KnowledgeLevel, LibraryEntry } from '../types'
 import { CollapsibleSection } from './CollapsibleSection'
 import { RatingStars } from './RatingStars'
 import { icon, fileTypeIcon } from '../icons'
+import { folderParts, matchesSearch, matchesTags, searchTerms, tagsOf } from '../library-tags'
 
 interface TreeNode {
   name: string
@@ -43,16 +44,6 @@ function buildTree(entries: LibraryEntry[], rootFolder: string): TreeNode {
   return root
 }
 
-/** True if `node` or anything beneath it matches `query` (case-insensitive substring on file/folder name). */
-function matchesSearch(node: TreeNode, query: string): boolean {
-  if (!query) return true
-  if (node.name.toLowerCase().includes(query)) return true
-  for (const child of node.children.values()) {
-    if (matchesSearch(child, query)) return true
-  }
-  return false
-}
-
 /**
  * A collapsible folder-tree view of a scanned library root, built client-side
  * from `scan_library`'s flat file list (the Rust side stays a simple
@@ -71,7 +62,10 @@ export class FolderTree {
   private readonly emptyEl: HTMLDivElement
   private entries: LibraryEntry[] = []
   private rootFolder = ''
-  private searchQuery = ''
+  private searchTerms: string[] = []
+  /** Selected folder tags (OR); empty means no tag filter. */
+  private tagFilter = new Set<string>()
+  private onTagClickCallback: ((tag: string) => void) | null = null
   /** Empty set means "no level filter active" (show everything) — otherwise only files whose rating is in this set, or files with no rating at all if `null` is a member, are shown. */
   private levelFilter = new Set<KnowledgeLevel | null>()
   private readonly expanded = new Set<string>()
@@ -125,8 +119,23 @@ export class FolderTree {
   readonly toolbarEl: HTMLDivElement
 
   setSearchQuery(query: string): void {
-    this.searchQuery = query.trim().toLowerCase()
+    this.searchTerms = searchTerms(query)
     this.render()
+  }
+
+  setTagFilter(tags: Set<string>): void {
+    this.tagFilter = tags
+    this.render()
+  }
+
+  /** A tag chip on a result row was clicked. */
+  onTagClick(callback: (tag: string) => void): void {
+    this.onTagClickCallback = callback
+  }
+
+  /** True while a search, tag or level filter narrows the library — results then show as a flat list instead of the tree. */
+  get isFiltering(): boolean {
+    return this.searchTerms.length > 0 || this.tagFilter.size > 0 || this.levelFilter.size > 0
   }
 
   /** `levels` empty means "no filter" (show everything); otherwise only files whose rating (or `null` for unrated) is in the set are shown. Folders with no matching descendant are hidden too. */
@@ -162,25 +171,39 @@ export class FolderTree {
       return
     }
 
-    const tree = buildTree(this.entries, this.rootFolder)
     this.emptyEl.style.display = 'none'
     this.treeEl.style.display = 'block'
-
-    const autoExpand = this.searchQuery.length > 0 || this.levelFilter.size > 0
-    this.renderChildren(tree, this.treeEl, 0, autoExpand)
-  }
-
-  /** True if `node` is a file matching the active level filter, or a folder containing at least one such file (recursively). Mirrors `matchesSearch`'s "any descendant matches" rule. */
-  private matchesFilter(node: TreeNode): boolean {
-    if (this.levelFilter.size === 0) return true
-    if (node.entry) return this.levelFilter.has(this.ratingFn(node.entry.path))
-    for (const child of node.children.values()) {
-      if (this.matchesFilter(child)) return true
+    this.treeEl.classList.toggle('flat-results', this.isFiltering)
+    if (this.isFiltering) {
+      this.renderResults()
+      return
     }
-    return false
+    this.renderChildren(buildTree(this.entries, this.rootFolder), this.treeEl, 0)
   }
 
-  private renderChildren(node: TreeNode, container: HTMLElement, depth: number, autoExpand: boolean): void {
+  /** Every sheet passing the search, tag and level filters, as one flat list sorted by title. */
+  private renderResults(): void {
+    const results = this.entries
+      .filter(
+        (e) =>
+          !e.is_dir &&
+          matchesTags(e, this.rootFolder, this.tagFilter) &&
+          (this.levelFilter.size === 0 || this.levelFilter.has(this.ratingFn(e.path))) &&
+          matchesSearch(e, this.rootFolder, this.searchTerms),
+      )
+      .sort((a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: 'base', numeric: true }))
+    this.section.setCount(results.length)
+    if (results.length === 0) {
+      const empty = document.createElement('div')
+      empty.className = 'flat-results-empty'
+      empty.textContent = 'No sheets match these filters'
+      this.treeEl.appendChild(empty)
+      return
+    }
+    for (const entry of results) this.treeEl.appendChild(this.renderFileRow(entry, 0, true))
+  }
+
+  private renderChildren(node: TreeNode, container: HTMLElement, depth: number): void {
     const sortedChildren = Array.from(node.children.values()).sort((a, b) => {
       const aIsDir = a.children.size > 0 || !a.entry
       const bIsDir = b.children.size > 0 || !b.entry
@@ -189,20 +212,17 @@ export class FolderTree {
     })
 
     for (const child of sortedChildren) {
-      if (!matchesSearch(child, this.searchQuery)) continue
-      if (!this.matchesFilter(child)) continue
-
       if (child.entry) {
-        container.appendChild(this.renderFileRow(child, depth))
+        container.appendChild(this.renderFileRow(child.entry, depth, false))
       } else {
-        container.appendChild(this.renderFolderRow(child, depth, autoExpand))
+        container.appendChild(this.renderFolderRow(child, depth))
       }
     }
   }
 
-  private renderFolderRow(node: TreeNode, depth: number, autoExpand: boolean): HTMLElement {
+  private renderFolderRow(node: TreeNode, depth: number): HTMLElement {
     const wrapper = document.createElement('div')
-    const isOpen = autoExpand || this.expanded.has(node.relPath)
+    const isOpen = this.expanded.has(node.relPath)
 
     const row = document.createElement('div')
     row.className = 'tree-row tree-folder-row'
@@ -221,15 +241,15 @@ export class FolderTree {
 
     if (isOpen) {
       const childrenEl = document.createElement('div')
-      this.renderChildren(node, childrenEl, depth + 1, autoExpand)
+      this.renderChildren(node, childrenEl, depth + 1)
       wrapper.appendChild(childrenEl)
     }
 
     return wrapper
   }
 
-  private renderFileRow(node: TreeNode, depth: number): HTMLElement {
-    const entry = node.entry!
+  /** `withPath`: a flat-results row, which shows where the sheet lives — its tags as clickable chips, deeper folders as plain text. */
+  private renderFileRow(entry: LibraryEntry, depth: number, withPath: boolean): HTMLElement {
     const row = document.createElement('div')
     row.className = 'tree-row tree-file-row'
     row.style.paddingLeft = `${depth * 16 + 7}px`
@@ -239,7 +259,14 @@ export class FolderTree {
     const label = document.createElement('span')
     label.className = 'label'
     label.textContent = entry.title
-    row.appendChild(label)
+    if (withPath) {
+      const main = document.createElement('span')
+      main.className = 'result-main'
+      main.append(label, this.renderPathChips(entry))
+      row.appendChild(main)
+    } else {
+      row.appendChild(label)
+    }
 
     const stars = new RatingStars()
     stars.setLevel(this.ratingFn(entry.path))
@@ -269,6 +296,32 @@ export class FolderTree {
     }
 
     return row
+  }
+
+  private renderPathChips(entry: LibraryEntry): HTMLElement {
+    const el = document.createElement('span')
+    el.className = 'result-path'
+    const tags = tagsOf(entry, this.rootFolder)
+    for (const tag of tags) {
+      const chip = document.createElement('button')
+      chip.type = 'button'
+      chip.className = 'path-chip'
+      chip.classList.toggle('active', this.tagFilter.has(tag))
+      chip.textContent = tag.slice(tag.lastIndexOf('/') + 1)
+      chip.addEventListener('click', (e) => {
+        e.stopPropagation()
+        this.onTagClickCallback?.(tag)
+      })
+      el.appendChild(chip)
+    }
+    const deeper = folderParts(entry, this.rootFolder).slice(tags.length)
+    if (deeper.length > 0) {
+      const rest = document.createElement('span')
+      rest.className = 'path-rest'
+      rest.textContent = deeper.join(' / ')
+      el.appendChild(rest)
+    }
+    return el
   }
 
   private async handlePinClick(entry: LibraryEntry): Promise<void> {

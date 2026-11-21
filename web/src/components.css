@@ -1079,6 +1079,198 @@
   text-decoration: underline;
 }
 
+/* Library body: folder-tag rail on the left, lists on the right. */
+.library-body {
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  gap: 24px;
+  max-width: 1160px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+.library-body .library-lists {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+}
+
+/* While filtering, results are the page: pinned and recent step aside. */
+.library-lists.filtering #pinned-list,
+.library-lists.filtering #recent-list {
+  display: none;
+}
+
+.tag-rail {
+  position: sticky;
+  top: 88px;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  width: 248px;
+  max-height: calc(100vh - 112px);
+}
+
+.tag-rail-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 26px;
+  margin-bottom: 8px;
+  padding: 2px 4px;
+}
+
+.tag-rail-clear {
+  height: 22px;
+  margin-left: auto;
+  padding: 0 4px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  text-decoration: underline;
+}
+
+.tag-rail-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 2px;
+}
+
+.tag-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.tag-row.child {
+  padding-left: 16px;
+}
+
+.tag-pill {
+  flex: 1;
+  min-width: 0;
+  justify-content: space-between;
+  gap: 8px;
+  height: 30px;
+  padding: 0 10px 0 12px;
+  border-radius: 999px;
+  background: var(--bg-elevated);
+  color: var(--text);
+  font-size: 13px;
+}
+
+.tag-row.child .tag-pill {
+  height: 26px;
+  font-size: 12px;
+}
+
+.tag-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tag-count {
+  flex: none;
+  color: var(--text-faint);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.tag-pill.active .tag-count {
+  color: inherit;
+}
+
+.tag-fold {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-faint);
+}
+
+.tag-fold .icon {
+  transition: transform 0.15s;
+}
+
+.tag-fold.open .icon {
+  transform: rotate(90deg);
+}
+
+/* Flat results: the sheet's title over the folders it sits in. */
+.folder-tree.flat-results .tree-file-row .file-icon {
+  margin-left: 0;
+}
+
+.result-main {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  padding-block: 2px;
+}
+
+.result-path {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 2px;
+}
+
+.path-chip {
+  height: 20px;
+  padding: 0 8px;
+  border: none;
+  border-radius: 999px;
+  background: var(--bg-control);
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.path-chip:hover:not(:disabled) {
+  background: var(--bg-control-hover);
+  color: var(--text);
+}
+
+.path-rest {
+  overflow: hidden;
+  color: var(--text-faint);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.flat-results-empty {
+  padding: 24px 16px;
+  color: var(--text-muted);
+  font-size: 13px;
+  text-align: center;
+}
+
+@media (max-width: 760px) {
+  .library-body {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .tag-rail {
+    position: static;
+    width: auto;
+    max-height: 220px;
+  }
+}
+
 /* Context menu items get an icon column. */
 .context-menu-item {
   display: flex;
