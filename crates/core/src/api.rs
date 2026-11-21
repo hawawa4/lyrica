@@ -15,6 +15,7 @@ use crate::library::{self, LibraryEntry, LibraryError, LibrarySettings, PinnedFi
 use crate::markers::{self, Marker, MarkerError, MarkerKind, MarkerPosition};
 use crate::measure_layout;
 use crate::mscz::{self, MsczError};
+use crate::omr::{self, MeasureBox, OmrError, OmrProgress};
 use crate::page_layout;
 use crate::pdf_calibration::{self, CalibrationPoint};
 use crate::pieces::{self, Piece, PiecesError};
@@ -365,6 +366,44 @@ pub fn pdf_tempo_map(points: &[CalibrationPoint], numerator: u8) -> Vec<TempoMap
 /// them as adjustable/dismissable markers the user must confirm.
 pub fn detect_barlines(png_bytes: &[u8]) -> Result<Vec<StaffSystem>, CvBarlineError> {
     cv_barline::detect_barlines(png_bytes)
+}
+
+/// True if Audiveris (optional OMR measure detection) is installed.
+pub fn omr_available() -> bool {
+    omr::locate_audiveris().is_some()
+}
+
+/// PDF mode: recognises the measures of the PDF at `pdf_path` with
+/// Audiveris (see `omr`'s module docs). Blocks for ~5s per page. Works in
+/// `{base_dir}/pdfs/{file_hash}/omr-work` (removed afterwards) and keeps the
+/// exported MusicXML in `{base_dir}/pdfs/{file_hash}/omr/` for later use.
+pub fn recognise_pdf_measures(
+    base_dir: &Path,
+    file_hash: &str,
+    pdf_path: &Path,
+    on_progress: &mut dyn FnMut(OmrProgress),
+) -> Result<Vec<MeasureBox>, OmrError> {
+    let exe = omr::locate_audiveris().ok_or(OmrError::NotInstalled)?;
+    let item_dir = base_dir.join("pdfs").join(file_hash);
+    let work_dir = item_dir.join("omr-work");
+    let _ = std::fs::remove_dir_all(&work_dir); // leftovers of an interrupted run
+    let result = omr::recognise(&exe, pdf_path, &work_dir, on_progress).and_then(|out| {
+        keep_musicxml(&item_dir.join("omr"), &out.musicxml)?;
+        Ok(out.boxes)
+    });
+    let _ = std::fs::remove_dir_all(&work_dir);
+    result
+}
+
+fn keep_musicxml(dir: &Path, files: &[std::path::PathBuf]) -> std::io::Result<()> {
+    let _ = std::fs::remove_dir_all(dir);
+    std::fs::create_dir_all(dir)?;
+    for file in files {
+        if let Some(name) = file.file_name() {
+            std::fs::copy(file, dir.join(name))?;
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

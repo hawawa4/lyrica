@@ -2,6 +2,7 @@
 
 mod audio_state;
 mod commands;
+mod omr;
 mod updates;
 
 use audio_state::AudioState;
@@ -45,6 +46,7 @@ fn main() {
             }
             app.manage(audio_state);
             app.manage(updates::UpdateState::default());
+            app.manage(omr::OmrState::default());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -87,6 +89,8 @@ fn main() {
             commands::save_calibration_points,
             commands::pdf_tempo_map,
             commands::detect_barlines,
+            omr::omr_available,
+            omr::recognise_pdf_measures,
             updates::check_for_update,
             updates::install_update,
             updates::restart_app,
