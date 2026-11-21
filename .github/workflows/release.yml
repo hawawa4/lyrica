@@ -105,7 +105,7 @@ jobs:
           cp target/release/bundle/deb/*.deb target/release/bundle/appimage/*.AppImage dist/
           cd dist && sha256sum ./* > SHA256SUMS.txt && cat SHA256SUMS.txt
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: bundles
           path: dist/*
