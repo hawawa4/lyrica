@@ -169,9 +169,17 @@ export async function upgradeScore(score: WebMscore): Promise<Uint8Array> {
  * theme (dark theme: dark background; paper theme: paper-colored
  * background) rather than always being white underneath whatever CSS filter
  * is applied for ink color.
+ *
+ * The SVG's `<title>`/`<desc>` elements are stripped: MuseScore's SVG export
+ * writes the engine's internal score name there (a random-looking id like
+ * `pCzzkcf`), which the browser shows as a hover tooltip over the page.
  */
 export async function renderPage(score: WebMscore, pageIndex: number): Promise<string> {
-  return score.saveSvg(pageIndex, false)
+  return stripSvgTooltips(await score.saveSvg(pageIndex, false))
+}
+
+export function stripSvgTooltips(svg: string): string {
+  return svg.replace(/<(title|desc)\b[^>]*>[\s\S]*?<\/\1>|<(title|desc)\b[^>]*\/>/g, '')
 }
 
 export async function getMeasurePositions(score: WebMscore): Promise<Positions> {
