@@ -48,6 +48,8 @@ export class CalibrationOverlay {
   private readonly dotsLayer: HTMLDivElement
   private readonly dragRectEl: HTMLDivElement
   private points: CalibrationPoint[] = []
+  /** How far apart (ms) consecutive measures are: one measure at the PDF's tempo (see `retime`). */
+  private measureMs = 1000
   private currentPage = 0
   private dragStart: { x: number; y: number } | null = null
   private selectedRange: PointRange | null = null
@@ -129,7 +131,7 @@ export class CalibrationOverlay {
       this.currentPage,
       systems,
       nextMeasure(this.points),
-      nextTimeMs(this.points),
+      nextTimeMs(this.points, this.measureMs),
       canvas.width,
       canvas.height,
     )
@@ -153,14 +155,14 @@ export class CalibrationOverlay {
     pageResults: { page: number; systems: StaffSystem[]; canvasWidth: number; canvasHeight: number }[],
   ): void {
     let measure = nextMeasure(this.points)
-    let nextTime = nextTimeMs(this.points)
+    let nextTime = nextTimeMs(this.points, this.measureMs)
     const allNewPoints: CalibrationPoint[] = []
 
     for (const { page, systems, canvasWidth, canvasHeight } of pageResults) {
       const newPoints = this.pointsFromBarlines(page, systems, measure, nextTime, canvasWidth, canvasHeight)
       allNewPoints.push(...newPoints)
       measure += newPoints.length
-      nextTime += newPoints.length * 1000
+      nextTime += newPoints.length * this.measureMs
     }
 
     if (allNewPoints.length === 0) return
@@ -178,11 +180,11 @@ export class CalibrationOverlay {
    */
   addPointsFromMeasureBoxes(boxes: MeasureBox[]): void {
     let measure = nextMeasure(this.points)
-    let time_ms = nextTimeMs(this.points)
+    let time_ms = nextTimeMs(this.points, this.measureMs)
     const newPoints = boxes.map((b) => {
       const point: CalibrationPoint = { page: b.page, x: b.x0, y: (b.y0 + b.y1) / 2, time_ms, measure }
       measure += 1
-      time_ms += 1000
+      time_ms += this.measureMs
       return point
     })
     if (newPoints.length === 0) return
@@ -218,10 +220,31 @@ export class CalibrationOverlay {
       for (const x of xs) {
         points.push({ page, x: x / canvasWidth, y, time_ms, measure })
         measure += 1
-        time_ms += 1000
+        time_ms += this.measureMs
       }
     }
     return points
+  }
+
+  /**
+   * Re-spaces every point one measure (`measureMs`) apart, in order — the
+   * PDF's tempo lives in this spacing (it's what the metronome's tempo map
+   * and the cursor read). Also sets the spacing for points added later.
+   * Fires `onChange` only if any point actually moved.
+   */
+  retime(measureMs: number): boolean {
+    this.measureMs = measureMs
+    let changed = false
+    this.points = this.points.map((p, i) => {
+      const time_ms = i * measureMs
+      if (Math.abs(p.time_ms - time_ms) > 0.001) changed = true
+      return { ...p, time_ms }
+    })
+    if (changed) {
+      this.render()
+      this.onChangeCallback?.(this.points)
+    }
+    return changed
   }
 
   /** Removes every calibration point for this file (all pages, not just the current one) — the caller is responsible for confirming with the user first, since this can't be undone. */
@@ -392,10 +415,10 @@ export class CalibrationOverlay {
   }
 }
 
-/** New points append after the latest existing point's time, 1 second apart — only relative order/spacing matters for tempo derivation (see pdf_calibration.rs). */
-function nextTimeMs(existing: CalibrationPoint[]): number {
+/** New points append one measure after the latest existing point — the spacing is the PDF's tempo (see `retime` and pdf_calibration.rs). */
+function nextTimeMs(existing: CalibrationPoint[], measureMs: number): number {
   if (existing.length === 0) return 0
-  return Math.max(...existing.map((p) => p.time_ms)) + 1000
+  return Math.max(...existing.map((p) => p.time_ms)) + measureMs
 }
 
 /** Defaults a new point's measure to right after the latest existing point's (by time) — always the next measure — rather than always defaulting to measure 0, which made every point need manual correction. */

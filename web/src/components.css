@@ -292,7 +292,8 @@
 
 /* Zoom */
 
-.zoom-indicator {
+.zoom-indicator,
+.tempo-input {
   width: 54px;
   height: 32px;
   padding: 0 4px;
@@ -305,11 +306,13 @@
   color: var(--text);
 }
 
-.zoom-indicator:hover {
+.zoom-indicator:hover,
+.tempo-input:hover {
   background: var(--bg-control-hover);
 }
 
-.zoom-indicator:focus {
+.zoom-indicator:focus,
+.tempo-input:focus {
   background: var(--bg-elevated);
   border-color: var(--accent);
   outline: none;
@@ -1342,4 +1345,17 @@
   width: 30px;
   height: 30px;
   opacity: 1;
+}
+
+/* PDF tempo inputs: compact, number spinners hidden (type the value, or use the arrow keys). */
+.tempo-input {
+  width: 46px;
+  appearance: textfield;
+  -moz-appearance: textfield;
+}
+
+.tempo-input::-webkit-inner-spin-button,
+.tempo-input::-webkit-outer-spin-button {
+  margin: 0;
+  -webkit-appearance: none;
 }

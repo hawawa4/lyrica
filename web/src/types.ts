@@ -139,3 +139,9 @@ export interface MeasureBox {
 }
 
 export type OmrProgress = { kind: 'starting' } | { kind: 'page'; page: number; pages: number }
+
+/** The tempo a PDF is practised at (a PDF has none the app can read). */
+export interface PdfTempo {
+  bpm: number
+  beats_per_measure: number
+}

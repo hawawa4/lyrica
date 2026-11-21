@@ -11,6 +11,7 @@ import type {
   MeasureBox,
   MidiStream,
   OmrProgress,
+  PdfTempo,
   PinnedFile,
   Piece,
   RecentFile,
@@ -356,6 +357,20 @@ export async function saveCalibrationPoints(fileHash: string, points: Calibratio
  * tracking, not just the simplified `(time_ms, qpm)` pairs the rest of the
  * app's `Timeline.tempo_map` uses) and loads it in one call.
  */
+/** The PDF's saved tempo (100 BPM in 4 when never set). */
+export async function getPdfTempo(fileHash: string): Promise<PdfTempo> {
+  if (!isTauri()) throw new Error('getPdfTempo: desktop-only')
+  const { invoke } = await import('@tauri-apps/api/core')
+  return invoke<PdfTempo>('get_pdf_tempo', { fileHash })
+}
+
+/** Saves the PDF's tempo; returns it as stored (clamped to 20-400 BPM, 1-16 beats). */
+export async function savePdfTempo(fileHash: string, tempo: PdfTempo): Promise<PdfTempo> {
+  if (!isTauri()) throw new Error('savePdfTempo: desktop-only')
+  const { invoke } = await import('@tauri-apps/api/core')
+  return invoke<PdfTempo>('save_pdf_tempo', { fileHash, tempo })
+}
+
 export async function loadPdfTempoMap(points: CalibrationPoint[], numerator: number, durationMs: number): Promise<void> {
   if (!isTauri()) throw new Error('loadPdfTempoMap: desktop-only for now')
   const { invoke } = await import('@tauri-apps/api/core')

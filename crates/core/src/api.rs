@@ -17,7 +17,7 @@ use crate::measure_layout;
 use crate::mscz::{self, MsczError};
 use crate::omr::{self, MeasureBox, OmrError, OmrProgress};
 use crate::page_layout;
-use crate::pdf_calibration::{self, CalibrationPoint};
+use crate::pdf_calibration::{self, CalibrationPoint, PdfTempo};
 use crate::pieces::{self, Piece, PiecesError};
 use crate::rating::{self, KnowledgeLevel};
 use crate::recent_files::{self, RecentFile, RecentFilesError};
@@ -350,6 +350,20 @@ pub fn save_calibration_points(
     points: Vec<CalibrationPoint>,
 ) -> Result<Vec<CalibrationPoint>, SidecarError> {
     pdf_calibration::save_points(base_dir, file_hash, points)
+}
+
+/// PDF mode: the tempo/beats per measure the user practises this PDF at.
+pub fn get_pdf_tempo(base_dir: &Path, file_hash: &str) -> Result<PdfTempo, SidecarError> {
+    pdf_calibration::get_tempo(base_dir, file_hash)
+}
+
+/// Saves (clamped) and returns the PDF's tempo.
+pub fn save_pdf_tempo(
+    base_dir: &Path,
+    file_hash: &str,
+    tempo: PdfTempo,
+) -> Result<PdfTempo, SidecarError> {
+    pdf_calibration::save_tempo(base_dir, file_hash, tempo)
 }
 
 /// Derives a tempo map from calibration points for metronome-only playback

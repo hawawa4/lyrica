@@ -26,8 +26,10 @@ import {
   contentHash,
   recordRecentFile,
   hashBytes,
+  getPdfTempo,
   listCalibrationPoints,
   saveCalibrationPoints,
+  savePdfTempo,
   loadPdfTempoMap,
   detectBarlines,
   omrAvailable,
@@ -219,7 +221,10 @@ interface PdfTabState {
   selectedRange: PointRange | null
   /** The measure shift+click extends a selection from — see `MsczTabState.anchorElid`. */
   anchorIndex: number | null
+  /** Beats per measure, set by the user (see `PdfTempo`). */
   numerator: number
+  /** The tempo the user practises this PDF at; measure points are spaced `numerator * 60000 / bpm` ms apart. */
+  bpm: number
   speed: number
   loopRegion: [number, number] | null
   transportState: TransportState
@@ -228,8 +233,29 @@ interface PdfTabState {
 
 type TabState = MsczTabState | PdfTabState
 
-/** Default time signature numerator for calibration (used for bar-accent tracking) — no concept of a parsed time signature exists for a plain PDF, so this is a fixed assumption the user isn't currently able to change (future UI could expose it). */
+/** Until a PDF's saved tempo loads (or with no desktop backend): 100 BPM in 4 — a PDF has no tempo or time signature the app can read, so the user sets both. */
 const PDF_DEFAULT_NUMERATOR = 4
+const PDF_DEFAULT_BPM = 100
+
+/** One measure's length (ms) at the tab's tempo. */
+function pdfMeasureMs(tab: { bpm: number; numerator: number }): number {
+  return (tab.numerator * 60_000) / tab.bpm
+}
+
+/**
+ * Maps a time on the old point spacing to the same spot on the new one, by
+ * interpolating between the points (index i sits at `old[i]` / `fresh[i]`)
+ * — so the head and a loop stay on the same measures across a tempo change.
+ */
+function remapPointTime(ms: number, old: CalibrationPoint[], fresh: CalibrationPoint[]): number {
+  const n = Math.min(old.length, fresh.length)
+  if (n < 2) return ms
+  let i = 0
+  while (i < n - 2 && old[i + 1].time_ms <= ms) i++
+  const span = old[i + 1].time_ms - old[i].time_ms || 1
+  const t = (ms - old[i].time_ms) / span
+  return fresh[i].time_ms + t * (fresh[i + 1].time_ms - fresh[i].time_ms)
+}
 const PDF_BASE_WIDTH = 700
 const PDF_ZOOM_STEP = 0.25
 const PDF_MIN_ZOOM = 0.5
@@ -271,6 +297,9 @@ export class PracticeView {
   private readonly staffButtons: Record<StaffMode, HTMLButtonElement>
   private readonly metronomeBtn: HTMLButtonElement
   private readonly metronomeVolumeInput: HTMLInputElement
+  private readonly pdfTempoGroupEl: HTMLDivElement
+  private readonly pdfBpmInput: HTMLInputElement
+  private readonly pdfBeatsInput: HTMLInputElement
   /** Whether the click track is on — a global setting (the audio engine has one player), kept across tab switches. */
   private metronomeOn = false
   private readonly pageContainerEl: HTMLDivElement
@@ -369,6 +398,13 @@ export class PracticeView {
             <div class="tool-group">
               <button id="metronome-btn" class="icon-btn metronome-btn" disabled aria-pressed="false" title="Metronome (M)" aria-label="Metronome">${icon('metronome')}</button>
               <input id="metronome-volume" type="range" min="0" max="100" step="1" class="metronome-volume" title="Metronome volume" aria-label="Metronome volume" />
+            </div>
+            <div id="pdf-tempo-group" class="tool-group" role="group" aria-label="Tempo" style="display:none;">
+              <span class="tool-caption">BPM</span>
+              <input id="pdf-bpm" class="tempo-input" type="number" inputmode="numeric" min="20" max="400" step="1" aria-label="Tempo in beats per minute" />
+              <span class="tool-sep"></span>
+              <span class="tool-caption">Beats</span>
+              <input id="pdf-beats" class="tempo-input" type="number" inputmode="numeric" min="1" max="16" step="1" aria-label="Beats per measure" />
             </div>
           </div>
 
@@ -488,6 +524,9 @@ export class PracticeView {
     this.chordBtn.addEventListener('click', () => void this.toggleChords())
     this.metronomeBtn = this.root.querySelector('#metronome-btn')!
     this.metronomeVolumeInput = this.root.querySelector('#metronome-volume')!
+    this.pdfTempoGroupEl = this.root.querySelector('#pdf-tempo-group')!
+    this.pdfBpmInput = this.root.querySelector('#pdf-bpm')!
+    this.pdfBeatsInput = this.root.querySelector('#pdf-beats')!
     this.pageContainerEl = this.root.querySelector('#page')!
     this.emptyStateEl = this.root.querySelector('#empty-state')!
     this.selectionStatusEl = this.root.querySelector('#selection-status')!
@@ -652,6 +691,22 @@ export class PracticeView {
       void setMetronomeVolume(volume)
     })
     if (isTauri()) void setMetronomeVolume(loadMetronomeVolume())
+
+    for (const input of [this.pdfBpmInput, this.pdfBeatsInput]) {
+      input.addEventListener('change', () => {
+        const active = this.activeTab()
+        if (active?.kind === 'pdf') void this.applyPdfTempo(active, Number(this.pdfBpmInput.value), Number(this.pdfBeatsInput.value))
+      })
+      input.addEventListener('keydown', (e) => {
+        e.stopPropagation() // typing digits here must not trigger page-nav or other window-level shortcuts
+        if (e.key === 'Enter') input.blur()
+        else if (e.key === 'Escape') {
+          const active = this.activeTab()
+          if (active?.kind === 'pdf') this.showPdfTempo(active)
+          input.blur()
+        }
+      })
+    }
 
     const MARKERS_KEY = 'lyrica-measure-markers-visible'
     const markersToggle = this.root.querySelector<HTMLButtonElement>('#toggle-measure-markers-btn')!
@@ -1076,7 +1131,9 @@ export class PracticeView {
     if (points.length === 0) return null
     const startMs = points[range.startIndex]?.time_ms
     if (startMs === undefined) return null
-    const endMs = points[range.endIndex + 1]?.time_ms ?? points[points.length - 1].time_ms + 2000
+    const last = points[points.length - 1].time_ms
+    const measureMs = points.length >= 2 ? last - points[points.length - 2].time_ms : 2000
+    const endMs = points[range.endIndex + 1]?.time_ms ?? last + measureMs
     return [startMs, endMs]
   }
 
@@ -1226,6 +1283,8 @@ export class PracticeView {
     this.controlbarEl.hidden = false
     this.calibrationStatusEl.textContent = ''
     this.pdfControlsEl.style.display = tab.kind === 'pdf' ? 'flex' : 'none'
+    this.pdfTempoGroupEl.style.display = tab.kind === 'pdf' ? 'inline-flex' : 'none'
+    if (tab.kind === 'pdf') this.showPdfTempo(tab)
     this.transportEl.style.display = 'flex'
     this.zoomGroupEl.style.display = 'flex'
     setPressed(this.bookModeBtn, tab.bookMode)
@@ -1344,8 +1403,57 @@ export class PracticeView {
 
   /** Derives and loads the tempo map for a PDF tab's current calibration points, for metronome-only playback. */
   private async loadPdfTabTempoMap(tab: PdfTabState): Promise<void> {
-    const durationMs = Math.max(...tab.points.map((p) => p.time_ms)) + 4000
+    const durationMs = Math.max(...tab.points.map((p) => p.time_ms)) + pdfMeasureMs(tab)
     await loadPdfTempoMap(tab.points, tab.numerator, durationMs)
+  }
+
+  private showPdfTempo(tab: PdfTabState): void {
+    this.pdfBpmInput.value = String(Math.round(tab.bpm))
+    this.pdfBeatsInput.value = String(tab.numerator)
+  }
+
+  /**
+   * Sets a PDF's tempo: re-spaces its measures one measure-at-this-tempo
+   * apart (what the metronome and cursor run on), keeping the head and any
+   * loop on the same measures, and saves it. A running playback is stopped —
+   * the engine only picks up a new tempo map on the next play.
+   */
+  private async applyPdfTempo(tab: PdfTabState, bpm: number, beats: number): Promise<void> {
+    const clean = {
+      bpm: Number.isFinite(bpm) && bpm > 0 ? Math.min(400, Math.max(20, Math.round(bpm))) : tab.bpm,
+      numerator: Number.isFinite(beats) && beats >= 1 ? Math.min(16, Math.round(beats)) : tab.numerator,
+    }
+    if (clean.bpm === tab.bpm && clean.numerator === tab.numerator) {
+      this.showPdfTempo(tab)
+      return
+    }
+    if (this.activeHash === tab.fileHash && tab.transportState !== 'stopped') await this.stopActive()
+
+    const before = tab.calibrationOverlay.getPoints()
+    tab.bpm = clean.bpm
+    tab.numerator = clean.numerator
+    tab.calibrationOverlay.retime(pdfMeasureMs(tab))
+    this.syncRightPanePoints(tab)
+    const after = tab.calibrationOverlay.getPoints()
+    tab.headMs = remapPointTime(tab.headMs, before, after)
+    if (tab.loopRegion) {
+      const [start, end] = tab.loopRegion
+      tab.loopRegion = [remapPointTime(start, before, after), remapPointTime(end, before, after)]
+    }
+    this.showPdfTempo(tab)
+
+    if (!tab.fileHash.startsWith('untracked-')) {
+      void savePdfTempo(tab.fileHash, { bpm: tab.bpm, beats_per_measure: tab.numerator }).catch((e) =>
+        console.error('Failed to save PDF tempo:', e),
+      )
+    }
+    if (this.activeHash !== tab.fileHash) return
+    this.pdfCursor.setItems(after)
+    this.updatePdfHeadMarker(tab)
+    if (after.length >= 2) {
+      await this.loadPdfTabTempoMap(tab)
+      await setLoopRegion(tab.loopRegion)
+    }
   }
 
   /** Measures are placed entirely by the CV auto-detector now (see `CalibrationOverlay`'s module docs) — this just reports the count, not an editable-mode status. */
@@ -1999,6 +2107,7 @@ export class PracticeView {
     const canvasContainer = this.createPdfCanvasContainer()
     pageContainer.appendChild(canvasContainer)
     const calibrationOverlay = new CalibrationOverlay(canvasContainer)
+    calibrationOverlay.retime(pdfMeasureMs({ bpm: PDF_DEFAULT_BPM, numerator: PDF_DEFAULT_NUMERATOR })) // spacing for scans until the saved tempo loads
 
     const tabState: PdfTabState = {
       kind: 'pdf',
@@ -2024,6 +2133,7 @@ export class PracticeView {
       selectedRange: null,
       anchorIndex: null,
       numerator: PDF_DEFAULT_NUMERATOR,
+      bpm: PDF_DEFAULT_BPM,
       speed: 1.0,
       loopRegion: null,
       transportState: 'stopped',
@@ -2066,8 +2176,14 @@ export class PracticeView {
     let needsAutoScan = false
     if (fileHash) {
       try {
-        tabState.points = await listCalibrationPoints(fileHash)
-        calibrationOverlay.setPoints(tabState.points)
+        const [points, tempo] = await Promise.all([listCalibrationPoints(fileHash), getPdfTempo(fileHash)])
+        tabState.bpm = tempo.bpm
+        tabState.numerator = tempo.beats_per_measure
+        tabState.points = points
+        calibrationOverlay.setPoints(points)
+        // Space the points at this PDF's tempo — also fixes points saved by
+        // older versions, which were always one second apart (240 BPM in 4).
+        calibrationOverlay.retime(pdfMeasureMs(tabState))
         needsAutoScan = tabState.points.length === 0
       } catch (e) {
         console.error('Failed to load calibration points:', e)

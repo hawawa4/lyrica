@@ -2,7 +2,7 @@ use mp_core::api::{self, ImportTimelineResponse, OpenFileRequest, OpenFileRespon
 use mp_core::audio::midi_events::{MidiStream, TempoMapEntry};
 use mp_core::library::{LibraryEntry, LibrarySettings, PinnedFile};
 use mp_core::markers::{Marker, MarkerKind, MarkerPosition};
-use mp_core::pdf_calibration::CalibrationPoint;
+use mp_core::pdf_calibration::{CalibrationPoint, PdfTempo};
 use mp_core::pieces::Piece;
 use mp_core::rating::KnowledgeLevel;
 use mp_core::recent_files::RecentFile;
@@ -298,6 +298,22 @@ pub fn save_calibration_points(
 ) -> Result<Vec<CalibrationPoint>, String> {
     let base_dir = markers_base_dir(&app)?;
     api::save_calibration_points(&base_dir, &file_hash, points).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn get_pdf_tempo(app: AppHandle, file_hash: String) -> Result<PdfTempo, String> {
+    let base_dir = markers_base_dir(&app)?;
+    api::get_pdf_tempo(&base_dir, &file_hash).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn save_pdf_tempo(
+    app: AppHandle,
+    file_hash: String,
+    tempo: PdfTempo,
+) -> Result<PdfTempo, String> {
+    let base_dir = markers_base_dir(&app)?;
+    api::save_pdf_tempo(&base_dir, &file_hash, tempo).map_err(|e| e.to_string())
 }
 
 #[tauri::command]

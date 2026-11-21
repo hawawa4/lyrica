@@ -87,6 +87,8 @@ fn main() {
             commands::hash_bytes,
             commands::list_calibration_points,
             commands::save_calibration_points,
+            commands::get_pdf_tempo,
+            commands::save_pdf_tempo,
             commands::pdf_tempo_map,
             commands::detect_barlines,
             omr::omr_available,

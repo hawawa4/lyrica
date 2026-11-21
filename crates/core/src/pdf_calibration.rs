@@ -44,18 +44,42 @@ pub struct CalibrationPoint {
     pub measure: u32,
 }
 
+/// The tempo a PDF is practised at. A PDF has no tempo or time signature
+/// the app can read, so the user sets both; measure points are then spaced
+/// `beats_per_measure * 60000 / bpm` ms apart (see `CalibrationOverlay`), and
+/// `tempo_map` turns that spacing back into this BPM for the metronome.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+pub struct PdfTempo {
+    pub bpm: f64,
+    pub beats_per_measure: u8,
+}
+
+impl Default for PdfTempo {
+    fn default() -> Self {
+        PdfTempo {
+            bpm: 100.0,
+            beats_per_measure: 4,
+        }
+    }
+}
+
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct CalibrationMeta {
     #[serde(default)]
     points: Vec<CalibrationPoint>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    tempo: Option<PdfTempo>,
+}
+
+fn load_meta(base_dir: &Path, file_hash: &str) -> Result<CalibrationMeta, SidecarError> {
+    sidecar::load_item(base_dir, KIND, file_hash, FILENAME)
 }
 
 pub fn list_points(
     base_dir: &Path,
     file_hash: &str,
 ) -> Result<Vec<CalibrationPoint>, SidecarError> {
-    let meta: CalibrationMeta = sidecar::load_item(base_dir, KIND, file_hash, FILENAME)?;
-    Ok(meta.points)
+    Ok(load_meta(base_dir, file_hash)?.points)
 }
 
 /// Replaces the full calibration point list (the UI always sends the
@@ -69,12 +93,40 @@ pub fn save_points(
     mut points: Vec<CalibrationPoint>,
 ) -> Result<Vec<CalibrationPoint>, SidecarError> {
     points.sort_by(|a, b| a.time_ms.total_cmp(&b.time_ms));
-    let meta = CalibrationMeta {
-        points: points.clone(),
-    };
+    let mut meta = load_meta(base_dir, file_hash)?;
+    meta.points = points.clone();
     sidecar::save_item(base_dir, KIND, file_hash, FILENAME, &meta)?;
     Ok(points)
 }
+
+/// The PDF's saved tempo, or the default (100 BPM, 4 beats) if none was set.
+pub fn get_tempo(base_dir: &Path, file_hash: &str) -> Result<PdfTempo, SidecarError> {
+    Ok(load_meta(base_dir, file_hash)?.tempo.unwrap_or_default())
+}
+
+/// Saves the PDF's tempo, clamped to a playable range, leaving its points alone.
+pub fn save_tempo(
+    base_dir: &Path,
+    file_hash: &str,
+    tempo: PdfTempo,
+) -> Result<PdfTempo, SidecarError> {
+    let tempo = PdfTempo {
+        bpm: if tempo.bpm.is_finite() {
+            tempo.bpm.clamp(MIN_BPM, MAX_BPM)
+        } else {
+            PdfTempo::default().bpm
+        },
+        beats_per_measure: tempo.beats_per_measure.clamp(1, MAX_BEATS_PER_MEASURE),
+    };
+    let mut meta = load_meta(base_dir, file_hash)?;
+    meta.tempo = Some(tempo);
+    sidecar::save_item(base_dir, KIND, file_hash, FILENAME, &meta)?;
+    Ok(tempo)
+}
+
+pub const MIN_BPM: f64 = 20.0;
+pub const MAX_BPM: f64 = 400.0;
+pub const MAX_BEATS_PER_MEASURE: u8 = 16;
 
 /// Derives a piecewise-linear tempo map from calibration points, in the same
 /// `Vec<TempoMapEntry>` shape `Player::load_tempo_map`/`generate_clicks`
@@ -177,6 +229,47 @@ mod tests {
 
         let points = list_points(tmp.path(), hash).unwrap();
         assert_eq!(points.len(), 1);
+    }
+
+    #[test]
+    fn tempo_and_points_are_saved_independently() {
+        let tmp = tempfile::tempdir().unwrap();
+        let hash = "tempohash";
+        assert_eq!(get_tempo(tmp.path(), hash).unwrap(), PdfTempo::default());
+
+        let point = CalibrationPoint {
+            page: 0,
+            x: 0.1,
+            y: 0.2,
+            time_ms: 0.0,
+            measure: 0,
+        };
+        save_points(tmp.path(), hash, vec![point]).unwrap();
+        let tempo = PdfTempo {
+            bpm: 72.0,
+            beats_per_measure: 3,
+        };
+        save_tempo(tmp.path(), hash, tempo).unwrap();
+        // Saving points again must not drop the tempo, nor the tempo the points.
+        save_points(tmp.path(), hash, vec![point, point]).unwrap();
+        assert_eq!(get_tempo(tmp.path(), hash).unwrap(), tempo);
+        assert_eq!(list_points(tmp.path(), hash).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn save_tempo_clamps_to_a_playable_range() {
+        let tmp = tempfile::tempdir().unwrap();
+        let wild = PdfTempo {
+            bpm: 5000.0,
+            beats_per_measure: 0,
+        };
+        let saved = save_tempo(tmp.path(), "h", wild).unwrap();
+        assert_eq!((saved.bpm, saved.beats_per_measure), (MAX_BPM, 1));
+        let nan = PdfTempo {
+            bpm: f64::NAN,
+            beats_per_measure: 4,
+        };
+        assert_eq!(save_tempo(tmp.path(), "h", nan).unwrap().bpm, 100.0);
     }
 
     #[test]
