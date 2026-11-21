@@ -1,4 +1,4 @@
-import type { CalibrationPoint, StaffSystem } from '../types'
+import type { CalibrationPoint, MeasureBox, StaffSystem } from '../types'
 
 /** Pointer travel (px) below which a mousedown/mouseup pair counts as a click (seek) rather than a drag (select). */
 const CLICK_SLOP_PX = 4
@@ -165,6 +165,28 @@ export class CalibrationOverlay {
 
     if (allNewPoints.length === 0) return
     this.points = [...this.points, ...allNewPoints].sort((a, b) => a.time_ms - b.time_ms)
+    this.render()
+    this.onChangeCallback?.(this.points)
+  }
+
+  /**
+   * OMR (Audiveris) result: one point per recognised measure, at its left
+   * edge, vertically centred on its system — boxes arrive in reading order
+   * and are already page fractions. Unlike the CV scan there is no extra
+   * point at each system's closing barline: the last measure of a system
+   * simply runs until the next system's first. Fires `onChange` once.
+   */
+  addPointsFromMeasureBoxes(boxes: MeasureBox[]): void {
+    let measure = nextMeasure(this.points)
+    let time_ms = nextTimeMs(this.points)
+    const newPoints = boxes.map((b) => {
+      const point: CalibrationPoint = { page: b.page, x: b.x0, y: (b.y0 + b.y1) / 2, time_ms, measure }
+      measure += 1
+      time_ms += 1000
+      return point
+    })
+    if (newPoints.length === 0) return
+    this.points = [...this.points, ...newPoints].sort((a, b) => a.time_ms - b.time_ms)
     this.render()
     this.onChangeCallback?.(this.points)
   }
@@ -365,7 +387,6 @@ export class CalibrationOverlay {
       dot.style.alignItems = 'center'
       dot.style.justifyContent = 'center'
       dot.textContent = String(p.measure)
-      dot.title = `Measure ${p.measure}`
       this.dotsLayer.appendChild(dot)
     }
   }

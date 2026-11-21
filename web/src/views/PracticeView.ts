@@ -30,6 +30,8 @@ import {
   saveCalibrationPoints,
   loadPdfTempoMap,
   detectBarlines,
+  omrAvailable,
+  recognisePdfMeasures,
   getKnowledgeLevel,
   listPinnedFiles,
   pinFile,
@@ -688,7 +690,7 @@ export class PracticeView {
       this.syncRightPanePoints(active)
       this.rescanMeasuresBtn.disabled = true
       try {
-        await this.autoScanBarlines(active)
+        await this.scanMeasures(active)
       } finally {
         this.rescanMeasuresBtn.disabled = false
       }
@@ -2090,7 +2092,42 @@ export class PracticeView {
     // tab.canvasContainer) so it doesn't interfere with the user navigating
     // pages while the scan is still running in the background.
     if (needsAutoScan) {
-      void this.autoScanBarlines(tabState)
+      void this.scanMeasures(tabState)
+    }
+  }
+
+  /**
+   * Finds a PDF's measures: with Audiveris installed (and a file path to
+   * hand it — drag-dropped bytes have none), optical music recognition;
+   * otherwise, or if recognition fails or finds nothing, the CV barline scan.
+   */
+  private async scanMeasures(tab: PdfTabState): Promise<void> {
+    const setStatus = (text: string): void => {
+      if (this.activeHash === tab.fileHash) this.calibrationStatusEl.textContent = text
+    }
+    const haveOmr = await omrAvailable().catch(() => false)
+    if (haveOmr && tab.path) {
+      setStatus('Starting Audiveris to recognise measures…')
+      try {
+        const boxes = await recognisePdfMeasures(tab.fileHash, tab.path, (p) => {
+          if (p.kind === 'page') setStatus(`Recognising measures with Audiveris: page ${p.page} / ${p.pages}…`)
+        })
+        if (!this.tabs.has(tab.fileHash)) return
+        if (boxes.length > 0) {
+          tab.calibrationOverlay.addPointsFromMeasureBoxes(boxes)
+          this.syncRightPanePoints(tab)
+          setStatus(`Audiveris found ${boxes.length} measure(s) across ${tab.pageCount} page(s).`)
+          return
+        }
+        console.warn('Audiveris recognised no measures; falling back to the barline scan')
+      } catch (e) {
+        console.error('Audiveris measure recognition failed; falling back to the barline scan:', e)
+      }
+      if (!this.tabs.has(tab.fileHash)) return
+    }
+    await this.autoScanBarlines(tab)
+    if (!haveOmr && isTauri()) {
+      setStatus(`${this.calibrationStatusEl.textContent} Installing Audiveris makes this more reliable.`)
     }
   }
 

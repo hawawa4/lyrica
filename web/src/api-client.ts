@@ -8,7 +8,9 @@ import type {
   Marker,
   MarkerKind,
   MarkerPosition,
+  MeasureBox,
   MidiStream,
+  OmrProgress,
   PinnedFile,
   Piece,
   RecentFile,
@@ -376,6 +378,30 @@ export async function detectBarlines(pngBytes: Uint8Array): Promise<StaffSystem[
   if (!isTauri()) throw new Error('detectBarlines: desktop-only for now')
   const { invoke } = await import('@tauri-apps/api/core')
   return invoke<StaffSystem[]>('detect_barlines', { pngBytes: Array.from(pngBytes) })
+}
+
+/** Whether Audiveris (optional OMR measure detection for PDFs) is installed. */
+export async function omrAvailable(): Promise<boolean> {
+  if (!isTauri()) return false
+  const { invoke } = await import('@tauri-apps/api/core')
+  return invoke<boolean>('omr_available')
+}
+
+/**
+ * Recognises the measures of the PDF at `path` with Audiveris (seconds per
+ * page; runs are queued one at a time on the Rust side). Boxes come back in
+ * reading order, as page fractions like `CalibrationPoint`.
+ */
+export async function recognisePdfMeasures(
+  fileHash: string,
+  path: string,
+  onProgress: (progress: OmrProgress) => void,
+): Promise<MeasureBox[]> {
+  if (!isTauri()) throw new Error('recognisePdfMeasures: desktop-only')
+  const { invoke, Channel } = await import('@tauri-apps/api/core')
+  const channel = new Channel<OmrProgress>()
+  channel.onmessage = onProgress
+  return invoke<MeasureBox[]>('recognise_pdf_measures', { fileHash, path, onProgress: channel })
 }
 
 /**

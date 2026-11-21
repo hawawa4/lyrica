@@ -128,3 +128,14 @@ export interface UpdateProgress {
   done: number
   total: number
 }
+
+/** One measure recognised by OMR (Audiveris), as fractions (0-1) of its page. */
+export interface MeasureBox {
+  page: number
+  x0: number
+  x1: number
+  y0: number
+  y1: number
+}
+
+export type OmrProgress = { kind: 'starting' } | { kind: 'page'; page: number; pages: number }
